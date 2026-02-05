@@ -8,6 +8,8 @@ import ContractsPage from './pages/ContractsPage';
 import PurchaseInvoicesPage from './pages/PurchaseInvoicesPage';
 import PriceTiersPage from './pages/PriceTiersPage';
 import PricingRulesPage from './pages/PricingRulesPage';
+import UsersPage from './pages/UsersPage';
+import AuditLogsPage from './pages/AuditLogsPage';
 import MainLayout from './layouts/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -92,6 +94,26 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <PricingRulesPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/users"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <UsersPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/audit-logs"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <AuditLogsPage />
               </MainLayout>
             </ProtectedRoute>
           }

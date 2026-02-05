@@ -105,14 +105,69 @@ export interface LoginRequest {
 export interface LoginUserDto {
   UserId: number;
   Username: string;
-  RoleId: number;
-  RoleName: string;
-  Permissions: Record<string, string>;
+  FullName?: string;
+  Email?: string;
+  RoleId?: number;
+  RoleName?: string;
+  Permissions: string[];
 }
 
 export interface LoginResponse {
   token: string;
   user: LoginUserDto;
+}
+
+// Kullanıcı (liste/detay) - GET /users, GET /users/:id
+export interface User {
+  UserId: number;
+  Username: string;
+  FullName: string;
+  Email?: string;
+  RoleId?: number;
+  IsActive: boolean;
+  CreatedAt?: string;
+  LastLoginAt?: string;
+  Permissions: string[];
+}
+
+// GET /permissions yanıtı
+export interface PermissionDefinition {
+  key: string;
+  displayName: string;
+  description?: string;
+}
+
+export interface PermissionCategory {
+  key: string;
+  displayName: string;
+  permissions: PermissionDefinition[];
+}
+
+export interface PermissionsResponse {
+  categories: PermissionCategory[];
+}
+
+// Audit Log - GET /audit-logs
+export enum AuditAction {
+  Create = 0,
+  Update = 1,
+  Delete = 2,
+}
+
+export interface AuditLog {
+  LogId: number;
+  UserId: number;
+  TableName: string;
+  RecordId: number;
+  Action: AuditAction;
+  OldValues?: string | null;
+  NewValues?: string | null;
+  ChangedColumns?: string | null;
+  Timestamp: string;
+  IpAddress?: string | null;
+  UserAgent?: string | null;
+  UserName?: string | null;
+  UserFullName?: string | null;
 }
 
 export enum PriceBreakdownType {

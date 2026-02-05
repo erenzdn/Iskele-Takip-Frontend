@@ -5,20 +5,27 @@ interface MainLayoutProps {
   children: React.ReactNode;
 }
 
-const menuItems = [
+const menuItems: { path: string; label: string; icon: string; requiredPermission?: string }[] = [
   { path: '/', label: 'Dashboard', icon: '📊' },
-  { path: '/customers', label: 'Müşteriler', icon: '👥' },
-  { path: '/inventory', label: 'Envanter', icon: '📦' },
-  { path: '/warehouses', label: 'Depolar', icon: '🏭' },
-  { path: '/contracts', label: 'Sözleşmeler', icon: '📋' },
-  { path: '/purchase-invoices', label: 'Alış Faturaları', icon: '🧾' },
-  { path: '/price-tiers', label: 'Fiyat Tarifeleri', icon: '💰' },
-  { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: '⚙️' },
+  { path: '/customers', label: 'Müşteriler', icon: '👥', requiredPermission: 'customers_view' },
+  { path: '/inventory', label: 'Envanter', icon: '📦', requiredPermission: 'inventory_view' },
+  { path: '/warehouses', label: 'Depolar', icon: '🏭', requiredPermission: 'warehouses_view' },
+  { path: '/contracts', label: 'Sözleşmeler', icon: '📋', requiredPermission: 'contracts_view' },
+  { path: '/purchase-invoices', label: 'Alış Faturaları', icon: '🧾', requiredPermission: 'purchaseInvoices_view' },
+  { path: '/price-tiers', label: 'Fiyat Tarifeleri', icon: '💰', requiredPermission: 'priceTiers_view' },
+  { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: '⚙️', requiredPermission: 'pricingRules_view' },
+  { path: '/users', label: 'Kullanıcılar', icon: '👤', requiredPermission: 'users_view' },
+  { path: '/audit-logs', label: 'Audit Logları', icon: '📋', requiredPermission: 'auditLogs_view' },
 ];
 
 export default function MainLayout({ children }: MainLayoutProps) {
   const location = useLocation();
+  const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
+  const permissions = user?.Permissions ?? [];
+  const visibleMenuItems = menuItems.filter(
+    (item) => !item.requiredPermission || permissions.includes(item.requiredPermission)
+  );
 
   return (
     <div className="flex h-screen bg-background-main">
@@ -28,7 +35,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
           <h1 className="text-xl font-bold text-text-primary">İskeleTakip</h1>
         </div>
         <nav className="flex-1 p-4">
-          {menuItems.map((item) => {
+          {visibleMenuItems.map((item) => {
             const isActive = location.pathname === item.path;
             return (
               <Link

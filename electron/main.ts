@@ -39,7 +39,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* ws://localhost:*; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:*; style-src 'self' 'unsafe-inline' http://localhost:*;"
+            "default-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* ws://localhost:* http://62.171.180.40:*; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* http://62.171.180.40:*; style-src 'self' 'unsafe-inline' http://localhost:*; connect-src 'self' http://localhost:* http://62.171.180.40:*;"
           ],
         },
       });
