@@ -4,6 +4,7 @@ import { quoteService } from '../services/quoteService';
 import { customerService } from '../services/customerService';
 import { siteService } from '../services/siteService';
 import { Contract, Customer, ConstructionSite, Quote, QuoteStatus } from '../models';
+import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import ContractDetailModal from '../components/modals/ContractDetailModal';
 import QuoteDetailModal from '../components/modals/QuoteDetailModal';
@@ -203,26 +204,29 @@ export default function ContractsPage() {
           <table className="w-full">
             <thead>
               <tr className="border-b border-background-border">
-                <th className="text-left p-4 font-semibold" style={{ width: '8%' }}>
+                <th className="text-left p-4 font-semibold" style={{ width: '7%' }}>
                   ID
                 </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '20%' }}>
+                <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
                   Müşteri
                 </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
+                <th className="text-left p-4 font-semibold" style={{ width: '16%' }}>
                   Şantiye
                 </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '13%' }}>
+                <th className="text-left p-4 font-semibold" style={{ width: '11%' }}>
                   Başlangıç
                 </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '13%' }}>
+                <th className="text-left p-4 font-semibold" style={{ width: '11%' }}>
                   Bitiş
                 </th>
-                <th className="text-right p-4 font-semibold" style={{ width: '15%' }}>
+                <th className="text-right p-4 font-semibold" style={{ width: '12%' }}>
                   Tutar
                 </th>
-                <th className="text-center p-4 font-semibold" style={{ width: '13%' }}>
+                <th className="text-center p-4 font-semibold" style={{ width: '11%' }}>
                   Durum
+                </th>
+                <th className="text-left p-4 font-semibold" style={{ width: '14%' }}>
+                  Oluşturan / Son Güncelleyen
                 </th>
               </tr>
             </thead>
@@ -273,6 +277,12 @@ export default function ContractsPage() {
                     >
                       {contract.IsCompleted ? 'Tamamlandı' : 'Aktif'}
                     </span>
+                  </td>
+                  <td className="p-4 text-sm text-text-secondary">
+                    <div>Oluşturan: {contract.CreatedByUserFullName || contract.CreatedByUserName || '-'}</div>
+                    <div>{formatShortDateTime(contract.CreatedAt)}</div>
+                    <div className="mt-1">Güncelleyen: {contract.LastModifiedByUserFullName || contract.LastModifiedByUserName || '-'}</div>
+                    <div>{formatShortDateTime(contract.LastModifiedAt)}</div>
                   </td>
                 </tr>
               ))}

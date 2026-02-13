@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { customerService } from '../services/customerService';
 import { Customer } from '../models';
+import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import CustomerDetailModal from '../components/modals/CustomerDetailModal';
 
@@ -89,7 +90,7 @@ export default function CustomersPage() {
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="Müşteri adı, e-posta veya telefon ile ara..."
+          placeholder="Müşteri adı, vergi no, e-posta, telefon veya yetkili kişi ile ara..."
           className="input flex-1"
         />
         <button onClick={handleSearch} className="btn-secondary">
@@ -112,17 +113,23 @@ export default function CustomersPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '40%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '24%' }}>
                     Müşteri Adı
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '20%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '14%' }}>
                     Telefon
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '30%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
                     E-posta
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '16%' }}>
+                    Merkez Yetkili
                   </th>
                   <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
                     Sözleşme Sayısı
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
+                    Oluşturan / Son Güncelleyen
                   </th>
                 </tr>
               </thead>
@@ -141,10 +148,28 @@ export default function CustomersPage() {
                     </td>
                     <td className="p-4">{customer.PhoneNumber || '-'}</td>
                     <td className="p-4 opacity-80">{customer.Email || '-'}</td>
+                    <td className="p-4">
+                      {customer.CenterAuthorizedPerson ? (
+                        <div>
+                          <div className="font-medium text-sm">{customer.CenterAuthorizedPerson}</div>
+                          {customer.CenterAuthorizedPhone && (
+                            <div className="text-sm text-text-secondary">{customer.CenterAuthorizedPhone}</div>
+                          )}
+                        </div>
+                      ) : (
+                        <span className="text-text-secondary">-</span>
+                      )}
+                    </td>
                     <td className="p-4 text-center">
                       <span className="badge bg-blue-600 text-white">
                         {customer.Contracts?.length || 0}
                       </span>
+                    </td>
+                    <td className="p-4 text-sm text-text-secondary">
+                      <div>Oluşturan: {customer.CreatedByUserFullName || customer.CreatedByUserName || '-'}</div>
+                      <div>{formatShortDateTime(customer.CreatedAt)}</div>
+                      <div className="mt-1">Son güncelleyen: {customer.LastModifiedByUserFullName || customer.LastModifiedByUserName || '-'}</div>
+                      <div>{formatShortDateTime(customer.LastModifiedAt)}</div>
                     </td>
                   </tr>
                 ))}

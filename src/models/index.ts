@@ -3,9 +3,18 @@ export interface Customer {
   CustomerId: number;
   Name: string;
   TaxId?: string;
+  TaxOffice?: string;
   PhoneNumber?: string;
   Email?: string;
   Address?: string;
+  CenterAuthorizedPerson?: string;
+  CenterAuthorizedPhone?: string;
+  CreatedAt?: string;
+  CreatedByUserFullName?: string;
+  CreatedByUserName?: string;
+  LastModifiedAt?: string | null;
+  LastModifiedByUserFullName?: string | null;
+  LastModifiedByUserName?: string | null;
   Contracts?: Contract[];
   Sites?: ConstructionSite[];
 }
@@ -35,6 +44,12 @@ export interface Inventory {
   OnRent: number;
   DailyPrice: number;
   PurchasePrice: number;
+  CreatedAt?: string;
+  CreatedByUserFullName?: string;
+  CreatedByUserName?: string;
+  LastModifiedAt?: string | null;
+  LastModifiedByUserFullName?: string | null;
+  LastModifiedByUserName?: string | null;
   Category?: MaterialCategory;
   PriceTiers?: PriceTier[];
   ContractDetails?: ContractDetail[];
@@ -50,6 +65,12 @@ export interface Contract {
   InitialTotalPrice: number;
   FinalCalculatedPrice?: number;
   IsCompleted: boolean;
+  CreatedAt?: string;
+  CreatedByUserFullName?: string;
+  CreatedByUserName?: string;
+  LastModifiedAt?: string | null;
+  LastModifiedByUserFullName?: string | null;
+  LastModifiedByUserName?: string | null;
   Customer?: Customer;
   Site?: ConstructionSite; // Şantiye bilgisi
   ContractDetails?: ContractDetail[];
@@ -249,6 +270,12 @@ export interface PurchaseInvoice {
   Subtotal: number;
   VatAmount: number;
   TotalAmount: number;
+  CreatedAt?: string;
+  CreatedByUserFullName?: string;
+  CreatedByUserName?: string;
+  LastModifiedAt?: string | null;
+  LastModifiedByUserFullName?: string | null;
+  LastModifiedByUserName?: string | null;
   Customer?: Customer;
 }
 
@@ -260,6 +287,12 @@ export interface Warehouse {
   Description?: string;
   UniqueItems: number;     // Benzersiz ürün sayısı
   TotalQuantity: number;   // Toplam stok miktarı
+  CreatedAt?: string;
+  CreatedByUserFullName?: string;
+  CreatedByUserName?: string;
+  LastModifiedAt?: string | null;
+  LastModifiedByUserFullName?: string | null;
+  LastModifiedByUserName?: string | null;
 }
 
 export interface WarehouseStock {

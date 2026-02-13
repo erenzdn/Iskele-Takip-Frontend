@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { Contract, Customer, Inventory, ContractDetailItem, ConstructionSite, ReturnItemResponse, ContractTemplate } from '../../models';
+import { AuditLog, Contract, Customer, Inventory, ContractDetailItem, ConstructionSite, ReturnItemResponse, ContractTemplate } from '../../models';
 import { contractService } from '../../services/contractService';
 import { customerService } from '../../services/customerService';
 import { inventoryService } from '../../services/inventoryService';
 import { siteService } from '../../services/siteService';
 import { contractTemplateService } from '../../services/contractTemplateService';
 import ContractTemplateEditorModal from './ContractTemplateEditorModal';
+import AuditLogTimeline from '../AuditLogTimeline';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -48,11 +49,36 @@ export default function ContractDetailModal({
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ContractTemplate | null>(null);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
+  const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
+  const [contractLogs, setContractLogs] = useState<AuditLog[]>([]);
+  const [contractLogsLoading, setContractLogsLoading] = useState(false);
 
   useEffect(() => {
     loadData();
     loadTemplates();
   }, []);
+
+  const loadContractLogs = async () => {
+    if (!contract?.ContractId) return;
+    try {
+      setContractLogsLoading(true);
+      const data = await contractService.getAuditLogsByContractAsync(contract.ContractId);
+      setContractLogs(data ?? []);
+    } catch (error) {
+      console.error('Load contract audit logs error:', error);
+      setContractLogs([]);
+    } finally {
+      setContractLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (contract?.ContractId && !isNew) {
+      loadContractLogs();
+    } else {
+      setContractLogs([]);
+    }
+  }, [contract?.ContractId, isNew]);
 
   const loadTemplates = async () => {
     try {
@@ -408,10 +434,49 @@ export default function ContractDetailModal({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-background-panel rounded-panel w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-6">
+        <h2 className="text-2xl font-bold mb-4">
           {isNew ? 'Yeni Sözleşme' : 'Sözleşme Detayı'}
         </h2>
 
+        {!isNew && (
+          <div className="flex gap-2 mb-4 border-b border-background-border">
+            <button
+              onClick={() => setActiveTab('info')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'info'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Bilgiler
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'history'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Geçmiş
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'history' && !isNew && (
+          <>
+            <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
+            <AuditLogTimeline logs={contractLogs} loading={contractLogsLoading} />
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className="btn-secondary flex-1">
+                Kapat
+              </button>
+            </div>
+          </>
+        )}
+
+        {(activeTab === 'info' || isNew) && (
+        <>
         <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">Müşteri Seçimi *</label>
@@ -863,6 +928,8 @@ export default function ContractDetailModal({
             </button>
           )}
         </div>
+        </>
+        )}
       </div>
 
       {/* Şablon Editör Modal */}

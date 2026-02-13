@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { inventoryService } from '../services/inventoryService';
 import { Inventory, MaterialCategory } from '../models';
+import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
 
 export default function InventoryPage() {
   const [inventory, setInventory] = useState<Inventory[]>([]);
+  const [allInventory, setAllInventory] = useState<Inventory[]>([]);
   const [categories, setCategories] = useState<MaterialCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<MaterialCategory | null>(null);
   const [loading, setLoading] = useState(true);
@@ -14,6 +16,9 @@ export default function InventoryPage() {
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [isNewItem, setIsNewItem] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [searchText, setSearchText] = useState('');
+  const [minAvailable, setMinAvailable] = useState<number | ''>('');
+  const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
 
   useEffect(() => {
     loadData();
@@ -35,34 +40,11 @@ export default function InventoryPage() {
         Category: categoryMap.get(item.CategoryId),
       }));
 
+      setAllInventory(inventoryWithCategories);
       setInventory(inventoryWithCategories);
       setCategories(catData);
     } catch (error) {
       console.error('Load inventory error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFilterByCategory = async () => {
-    if (!selectedCategory) {
-      loadData();
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const data = await inventoryService.getByCategoryAsync(selectedCategory.CategoryId);
-      
-      // Category bilgisini ekle
-      const filteredWithCategory = data.map((item) => ({
-        ...item,
-        Category: selectedCategory,
-      }));
-      
-      setInventory(filteredWithCategory);
-    } catch (error) {
-      console.error('Filter error:', error);
     } finally {
       setLoading(false);
     }
@@ -99,6 +81,23 @@ export default function InventoryPage() {
     return `₺${amount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
+  const filteredInventory = allInventory.filter((item) => {
+    const text = searchText.trim().toLowerCase();
+    const name = item.ItemName?.toLowerCase() ?? '';
+    const categoryName = item.Category?.CategoryName?.toLowerCase() ?? '';
+
+    const matchesText = !text || name.includes(text) || categoryName.includes(text);
+
+    const matchesCategory =
+      !selectedCategory || item.CategoryId === selectedCategory.CategoryId;
+
+    const availableStock = item.TotalStock - item.OnRent;
+    const matchesMin = minAvailable === '' || availableStock >= minAvailable;
+    const matchesMax = maxAvailable === '' || availableStock <= maxAvailable;
+
+    return matchesText && matchesCategory && matchesMin && matchesMax;
+  });
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -124,31 +123,110 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      <div className="mb-6 flex gap-4">
-        <select
-          value={selectedCategory?.CategoryId || ''}
-          onChange={(e) => {
-            const cat = categories.find((c) => c.CategoryId === Number(e.target.value));
-            setSelectedCategory(cat || null);
-          }}
-          className="input"
-        >
-          <option value="">Tüm Kategoriler</option>
-          {categories.map((cat) => (
-            <option key={cat.CategoryId} value={cat.CategoryId}>
-              {cat.CategoryName}
-            </option>
-          ))}
-        </select>
-        <button onClick={handleFilterByCategory} className="btn-secondary">
-          Filtrele
-        </button>
-        <button onClick={loadData} className="btn-secondary">
-          Yenile
-        </button>
+      <div className="mb-6 card p-4 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Arama ve Filtreler</h2>
+            <p className="text-sm text-text-secondary">
+              Malzemeleri isim, kategori ve müsait stok miktarına göre filtreleyin.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchText('');
+              setSelectedCategory(null);
+              setMinAvailable('');
+              setMaxAvailable('');
+              setInventory(allInventory);
+            }}
+            className="btn-secondary"
+          >
+            Filtreleri Sıfırla
+          </button>
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
+          {/* Search */}
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-text-secondary mb-1">
+              Ara
+            </label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <span className="absolute inset-y-0 left-3 flex items-center text-text-secondary text-sm">
+                  🔍
+                </span>
+                <input
+                  type="text"
+                  className="input w-full pl-8"
+                  placeholder="Malzeme adı veya kategori (örn: İskele, Köşebent)"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Category filter */}
+          <div className="w-full lg:w-64">
+            <label className="block text-xs font-medium text-text-secondary mb-1">
+              Kategori
+            </label>
+            <select
+              value={selectedCategory?.CategoryId || ''}
+              onChange={(e) => {
+                const cat = categories.find((c) => c.CategoryId === Number(e.target.value));
+                setSelectedCategory(cat || null);
+              }}
+              className="input w-full"
+            >
+              <option value="">Tüm Kategoriler</option>
+              {categories.map((cat) => (
+                <option key={cat.CategoryId} value={cat.CategoryId}>
+                  {cat.CategoryName}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Available stock filter */}
+          <div className="w-full lg:w-72 flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Müsait Stok (min)
+              </label>
+              <input
+                type="number"
+                className="input w-full"
+                min={0}
+                value={minAvailable === '' ? '' : minAvailable}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setMinAvailable(value === '' ? '' : Number(value));
+                }}
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Müsait Stok (max)
+              </label>
+              <input
+                type="number"
+                className="input w-full"
+                min={0}
+                value={maxAvailable === '' ? '' : maxAvailable}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setMaxAvailable(value === '' ? '' : Number(value));
+                }}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {inventory.length === 0 ? (
+      {filteredInventory.length === 0 ? (
         <EmptyState
           icon="📦"
           title="Henüz envanter kalemi bulunmuyor"
@@ -160,31 +238,34 @@ export default function InventoryPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '28%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '24%' }}>
                     Malzeme Adı
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '12%' }}>
                     Kategori
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
                     Toplam
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
                     Kirada
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
                     Müsait
                   </th>
-                  <th className="text-right p-4 font-semibold" style={{ width: '12%' }}>
+                  <th className="text-right p-4 font-semibold" style={{ width: '10%' }}>
                     Günlük Fiyat
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '15%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '12%' }}>
                     Durum
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
+                    Kayıt Bilgisi
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {inventory.map((item) => {
+                {filteredInventory.map((item) => {
                   const availableStock = item.TotalStock - item.OnRent;
                   const stockPercentage = item.TotalStock > 0 ? (availableStock / item.TotalStock) * 100 : 0;
                   
@@ -231,6 +312,12 @@ export default function InventoryPage() {
                       </td>
                       <td className="p-4 text-center">
                         {statusBadge}
+                      </td>
+                      <td className="p-4 text-sm text-text-secondary">
+                        <div>Oluşturan: {item.CreatedByUserFullName || item.CreatedByUserName || '-'}</div>
+                        <div>{formatShortDateTime(item.CreatedAt)}</div>
+                        <div className="mt-1">Güncelleyen: {item.LastModifiedByUserFullName || item.LastModifiedByUserName || '-'}</div>
+                        <div>{formatShortDateTime(item.LastModifiedAt)}</div>
                       </td>
                     </tr>
                   );

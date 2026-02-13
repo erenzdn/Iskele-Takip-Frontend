@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { userService } from '../services/userService';
 import { User } from '../models';
+import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import UserDetailModal from '../components/modals/UserDetailModal';
 
@@ -138,8 +139,11 @@ export default function UsersPage() {
                   <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
                     Durum
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '20%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
                     Son Giriş
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
+                    Kayıt Tarihi
                   </th>
                 </tr>
               </thead>
@@ -173,6 +177,9 @@ export default function UsersPage() {
                     </td>
                     <td className="p-4 text-sm text-text-secondary">
                       {formatDate(user.LastLoginAt)}
+                    </td>
+                    <td className="p-4 text-sm text-text-secondary">
+                      {formatShortDateTime(user.CreatedAt)}
                     </td>
                   </tr>
                 ))}

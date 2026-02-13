@@ -1,5 +1,5 @@
 import { apiClient } from './apiClient';
-import { Warehouse, WarehouseStock, WarehouseStockResponse } from '../models';
+import { AuditLog, Warehouse, WarehouseStock, WarehouseStockResponse } from '../models';
 
 export interface CreateWarehouseRequest {
   WarehouseName: string;
@@ -62,5 +62,9 @@ export const warehouseService = {
 
   async removeStockAsync(warehouseId: number, itemId: number): Promise<void> {
     return apiClient.delete<void>(`/warehouses/${warehouseId}/stock/${itemId}`);
+  },
+
+  async getAuditLogsByWarehouseAsync(warehouseId: number): Promise<AuditLog[]> {
+    return apiClient.get<AuditLog[]>(`/warehouses/${warehouseId}/audit-logs`);
   },
 };

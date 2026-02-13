@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Inventory, MaterialCategory, Warehouse } from '../../models';
+import { AuditLog, Inventory, MaterialCategory, Warehouse } from '../../models';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
+import AuditLogTimeline from '../AuditLogTimeline';
 
 interface InventoryDetailModalProps {
   item: Inventory | null;
@@ -35,6 +36,9 @@ export default function InventoryDetailModal({
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [warehouseStocks, setWarehouseStocks] = useState<WarehouseStockEntry[]>([]);
   const [loadingWarehouses, setLoadingWarehouses] = useState(false);
+  const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
+  const [itemLogs, setItemLogs] = useState<AuditLog[]>([]);
+  const [itemLogsLoading, setItemLogsLoading] = useState(false);
 
   useEffect(() => {
     if (item) {
@@ -53,6 +57,28 @@ export default function InventoryDetailModal({
       loadWarehouses();
     }
   }, [isNew]);
+
+  const loadItemLogs = async () => {
+    if (!item?.ItemId) return;
+    try {
+      setItemLogsLoading(true);
+      const data = await inventoryService.getAuditLogsByItemAsync(item.ItemId);
+      setItemLogs(data ?? []);
+    } catch (error) {
+      console.error('Load item audit logs error:', error);
+      setItemLogs([]);
+    } finally {
+      setItemLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (item?.ItemId && !isNew) {
+      loadItemLogs();
+    } else {
+      setItemLogs([]);
+    }
+  }, [item?.ItemId, isNew]);
 
   const loadWarehouses = async () => {
     try {
@@ -180,10 +206,49 @@ export default function InventoryDetailModal({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-background-panel rounded-panel w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-6">
+        <h2 className="text-2xl font-bold mb-4">
           {isNew ? 'Yeni Malzeme' : 'Malzeme Detayı'}
         </h2>
 
+        {!isNew && (
+          <div className="flex gap-2 mb-4 border-b border-background-border">
+            <button
+              onClick={() => setActiveTab('info')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'info'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Bilgiler
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'history'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Geçmiş
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'history' && !isNew && (
+          <>
+            <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
+            <AuditLogTimeline logs={itemLogs} loading={itemLogsLoading} />
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className="btn-secondary flex-1">
+                Kapat
+              </button>
+            </div>
+          </>
+        )}
+
+        {(activeTab === 'info' || isNew) && (
+        <>
         {isReadOnly && !isNew && item && (
           <div className="mb-6 card bg-blue-900 p-4">
             <div className="grid grid-cols-3 gap-4 text-sm">
@@ -426,6 +491,8 @@ export default function InventoryDetailModal({
             </button>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );

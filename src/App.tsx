@@ -1,9 +1,10 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import LoginPage from './pages/LoginPage';
 import DashboardPage from './pages/DashboardPage';
 import CustomersPage from './pages/CustomersPage';
 import InventoryPage from './pages/InventoryPage';
 import WarehousesPage from './pages/WarehousesPage';
+import WarehouseDetailPage from './pages/WarehouseDetailPage';
 import ContractsPage from './pages/ContractsPage';
 import PurchaseInvoicesPage from './pages/PurchaseInvoicesPage';
 import PriceTiersPage from './pages/PriceTiersPage';
@@ -15,7 +16,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 
 function App() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route
@@ -54,6 +55,16 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <WarehousesPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/warehouses/:id"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <WarehouseDetailPage />
               </MainLayout>
             </ProtectedRoute>
           }
@@ -120,7 +131,7 @@ function App() {
         />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }
 

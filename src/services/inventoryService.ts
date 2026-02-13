@@ -1,5 +1,5 @@
 import { apiClient } from './apiClient';
-import { Inventory, MaterialCategory } from '../models';
+import { AuditLog, Inventory, MaterialCategory } from '../models';
 
 export interface CreateCategoryRequest {
   CategoryName: string;
@@ -78,6 +78,10 @@ export const inventoryService = {
 
   async getPriceTiersAsync(itemId: number) {
     return apiClient.get(`/inventory/${itemId}/price-tiers`);
+  },
+
+  async getAuditLogsByItemAsync(itemId: number): Promise<AuditLog[]> {
+    return apiClient.get<AuditLog[]>(`/inventory/${itemId}/audit-logs`);
   },
 };
 
