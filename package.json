@@ -5,11 +5,11 @@
   "main": "electron/main.js",
   "type": "module",
   "scripts": {
-    "dev": "vite",
+  "dev": "npm run electron:dev",
     "build": "tsc && vite build",
     "build:electron": "tsc -p tsconfig.node.json && vite build",
     "preview": "vite preview",
-    "electron:dev": "concurrently \"npm run dev\" \"tsc -p tsconfig.electron.json --watch\" \"tsc -p tsconfig.node.json --watch\" \"wait-on http://localhost:5173 && powershell -Command Copy-Item electron\\preload.cjs dist-electron\\preload.cjs -Force -ErrorAction SilentlyContinue; electron dist-electron/main.js\"",
+    "electron:dev": "concurrently \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"tsc -p tsconfig.node.json --watch\" \"wait-on http://localhost:5173 && powershell -Command Copy-Item electron\\preload.cjs dist-electron\\preload.cjs -Force -ErrorAction SilentlyContinue; electron dist-electron/main.js\"",
     "electron:build": "npm run build:electron && electron-builder",
     "electron:pack": "npm run build:electron && electron-builder --dir"
   },
