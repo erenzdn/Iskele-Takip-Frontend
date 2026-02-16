@@ -16,6 +16,7 @@ export default function InventoryPage() {
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [isNewItem, setIsNewItem] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<MaterialCategory | null>(null);
   const [searchText, setSearchText] = useState('');
   const [minAvailable, setMinAvailable] = useState<number | ''>('');
   const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
@@ -57,6 +58,12 @@ export default function InventoryPage() {
   };
 
   const handleAddCategory = () => {
+    setEditingCategory(null);
+    setIsCategoryModalOpen(true);
+  };
+
+  const handleEditCategory = (cat: MaterialCategory) => {
+    setEditingCategory(cat);
     setIsCategoryModalOpen(true);
   };
 
@@ -74,6 +81,7 @@ export default function InventoryPage() {
 
   const handleCategoryModalClose = () => {
     setIsCategoryModalOpen(false);
+    setEditingCategory(null);
     loadData();
   };
 
@@ -86,7 +94,8 @@ export default function InventoryPage() {
     const name = item.ItemName?.toLowerCase() ?? '';
     const categoryName = item.Category?.CategoryName?.toLowerCase() ?? '';
 
-    const matchesText = !text || name.includes(text) || categoryName.includes(text);
+    const itemCode = item.ItemCode?.toLowerCase() ?? '';
+    const matchesText = !text || name.includes(text) || categoryName.includes(text) || itemCode.includes(text);
 
     const matchesCategory =
       !selectedCategory || item.CategoryId === selectedCategory.CategoryId;
@@ -160,7 +169,7 @@ export default function InventoryPage() {
                 <input
                   type="text"
                   className="input w-full pl-8"
-                  placeholder="Malzeme adı veya kategori (örn: İskele, Köşebent)"
+                  placeholder="Ürün kodu, malzeme adı veya kategori (örn: BRU2M001, İskele)"
                   value={searchText}
                   onChange={(e) => setSearchText(e.target.value)}
                 />
@@ -173,21 +182,33 @@ export default function InventoryPage() {
             <label className="block text-xs font-medium text-text-secondary mb-1">
               Kategori
             </label>
-            <select
-              value={selectedCategory?.CategoryId || ''}
-              onChange={(e) => {
-                const cat = categories.find((c) => c.CategoryId === Number(e.target.value));
-                setSelectedCategory(cat || null);
-              }}
-              className="input w-full"
-            >
-              <option value="">Tüm Kategoriler</option>
-              {categories.map((cat) => (
-                <option key={cat.CategoryId} value={cat.CategoryId}>
-                  {cat.CategoryName}
-                </option>
-              ))}
-            </select>
+            <div className="flex gap-2">
+              <select
+                value={selectedCategory?.CategoryId || ''}
+                onChange={(e) => {
+                  const cat = categories.find((c) => c.CategoryId === Number(e.target.value));
+                  setSelectedCategory(cat || null);
+                }}
+                className="input flex-1"
+              >
+                <option value="">Tüm Kategoriler</option>
+                {categories.map((cat) => (
+                  <option key={cat.CategoryId} value={cat.CategoryId}>
+                    {cat.CategoryName}
+                  </option>
+                ))}
+              </select>
+              {selectedCategory && (
+                <button
+                  type="button"
+                  onClick={() => handleEditCategory(selectedCategory)}
+                  className="btn-secondary text-sm px-3"
+                  title="Kategoriyi düzenle"
+                >
+                  Yönet
+                </button>
+              )}
+            </div>
           </div>
 
           {/* Available stock filter */}
@@ -238,28 +259,37 @@ export default function InventoryPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '24%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '8%' }}>
+                    Ürün Kodu
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '17%' }}>
                     Malzeme Adı
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '12%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '9%' }}>
                     Kategori
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '6%' }}>
                     Toplam
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '6%' }}>
                     Kirada
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '6%' }}>
                     Müsait
                   </th>
-                  <th className="text-right p-4 font-semibold" style={{ width: '10%' }}>
-                    Günlük Fiyat
+                  <th className="text-right p-4 font-semibold" style={{ width: '9%' }}>
+                    Aylık Liste
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '12%' }}>
+                  <th className="text-right p-4 font-semibold" style={{ width: '9%' }}>
+                    Günlük Efektif
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '12%' }}>
+                    Alt Kategoriler
+                  </th>
+                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
                     Durum
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '10%' }}>
                     Kayıt Bilgisi
                   </th>
                 </tr>
@@ -288,9 +318,18 @@ export default function InventoryPage() {
                       onClick={() => handleOpenItemDetail(item)}
                     >
                       <td className="p-4">
+                        {item.ItemCode ? (
+                          <span className="font-mono text-sm font-medium text-accent bg-accent/10 px-2 py-0.5 rounded">
+                            {item.ItemCode}
+                          </span>
+                        ) : (
+                          <span className="text-text-secondary text-sm">-</span>
+                        )}
+                      </td>
+                      <td className="p-4">
                         <div className="font-medium">{item.ItemName}</div>
                         <div className="text-sm text-text-secondary">
-                          Alış: {formatCurrency(item.PurchasePrice)}
+                          Birim: {item.UnitPrice ? formatCurrency(item.UnitPrice) : formatCurrency(item.PurchasePrice)}
                         </div>
                       </td>
                       <td className="p-4">{item.Category?.CategoryName || '-'}</td>
@@ -307,17 +346,40 @@ export default function InventoryPage() {
                       </td>
                       <td className="p-4 text-right">
                         <span className="text-green-500 font-bold">
-                          {formatCurrency(item.DailyPrice)}
+                          {item.MonthlyListPrice ? formatCurrency(item.MonthlyListPrice) : '-'}
                         </span>
+                      </td>
+                      <td className="p-4 text-right">
+                        <span className="font-medium text-text-secondary">
+                          {item.MonthlyListPrice
+                            ? formatCurrency(item.MonthlyListPrice / 30)
+                            : item.DailyPrice
+                              ? formatCurrency(item.DailyPrice)
+                              : '-'}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        {item.SubCategories && item.SubCategories.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {item.SubCategories.map((sc) => (
+                              <span
+                                key={sc.SubCategoryId}
+                                className="badge bg-purple-600/30 text-purple-300 text-xs"
+                              >
+                                {sc.SubCategoryName}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-text-secondary text-sm">-</span>
+                        )}
                       </td>
                       <td className="p-4 text-center">
                         {statusBadge}
                       </td>
                       <td className="p-4 text-sm text-text-secondary">
-                        <div>Oluşturan: {item.CreatedByUserFullName || item.CreatedByUserName || '-'}</div>
+                        <div>{item.CreatedByUserFullName || item.CreatedByUserName || '-'}</div>
                         <div>{formatShortDateTime(item.CreatedAt)}</div>
-                        <div className="mt-1">Güncelleyen: {item.LastModifiedByUserFullName || item.LastModifiedByUserName || '-'}</div>
-                        <div>{formatShortDateTime(item.LastModifiedAt)}</div>
                       </td>
                     </tr>
                   );
@@ -338,7 +400,11 @@ export default function InventoryPage() {
       )}
 
       {isCategoryModalOpen && (
-        <CategoryDetailModal onClose={handleCategoryModalClose} />
+        <CategoryDetailModal
+          category={editingCategory}
+          categories={categories}
+          onClose={handleCategoryModalClose}
+        />
       )}
     </div>
   );

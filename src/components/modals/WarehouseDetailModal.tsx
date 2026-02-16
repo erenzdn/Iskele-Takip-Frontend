@@ -27,9 +27,9 @@ export default function WarehouseDetailModal({
   const [showAddStock, setShowAddStock] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<Inventory[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [quantity, setQuantity] = useState<number>(0);
+  const [quantity, setQuantity] = useState<number | ''>(0);
   const [editingStockId, setEditingStockId] = useState<number | null>(null);
-  const [editingQuantity, setEditingQuantity] = useState<number>(0);
+  const [editingQuantity, setEditingQuantity] = useState<number | ''>(0);
   const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
   const [warehouseLogs, setWarehouseLogs] = useState<AuditLog[]>([]);
   const [warehouseLogsLoading, setWarehouseLogsLoading] = useState(false);
@@ -143,7 +143,7 @@ export default function WarehouseDetailModal({
   };
 
   const handleAddStock = async () => {
-    if (!warehouse || !selectedItemId || quantity <= 0) {
+    if (!warehouse || !selectedItemId || Number(quantity) <= 0) {
       alert('Lütfen ürün seçin ve geçerli bir miktar girin');
       return;
     }
@@ -152,7 +152,7 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.addOrUpdateStockAsync(warehouse.WarehouseId, {
         ItemId: Number(selectedItemId),
-        Quantity: quantity,
+        Quantity: Number(quantity),
       });
       setShowAddStock(false);
       setSelectedItemId('');
@@ -172,7 +172,7 @@ export default function WarehouseDetailModal({
   };
 
   const handleSaveEditStock = async (stockItem: WarehouseStock) => {
-    if (!warehouse || editingQuantity < 0) {
+    if (!warehouse || Number(editingQuantity) < 0) {
       alert('Geçerli bir miktar girin');
       return;
     }
@@ -181,7 +181,7 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.addOrUpdateStockAsync(warehouse.WarehouseId, {
         ItemId: stockItem.ItemId,
-        Quantity: editingQuantity,
+        Quantity: Number(editingQuantity),
       });
       setEditingStockId(null);
       await loadStock();
@@ -356,7 +356,7 @@ export default function WarehouseDetailModal({
                     <input
                       type="number"
                       value={quantity}
-                      onChange={(e) => setQuantity(Number(e.target.value))}
+                      onChange={(e) => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                       min="1"
                       className="input w-full"
                     />
@@ -365,7 +365,7 @@ export default function WarehouseDetailModal({
                 <div className="flex gap-2 mt-4">
                   <button
                     onClick={handleAddStock}
-                    disabled={isBusy || !selectedItemId || quantity <= 0}
+                    disabled={isBusy || !selectedItemId || Number(quantity) <= 0}
                     className="btn-primary text-sm"
                   >
                     Ekle
@@ -407,7 +407,7 @@ export default function WarehouseDetailModal({
                             <input
                               type="number"
                               value={editingQuantity}
-                              onChange={(e) => setEditingQuantity(Number(e.target.value))}
+                              onChange={(e) => setEditingQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                               min="0"
                               className="input w-20 text-center"
                               autoFocus

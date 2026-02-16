@@ -35,12 +35,12 @@ export default function ContractDetailModal({
   const [actualEndDate, setActualEndDate] = useState<string>('');
   const [contractItems, setContractItems] = useState<ContractDetailItem[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [itemQuantity, setItemQuantity] = useState(1);
+  const [itemQuantity, setItemQuantity] = useState<number | ''>(1);
   const [isBusy, setIsBusy] = useState(false);
 
   // İade işlemi state'leri
   const [returnItemId, setReturnItemId] = useState<number | null>(null);
-  const [returnQuantity, setReturnQuantity] = useState(1);
+  const [returnQuantity, setReturnQuantity] = useState<number | ''>(1);
   const [isReturning, setIsReturning] = useState(false);
 
   // Şablon yönetimi state'leri
@@ -198,6 +198,7 @@ export default function ContractDetailModal({
 
   const handleAddItem = () => {
     if (!selectedItemId) return;
+    const qty = Number(itemQuantity) || 1;
 
     const selectedItem = availableItems.find((i) => i.ItemId === Number(selectedItemId));
     if (!selectedItem) return;
@@ -209,8 +210,8 @@ export default function ContractDetailModal({
 
     const existingItem = contractItems.find((i) => i.ItemId === Number(selectedItemId));
     const newTotalQuantity = existingItem 
-      ? existingItem.RentedQuantity + itemQuantity 
-      : itemQuantity;
+      ? existingItem.RentedQuantity + qty 
+      : qty;
 
     if (newTotalQuantity > effectiveAvailable) {
       alert(`Yetersiz stok! "${selectedItem.ItemName}" için müsait stok: ${effectiveAvailable}, istenen: ${newTotalQuantity}`);
@@ -221,7 +222,7 @@ export default function ContractDetailModal({
       setContractItems(
         contractItems.map((i) =>
           i.ItemId === Number(selectedItemId)
-            ? { ...i, RentedQuantity: i.RentedQuantity + itemQuantity }
+            ? { ...i, RentedQuantity: i.RentedQuantity + qty }
             : i
         )
       );
@@ -231,9 +232,9 @@ export default function ContractDetailModal({
         {
           DetailId: 0,
           ItemId: Number(selectedItemId),
-          RentedQuantity: itemQuantity,
+          RentedQuantity: qty,
           ReturnedQuantity: 0,
-          DailyPriceAtRent: selectedItem.DailyPrice,
+          DailyPriceAtRent: (selectedItem.MonthlyListPrice || 0) / 30,
           Item: selectedItem,
           ItemName: selectedItem.ItemName,
         },
@@ -347,8 +348,9 @@ export default function ContractDetailModal({
     const item = contractItems.find((i) => i.ItemId === itemId);
     if (!item) return;
 
+    const qty = Number(returnQuantity) || 0;
     const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
-    if (returnQuantity <= 0 || returnQuantity > remainingOnRent) {
+    if (qty <= 0 || qty > remainingOnRent) {
       alert(`İade miktarı 1 ile ${remainingOnRent} arasında olmalıdır`);
       return;
     }
@@ -358,7 +360,7 @@ export default function ContractDetailModal({
       const result: ReturnItemResponse = await contractService.returnItemAsync(
         contract.ContractId,
         itemId,
-        returnQuantity
+        qty
       );
 
       // Başarılı iade sonrası contract items güncelle
@@ -375,7 +377,7 @@ export default function ContractDetailModal({
       setReturnQuantity(1);
 
       alert(
-        `İade başarılı!\nİade edilen: ${returnQuantity} adet\nKirada kalan: ${result.RemainingOnRent} adet`
+        `İade başarılı!\nİade edilen: ${qty} adet\nKirada kalan: ${result.RemainingOnRent} adet`
       );
     } catch (error) {
       console.error('Return item error:', error);
@@ -639,7 +641,7 @@ export default function ContractDetailModal({
                         value={item.ItemId}
                         disabled={effectiveAvailable <= 0}
                       >
-                        {item.ItemName} - ₺{item.DailyPrice.toFixed(2)}/gün 
+                        {item.ItemName} - ₺{(item.MonthlyListPrice ?? 0).toFixed(2)}/ay 
                         {effectiveAvailable > 0 
                           ? ` (Müsait: ${effectiveAvailable})` 
                           : ' (Stok Yok)'}
@@ -650,7 +652,7 @@ export default function ContractDetailModal({
                 <input
                   type="number"
                   value={itemQuantity}
-                  onChange={(e) => setItemQuantity(Number(e.target.value))}
+                  onChange={(e) => setItemQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                   min="1"
                   className="input w-24"
                   placeholder="Miktar"
@@ -750,7 +752,7 @@ export default function ContractDetailModal({
                         <div className="flex-1">
                           <div className="font-medium">{item.ItemName}</div>
                           <div className="text-sm text-text-secondary">
-                            {formatCurrency(item.DailyPriceAtRent)}/gün × {item.RentedQuantity} adet
+                            Efektif günlük: {formatCurrency(item.DailyPriceAtRent)} × {item.RentedQuantity} adet
                           </div>
                           {/* İade durumu gösterimi */}
                           {item.ReturnedQuantity > 0 && (
@@ -797,7 +799,7 @@ export default function ContractDetailModal({
                             <input
                               type="number"
                               value={returnQuantity}
-                              onChange={(e) => setReturnQuantity(Math.max(1, Math.min(remainingOnRent, Number(e.target.value))))}
+                              onChange={(e) => setReturnQuantity(e.target.value === '' ? '' : Math.max(1, Math.min(remainingOnRent, Number(e.target.value))))}
                               min="1"
                               max={remainingOnRent}
                               className="input w-24"

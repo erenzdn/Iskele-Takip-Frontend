@@ -16,9 +16,9 @@ export default function PriceTierDetailModal({
   onClose,
 }: PriceTierDetailModalProps) {
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [minDays, setMinDays] = useState(1);
-  const [maxDays, setMaxDays] = useState(30);
-  const [priceMultiplier, setPriceMultiplier] = useState(1.0);
+  const [minDays, setMinDays] = useState<number | ''>(1);
+  const [maxDays, setMaxDays] = useState<number | ''>(30);
+  const [priceMultiplier, setPriceMultiplier] = useState<number | ''>(1.0);
   const [isBusy, setIsBusy] = useState(false);
 
   useEffect(() => {
@@ -36,7 +36,7 @@ export default function PriceTierDetailModal({
       return;
     }
 
-    if (minDays > maxDays) {
+    if (Number(minDays) > Number(maxDays)) {
       alert('Minimum gün maksimum günden büyük olamaz');
       return;
     }
@@ -46,16 +46,16 @@ export default function PriceTierDetailModal({
       if (isNew) {
         await priceTierService.createAsync({
           ItemId: Number(selectedItemId),
-          MinDays: minDays,
-          MaxDays: maxDays,
-          PriceMultiplier: priceMultiplier,
+          MinDays: Number(minDays),
+          MaxDays: Number(maxDays),
+          PriceMultiplier: Number(priceMultiplier),
         });
       } else if (tier) {
         await priceTierService.updateAsync(tier.TierId, {
           ItemId: Number(selectedItemId),
-          MinDays: minDays,
-          MaxDays: maxDays,
-          PriceMultiplier: priceMultiplier,
+          MinDays: Number(minDays),
+          MaxDays: Number(maxDays),
+          PriceMultiplier: Number(priceMultiplier),
         });
       }
       onClose();
@@ -115,7 +115,7 @@ export default function PriceTierDetailModal({
               <input
                 type="number"
                 value={minDays}
-                onChange={(e) => setMinDays(Number(e.target.value))}
+                onChange={(e) => setMinDays(e.target.value === '' ? '' : Number(e.target.value))}
                 min="1"
                 className="input w-full"
               />
@@ -125,7 +125,7 @@ export default function PriceTierDetailModal({
               <input
                 type="number"
                 value={maxDays}
-                onChange={(e) => setMaxDays(Number(e.target.value))}
+                onChange={(e) => setMaxDays(e.target.value === '' ? '' : Number(e.target.value))}
                 min="1"
                 className="input w-full"
               />
@@ -137,7 +137,7 @@ export default function PriceTierDetailModal({
             <input
               type="number"
               value={priceMultiplier}
-              onChange={(e) => setPriceMultiplier(Number(e.target.value))}
+              onChange={(e) => setPriceMultiplier(e.target.value === '' ? '' : Number(e.target.value))}
               min="0.1"
               max="10"
               step="0.1"

@@ -36,14 +36,33 @@ export interface MaterialCategory {
   Inventories?: Inventory[];
 }
 
+export interface SubCategory {
+  SubCategoryId: number;
+  CategoryId: number;
+  SubCategoryName: string;
+  CategoryName?: string;
+}
+
+export interface InventorySubCategory {
+  InventorySubCategoryId: number;
+  SubCategoryId: number;
+  SubCategoryName: string;
+  CategoryId: number;
+  CategoryName?: string;
+}
+
 export interface Inventory {
   ItemId: number;
+  ItemCode?: string;
   CategoryId: number;
   ItemName: string;
   TotalStock: number;
   OnRent: number;
   DailyPrice: number;
   PurchasePrice: number;
+  MonthlyListPrice?: number;
+  UnitPrice?: number;
+  SubCategories?: SubCategory[];
   CreatedAt?: string;
   CreatedByUserFullName?: string;
   CreatedByUserName?: string;

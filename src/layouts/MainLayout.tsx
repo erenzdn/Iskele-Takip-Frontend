@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 
@@ -52,6 +53,36 @@ export default function MainLayout({ children }: MainLayoutProps) {
   const permissions = user?.Permissions ?? [];
   const visibleMain = filterByPermission(mainMenuItems, permissions);
   const visibleManagement = filterByPermission(managementMenuItems, permissions);
+
+  useEffect(() => {
+    // Mouse scroll ile number input degerinin degismesini engelle
+    const handleWheel = (e: WheelEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === 'INPUT' && (target as HTMLInputElement).type === 'number') {
+        (target as HTMLElement).blur();
+      }
+    };
+
+    // ArrowUp/ArrowDown ile number input degerinin degismesini engelle
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (
+        target.tagName === 'INPUT' &&
+        (target as HTMLInputElement).type === 'number' &&
+        (e.key === 'ArrowUp' || e.key === 'ArrowDown')
+      ) {
+        e.preventDefault();
+      }
+    };
+
+    document.addEventListener('wheel', handleWheel, { passive: true });
+    document.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      document.removeEventListener('wheel', handleWheel);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
 
   return (
     <div className="flex h-screen bg-background-main">
