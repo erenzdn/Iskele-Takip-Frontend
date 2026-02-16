@@ -1,12 +1,14 @@
 import { useState, useEffect } from 'react';
 import { inventoryService } from '../services/inventoryService';
 import { Inventory, MaterialCategory } from '../models';
+import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
 
 export default function InventoryPage() {
   const [inventory, setInventory] = useState<Inventory[]>([]);
+  const [allInventory, setAllInventory] = useState<Inventory[]>([]);
   const [categories, setCategories] = useState<MaterialCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<MaterialCategory | null>(null);
   const [loading, setLoading] = useState(true);
@@ -14,6 +16,10 @@ export default function InventoryPage() {
   const [isItemModalOpen, setIsItemModalOpen] = useState(false);
   const [isNewItem, setIsNewItem] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [editingCategory, setEditingCategory] = useState<MaterialCategory | null>(null);
+  const [searchText, setSearchText] = useState('');
+  const [minAvailable, setMinAvailable] = useState<number | ''>('');
+  const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
 
   useEffect(() => {
     loadData();
@@ -35,34 +41,11 @@ export default function InventoryPage() {
         Category: categoryMap.get(item.CategoryId),
       }));
 
+      setAllInventory(inventoryWithCategories);
       setInventory(inventoryWithCategories);
       setCategories(catData);
     } catch (error) {
       console.error('Load inventory error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleFilterByCategory = async () => {
-    if (!selectedCategory) {
-      loadData();
-      return;
-    }
-
-    try {
-      setLoading(true);
-      const data = await inventoryService.getByCategoryAsync(selectedCategory.CategoryId);
-      
-      // Category bilgisini ekle
-      const filteredWithCategory = data.map((item) => ({
-        ...item,
-        Category: selectedCategory,
-      }));
-      
-      setInventory(filteredWithCategory);
-    } catch (error) {
-      console.error('Filter error:', error);
     } finally {
       setLoading(false);
     }
@@ -75,6 +58,12 @@ export default function InventoryPage() {
   };
 
   const handleAddCategory = () => {
+    setEditingCategory(null);
+    setIsCategoryModalOpen(true);
+  };
+
+  const handleEditCategory = (cat: MaterialCategory) => {
+    setEditingCategory(cat);
     setIsCategoryModalOpen(true);
   };
 
@@ -92,12 +81,31 @@ export default function InventoryPage() {
 
   const handleCategoryModalClose = () => {
     setIsCategoryModalOpen(false);
+    setEditingCategory(null);
     loadData();
   };
 
   const formatCurrency = (amount: number) => {
     return `₺${amount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
+
+  const filteredInventory = allInventory.filter((item) => {
+    const text = searchText.trim().toLowerCase();
+    const name = item.ItemName?.toLowerCase() ?? '';
+    const categoryName = item.Category?.CategoryName?.toLowerCase() ?? '';
+
+    const itemCode = item.ItemCode?.toLowerCase() ?? '';
+    const matchesText = !text || name.includes(text) || categoryName.includes(text) || itemCode.includes(text);
+
+    const matchesCategory =
+      !selectedCategory || item.CategoryId === selectedCategory.CategoryId;
+
+    const availableStock = item.TotalStock - item.OnRent;
+    const matchesMin = minAvailable === '' || availableStock >= minAvailable;
+    const matchesMax = maxAvailable === '' || availableStock <= maxAvailable;
+
+    return matchesText && matchesCategory && matchesMin && matchesMax;
+  });
 
   if (loading) {
     return (
@@ -124,31 +132,122 @@ export default function InventoryPage() {
         </div>
       </div>
 
-      <div className="mb-6 flex gap-4">
-        <select
-          value={selectedCategory?.CategoryId || ''}
-          onChange={(e) => {
-            const cat = categories.find((c) => c.CategoryId === Number(e.target.value));
-            setSelectedCategory(cat || null);
-          }}
-          className="input"
-        >
-          <option value="">Tüm Kategoriler</option>
-          {categories.map((cat) => (
-            <option key={cat.CategoryId} value={cat.CategoryId}>
-              {cat.CategoryName}
-            </option>
-          ))}
-        </select>
-        <button onClick={handleFilterByCategory} className="btn-secondary">
-          Filtrele
-        </button>
-        <button onClick={loadData} className="btn-secondary">
-          Yenile
-        </button>
+      <div className="mb-6 card p-4 space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-semibold">Arama ve Filtreler</h2>
+            <p className="text-sm text-text-secondary">
+              Malzemeleri isim, kategori ve müsait stok miktarına göre filtreleyin.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchText('');
+              setSelectedCategory(null);
+              setMinAvailable('');
+              setMaxAvailable('');
+              setInventory(allInventory);
+            }}
+            className="btn-secondary"
+          >
+            Filtreleri Sıfırla
+          </button>
+        </div>
+
+        <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
+          {/* Search */}
+          <div className="flex-1">
+            <label className="block text-xs font-medium text-text-secondary mb-1">
+              Ara
+            </label>
+            <div className="flex gap-2">
+              <div className="relative flex-1">
+                <span className="absolute inset-y-0 left-3 flex items-center text-text-secondary text-sm">
+                  🔍
+                </span>
+                <input
+                  type="text"
+                  className="input w-full pl-8"
+                  placeholder="Ürün kodu, malzeme adı veya kategori (örn: BRU2M001, İskele)"
+                  value={searchText}
+                  onChange={(e) => setSearchText(e.target.value)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Category filter */}
+          <div className="w-full lg:w-64">
+            <label className="block text-xs font-medium text-text-secondary mb-1">
+              Kategori
+            </label>
+            <div className="flex gap-2">
+              <select
+                value={selectedCategory?.CategoryId || ''}
+                onChange={(e) => {
+                  const cat = categories.find((c) => c.CategoryId === Number(e.target.value));
+                  setSelectedCategory(cat || null);
+                }}
+                className="input flex-1"
+              >
+                <option value="">Tüm Kategoriler</option>
+                {categories.map((cat) => (
+                  <option key={cat.CategoryId} value={cat.CategoryId}>
+                    {cat.CategoryName}
+                  </option>
+                ))}
+              </select>
+              {selectedCategory && (
+                <button
+                  type="button"
+                  onClick={() => handleEditCategory(selectedCategory)}
+                  className="btn-secondary text-sm px-3"
+                  title="Kategoriyi düzenle"
+                >
+                  Yönet
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Available stock filter */}
+          <div className="w-full lg:w-72 flex gap-3">
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Müsait Stok (min)
+              </label>
+              <input
+                type="number"
+                className="input w-full"
+                min={0}
+                value={minAvailable === '' ? '' : minAvailable}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setMinAvailable(value === '' ? '' : Number(value));
+                }}
+              />
+            </div>
+            <div className="flex-1">
+              <label className="block text-xs font-medium text-text-secondary mb-1">
+                Müsait Stok (max)
+              </label>
+              <input
+                type="number"
+                className="input w-full"
+                min={0}
+                value={maxAvailable === '' ? '' : maxAvailable}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setMaxAvailable(value === '' ? '' : Number(value));
+                }}
+              />
+            </div>
+          </div>
+        </div>
       </div>
 
-      {inventory.length === 0 ? (
+      {filteredInventory.length === 0 ? (
         <EmptyState
           icon="📦"
           title="Henüz envanter kalemi bulunmuyor"
@@ -160,31 +259,43 @@ export default function InventoryPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '28%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '8%' }}>
+                    Ürün Kodu
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '17%' }}>
                     Malzeme Adı
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '9%' }}>
                     Kategori
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '6%' }}>
                     Toplam
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '6%' }}>
                     Kirada
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '6%' }}>
                     Müsait
                   </th>
-                  <th className="text-right p-4 font-semibold" style={{ width: '12%' }}>
-                    Günlük Fiyat
+                  <th className="text-right p-4 font-semibold" style={{ width: '9%' }}>
+                    Aylık Liste
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '15%' }}>
+                  <th className="text-right p-4 font-semibold" style={{ width: '9%' }}>
+                    Günlük Efektif
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '12%' }}>
+                    Alt Kategoriler
+                  </th>
+                  <th className="text-center p-4 font-semibold" style={{ width: '8%' }}>
                     Durum
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '10%' }}>
+                    Kayıt Bilgisi
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {inventory.map((item) => {
+                {filteredInventory.map((item) => {
                   const availableStock = item.TotalStock - item.OnRent;
                   const stockPercentage = item.TotalStock > 0 ? (availableStock / item.TotalStock) * 100 : 0;
                   
@@ -207,9 +318,18 @@ export default function InventoryPage() {
                       onClick={() => handleOpenItemDetail(item)}
                     >
                       <td className="p-4">
+                        {item.ItemCode ? (
+                          <span className="font-mono text-sm font-medium text-accent bg-accent/10 px-2 py-0.5 rounded">
+                            {item.ItemCode}
+                          </span>
+                        ) : (
+                          <span className="text-text-secondary text-sm">-</span>
+                        )}
+                      </td>
+                      <td className="p-4">
                         <div className="font-medium">{item.ItemName}</div>
                         <div className="text-sm text-text-secondary">
-                          Alış: {formatCurrency(item.PurchasePrice)}
+                          Birim: {item.UnitPrice ? formatCurrency(item.UnitPrice) : formatCurrency(item.PurchasePrice)}
                         </div>
                       </td>
                       <td className="p-4">{item.Category?.CategoryName || '-'}</td>
@@ -226,11 +346,40 @@ export default function InventoryPage() {
                       </td>
                       <td className="p-4 text-right">
                         <span className="text-green-500 font-bold">
-                          {formatCurrency(item.DailyPrice)}
+                          {item.MonthlyListPrice ? formatCurrency(item.MonthlyListPrice) : '-'}
                         </span>
+                      </td>
+                      <td className="p-4 text-right">
+                        <span className="font-medium text-text-secondary">
+                          {item.MonthlyListPrice
+                            ? formatCurrency(item.MonthlyListPrice / 30)
+                            : item.DailyPrice
+                              ? formatCurrency(item.DailyPrice)
+                              : '-'}
+                        </span>
+                      </td>
+                      <td className="p-4">
+                        {item.SubCategories && item.SubCategories.length > 0 ? (
+                          <div className="flex flex-wrap gap-1">
+                            {item.SubCategories.map((sc) => (
+                              <span
+                                key={sc.SubCategoryId}
+                                className="badge bg-purple-600/30 text-purple-300 text-xs"
+                              >
+                                {sc.SubCategoryName}
+                              </span>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-text-secondary text-sm">-</span>
+                        )}
                       </td>
                       <td className="p-4 text-center">
                         {statusBadge}
+                      </td>
+                      <td className="p-4 text-sm text-text-secondary">
+                        <div>{item.CreatedByUserFullName || item.CreatedByUserName || '-'}</div>
+                        <div>{formatShortDateTime(item.CreatedAt)}</div>
                       </td>
                     </tr>
                   );
@@ -251,7 +400,11 @@ export default function InventoryPage() {
       )}
 
       {isCategoryModalOpen && (
-        <CategoryDetailModal onClose={handleCategoryModalClose} />
+        <CategoryDetailModal
+          category={editingCategory}
+          categories={categories}
+          onClose={handleCategoryModalClose}
+        />
       )}
     </div>
   );

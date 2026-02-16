@@ -3,6 +3,9 @@ import react from '@vitejs/plugin-react';
 import path from 'path';
 
 export default defineConfig({
+  build: {
+    outDir: 'dist-web', // dist yerine - EBUSY kilidi önlemek için
+  },
   plugins: [react()],
   resolve: {
     alias: {

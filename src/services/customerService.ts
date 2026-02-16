@@ -1,12 +1,15 @@
 import { apiClient } from './apiClient';
-import { Customer } from '../models';
+import { AuditLog, Customer } from '../models';
 
 export interface CreateCustomerRequest {
   Name: string;
   TaxId?: string;
+  TaxOffice?: string;
   PhoneNumber?: string;
   Email?: string;
   Address?: string;
+  CenterAuthorizedPerson?: string;
+  CenterAuthorizedPhone?: string;
 }
 
 export interface UpdateCustomerRequest extends CreateCustomerRequest {}
@@ -32,7 +35,11 @@ export const customerService = {
       (c) =>
         c.Name.toLowerCase().includes(search) ||
         (c.Email?.toLowerCase().includes(search) ?? false) ||
-        (c.PhoneNumber?.toLowerCase().includes(search) ?? false)
+        (c.PhoneNumber?.toLowerCase().includes(search) ?? false) ||
+        (c.TaxId?.toLowerCase().includes(search) ?? false) ||
+        (c.TaxOffice?.toLowerCase().includes(search) ?? false) ||
+        (c.CenterAuthorizedPerson?.toLowerCase().includes(search) ?? false) ||
+        (c.CenterAuthorizedPhone?.toLowerCase().includes(search) ?? false)
     );
   },
 
@@ -46,6 +53,10 @@ export const customerService = {
 
   async deleteAsync(id: number): Promise<void> {
     return apiClient.delete<void>(`/customers/${id}`);
+  },
+
+  async getAuditLogsByCustomerAsync(customerId: number): Promise<AuditLog[]> {
+    return apiClient.get<AuditLog[]>(`/customers/${customerId}/audit-logs`);
   },
 };
 

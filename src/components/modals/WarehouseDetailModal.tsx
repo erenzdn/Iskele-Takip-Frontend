@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Warehouse, WarehouseStock, Inventory } from '../../models';
+import { AuditLog, Warehouse, WarehouseStock, Inventory } from '../../models';
 import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
+import AuditLogTimeline from '../AuditLogTimeline';
 
 interface WarehouseDetailModalProps {
   warehouse: Warehouse | null;
@@ -26,9 +27,12 @@ export default function WarehouseDetailModal({
   const [showAddStock, setShowAddStock] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<Inventory[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [quantity, setQuantity] = useState<number>(0);
+  const [quantity, setQuantity] = useState<number | ''>(0);
   const [editingStockId, setEditingStockId] = useState<number | null>(null);
-  const [editingQuantity, setEditingQuantity] = useState<number>(0);
+  const [editingQuantity, setEditingQuantity] = useState<number | ''>(0);
+  const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
+  const [warehouseLogs, setWarehouseLogs] = useState<AuditLog[]>([]);
+  const [warehouseLogsLoading, setWarehouseLogsLoading] = useState(false);
 
   useEffect(() => {
     if (warehouse) {
@@ -52,6 +56,28 @@ export default function WarehouseDetailModal({
       setLoadingStock(false);
     }
   };
+
+  const loadWarehouseLogs = async () => {
+    if (!warehouse) return;
+    try {
+      setWarehouseLogsLoading(true);
+      const data = await warehouseService.getAuditLogsByWarehouseAsync(warehouse.WarehouseId);
+      setWarehouseLogs(data ?? []);
+    } catch (error) {
+      console.error('Load warehouse audit logs error:', error);
+      setWarehouseLogs([]);
+    } finally {
+      setWarehouseLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (warehouse?.WarehouseId && !isNew) {
+      loadWarehouseLogs();
+    } else {
+      setWarehouseLogs([]);
+    }
+  }, [warehouse?.WarehouseId, isNew]);
 
   const loadInventoryItems = async () => {
     try {
@@ -117,7 +143,7 @@ export default function WarehouseDetailModal({
   };
 
   const handleAddStock = async () => {
-    if (!warehouse || !selectedItemId || quantity <= 0) {
+    if (!warehouse || !selectedItemId || Number(quantity) <= 0) {
       alert('Lütfen ürün seçin ve geçerli bir miktar girin');
       return;
     }
@@ -126,7 +152,7 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.addOrUpdateStockAsync(warehouse.WarehouseId, {
         ItemId: Number(selectedItemId),
-        Quantity: quantity,
+        Quantity: Number(quantity),
       });
       setShowAddStock(false);
       setSelectedItemId('');
@@ -146,7 +172,7 @@ export default function WarehouseDetailModal({
   };
 
   const handleSaveEditStock = async (stockItem: WarehouseStock) => {
-    if (!warehouse || editingQuantity < 0) {
+    if (!warehouse || Number(editingQuantity) < 0) {
       alert('Geçerli bir miktar girin');
       return;
     }
@@ -155,7 +181,7 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.addOrUpdateStockAsync(warehouse.WarehouseId, {
         ItemId: stockItem.ItemId,
-        Quantity: editingQuantity,
+        Quantity: Number(editingQuantity),
       });
       setEditingStockId(null);
       await loadStock();
@@ -191,10 +217,49 @@ export default function WarehouseDetailModal({
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-background-panel rounded-panel w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-6">
+        <h2 className="text-2xl font-bold mb-4">
           {isNew ? 'Yeni Depo' : 'Depo Detayı'}
         </h2>
 
+        {!isNew && (
+          <div className="flex gap-2 mb-4 border-b border-background-border">
+            <button
+              onClick={() => setActiveTab('info')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'info'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Bilgiler
+            </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'history'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Geçmiş
+            </button>
+          </div>
+        )}
+
+        {activeTab === 'history' && !isNew && (
+          <>
+            <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
+            <AuditLogTimeline logs={warehouseLogs} loading={warehouseLogsLoading} />
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className="btn-secondary flex-1">
+                Kapat
+              </button>
+            </div>
+          </>
+        )}
+
+        {(activeTab === 'info' || isNew) && (
+        <>
         {/* Depo Özet Bilgileri (sadece mevcut depolarda) */}
         {isReadOnly && !isNew && warehouse && (
           <div className="mb-6 card bg-blue-900 p-4">
@@ -291,7 +356,7 @@ export default function WarehouseDetailModal({
                     <input
                       type="number"
                       value={quantity}
-                      onChange={(e) => setQuantity(Number(e.target.value))}
+                      onChange={(e) => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                       min="1"
                       className="input w-full"
                     />
@@ -300,7 +365,7 @@ export default function WarehouseDetailModal({
                 <div className="flex gap-2 mt-4">
                   <button
                     onClick={handleAddStock}
-                    disabled={isBusy || !selectedItemId || quantity <= 0}
+                    disabled={isBusy || !selectedItemId || Number(quantity) <= 0}
                     className="btn-primary text-sm"
                   >
                     Ekle
@@ -342,7 +407,7 @@ export default function WarehouseDetailModal({
                             <input
                               type="number"
                               value={editingQuantity}
-                              onChange={(e) => setEditingQuantity(Number(e.target.value))}
+                              onChange={(e) => setEditingQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                               min="0"
                               className="input w-20 text-center"
                               autoFocus
@@ -438,6 +503,8 @@ export default function WarehouseDetailModal({
             </button>
           )}
         </div>
+        </>
+        )}
       </div>
     </div>
   );

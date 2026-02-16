@@ -1,5 +1,5 @@
 import { apiClient } from './apiClient';
-import { Contract, ReturnItemResponse } from '../models';
+import { AuditLog, Contract, ReturnItemResponse } from '../models';
 
 export interface CreateContractDetailRequest {
   ItemId: number;
@@ -80,6 +80,10 @@ export const contractService = {
       templateId,
       format,
     });
+  },
+
+  async getAuditLogsByContractAsync(contractId: number): Promise<AuditLog[]> {
+    return apiClient.get<AuditLog[]>(`/contracts/${contractId}/audit-logs`);
   },
 };
 

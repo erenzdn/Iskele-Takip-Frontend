@@ -3,7 +3,7 @@ import { purchaseInvoiceService } from '../services/purchaseInvoiceService';
 import { PurchaseInvoice } from '../models';
 import EmptyState from '../components/EmptyState';
 import PurchaseInvoiceDetailModal from '../components/modals/PurchaseInvoiceDetailModal';
-import { formatCurrency, formatDate } from '../utils/formatters';
+import { formatCurrency, formatDate, formatShortDateTime } from '../utils/formatters';
 
 export default function PurchaseInvoicesPage() {
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
@@ -158,8 +158,11 @@ export default function PurchaseInvoicesPage() {
                   <th className="text-right p-4 font-semibold" style={{ width: '10%' }}>
                     KDV
                   </th>
-                  <th className="text-right p-4 font-semibold" style={{ width: '16%' }}>
+                  <th className="text-right p-4 font-semibold" style={{ width: '14%' }}>
                     Toplam
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '16%' }}>
+                    Oluşturan / Son Güncelleyen
                   </th>
                 </tr>
               </thead>
@@ -188,6 +191,12 @@ export default function PurchaseInvoicesPage() {
                     </td>
                     <td className="p-4 text-right font-semibold text-accent">
                       {formatCurrency(invoice.TotalAmount)}
+                    </td>
+                    <td className="p-4 text-sm text-text-secondary">
+                      <div>Oluşturan: {invoice.CreatedByUserFullName || invoice.CreatedByUserName || '-'}</div>
+                      <div>{formatShortDateTime(invoice.CreatedAt)}</div>
+                      <div className="mt-1">Güncelleyen: {invoice.LastModifiedByUserFullName || invoice.LastModifiedByUserName || '-'}</div>
+                      <div>{formatShortDateTime(invoice.LastModifiedAt)}</div>
                     </td>
                   </tr>
                 ))}

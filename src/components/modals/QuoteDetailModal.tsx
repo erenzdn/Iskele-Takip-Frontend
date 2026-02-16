@@ -32,7 +32,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   );
   const [quoteItems, setQuoteItems] = useState<QuoteDetailItem[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [itemQuantity, setItemQuantity] = useState(1);
+  const [itemQuantity, setItemQuantity] = useState<number | ''>(1);
   const [status, setStatus] = useState<QuoteStatus>(QuoteStatus.Pending);
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
@@ -146,12 +146,13 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     const selectedItem = availableItems.find((i) => i.ItemId === Number(selectedItemId));
     if (!selectedItem) return;
 
+    const qty = Number(itemQuantity) || 1;
     const existingItem = quoteItems.find((i) => i.ItemId === Number(selectedItemId));
 
     if (existingItem) {
       setQuoteItems(
         quoteItems.map((i) =>
-          i.ItemId === Number(selectedItemId) ? { ...i, Quantity: i.Quantity + itemQuantity } : i
+          i.ItemId === Number(selectedItemId) ? { ...i, Quantity: i.Quantity + qty } : i
         )
       );
     } else {
@@ -160,8 +161,8 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
         {
           QuoteDetailId: 0,
           ItemId: Number(selectedItemId),
-          Quantity: itemQuantity,
-          DailyPrice: selectedItem.DailyPrice,
+          Quantity: qty,
+          DailyPrice: (selectedItem.MonthlyListPrice || 0) / 30,
           Item: selectedItem,
           ItemName: selectedItem.ItemName,
         },
@@ -468,7 +469,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                   <option value="">Malzeme seçin</option>
                   {availableItems.map((item) => (
                     <option key={item.ItemId} value={item.ItemId}>
-                      {item.ItemName} - ₺{item.DailyPrice.toFixed(2)}/gün (Stok:{' '}
+                      {item.ItemName} - ₺{(item.MonthlyListPrice ?? 0).toFixed(2)}/ay (Stok:{' '}
                       {item.TotalStock - item.OnRent})
                     </option>
                   ))}
@@ -476,7 +477,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                 <input
                   type="number"
                   value={itemQuantity}
-                  onChange={(e) => setItemQuantity(Number(e.target.value))}
+                  onChange={(e) => setItemQuantity(e.target.value === '' ? '' : Number(e.target.value))}
                   min="1"
                   className="input w-24"
                   placeholder="Miktar"
@@ -499,7 +500,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                       <div className="flex-1">
                         <div className="font-medium">{item.ItemName}</div>
                         <div className="text-sm text-text-secondary">
-                          {formatCurrency(item.DailyPrice)}/gün × {item.Quantity} adet
+                          Efektif günlük: {formatCurrency(item.DailyPrice)} × {item.Quantity} adet
                         </div>
                       </div>
                       <div className="flex items-center gap-3">

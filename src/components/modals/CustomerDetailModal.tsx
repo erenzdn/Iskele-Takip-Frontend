@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
-import { Customer, ConstructionSite } from '../../models';
+import { AuditLog, Customer, ConstructionSite } from '../../models';
 import { customerService } from '../../services/customerService';
 import { siteService } from '../../services/siteService';
+import AuditLogTimeline from '../AuditLogTimeline';
 
 interface CustomerDetailModalProps {
   customer: Customer | null;
@@ -14,16 +15,32 @@ export default function CustomerDetailModal({
   isNew,
   onClose,
 }: CustomerDetailModalProps) {
-  const [activeTab, setActiveTab] = useState<'info' | 'sites'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'sites' | 'history'>('info');
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
+  const [customerLogs, setCustomerLogs] = useState<AuditLog[]>([]);
+  const [customerLogsLoading, setCustomerLogsLoading] = useState(false);
   const [name, setName] = useState('');
   const [taxId, setTaxId] = useState('');
+  const [taxOffice, setTaxOffice] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
   const [email, setEmail] = useState('');
   const [address, setAddress] = useState('');
+  const [centerAuthorizedPerson, setCenterAuthorizedPerson] = useState('');
+  const [centerAuthorizedPhone, setCenterAuthorizedPhone] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [totalContracts, setTotalContracts] = useState(0);
   const [activeContracts, setActiveContracts] = useState(0);
+
+  // Telefon girişini sadece rakamla sınırla (max 11 hane: 0XXX XXX XX XX)
+  const handlePhoneInput = (
+    value: string,
+    setter: (val: string) => void
+  ) => {
+    const digitsOnly = value.replace(/\D/g, '');
+    if (digitsOnly.length <= 11) {
+      setter(digitsOnly);
+    }
+  };
 
   // Şantiye state'leri
   const [sites, setSites] = useState<ConstructionSite[]>([]);
@@ -39,9 +56,12 @@ export default function CustomerDetailModal({
     if (customer) {
       setName(customer.Name);
       setTaxId(customer.TaxId || '');
+      setTaxOffice(customer.TaxOffice || '');
       setPhoneNumber(customer.PhoneNumber || '');
       setEmail(customer.Email || '');
       setAddress(customer.Address || '');
+      setCenterAuthorizedPerson(customer.CenterAuthorizedPerson || '');
+      setCenterAuthorizedPhone(customer.CenterAuthorizedPhone || '');
       setTotalContracts(customer.Contracts?.length || 0);
       setActiveContracts(
         customer.Contracts?.filter((c) => !c.IsCompleted).length || 0
@@ -63,35 +83,63 @@ export default function CustomerDetailModal({
     }
   };
 
+  const loadCustomerLogs = async () => {
+    if (!customer) return;
+    try {
+      setCustomerLogsLoading(true);
+      const data = await customerService.getAuditLogsByCustomerAsync(customer.CustomerId);
+      setCustomerLogs(data ?? []);
+    } catch (error) {
+      console.error('Load customer audit logs error:', error);
+      setCustomerLogs([]);
+    } finally {
+      setCustomerLogsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (customer && !isNew) {
+      loadCustomerLogs();
+    } else {
+      setCustomerLogs([]);
+    }
+  }, [customer?.CustomerId, isNew]);
+
   const handleSave = async () => {
     if (!name.trim()) {
       alert('Müşteri adı zorunludur');
       return;
     }
+    if (!taxOffice.trim()) {
+      alert('Vergi dairesi zorunludur');
+      return;
+    }
 
     try {
       setIsBusy(true);
+      const payload = {
+        Name: name,
+        TaxId: taxId || undefined,
+        TaxOffice: taxOffice || undefined,
+        PhoneNumber: phoneNumber || undefined,
+        Email: email || undefined,
+        Address: address || undefined,
+        CenterAuthorizedPerson: centerAuthorizedPerson || undefined,
+        CenterAuthorizedPhone: centerAuthorizedPhone || undefined,
+      };
       if (isNew) {
-        await customerService.createAsync({
-          Name: name,
-          TaxId: taxId || undefined,
-          PhoneNumber: phoneNumber || undefined,
-          Email: email || undefined,
-          Address: address || undefined,
-        });
+        await customerService.createAsync(payload);
       } else if (customer) {
-        await customerService.updateAsync(customer.CustomerId, {
-          Name: name,
-          TaxId: taxId || undefined,
-          PhoneNumber: phoneNumber || undefined,
-          Email: email || undefined,
-          Address: address || undefined,
-        });
+        await customerService.updateAsync(customer.CustomerId, payload);
       }
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Save customer error:', error);
-      alert('Kaydetme hatası');
+      if (error?.status === 409) {
+        alert('Bu bilgilerle kayıtlı başka bir müşteri zaten mevcut. Lütfen benzersiz değerler girin (Ad, Vergi No, Telefon veya Merkez Yetkili Telefon).');
+      } else {
+        alert('Kaydetme hatası');
+      }
     } finally {
       setIsBusy(false);
     }
@@ -220,6 +268,16 @@ export default function CustomerDetailModal({
             >
               Şantiyeler ({sites.length})
             </button>
+            <button
+              onClick={() => setActiveTab('history')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'history'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Geçmiş
+            </button>
           </div>
         )}
 
@@ -259,26 +317,41 @@ export default function CustomerDetailModal({
                 />
               </div>
 
-              <div>
-                <label className="block text-sm font-medium mb-2">Vergi Numarası</label>
-                <input
-                  type="text"
-                  value={taxId}
-                  onChange={(e) => setTaxId(e.target.value)}
-                  disabled={isReadOnly}
-                  placeholder="Vergi numarası (opsiyonel)"
-                  className="input w-full"
-                />
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Vergi Numarası</label>
+                  <input
+                    type="text"
+                    value={taxId}
+                    onChange={(e) => setTaxId(e.target.value)}
+                    disabled={isReadOnly}
+                    placeholder="Vergi numarası (opsiyonel)"
+                    className="input w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Vergi Dairesi *</label>
+                  <input
+                    type="text"
+                    value={taxOffice}
+                    onChange={(e) => setTaxOffice(e.target.value)}
+                    disabled={isReadOnly}
+                    placeholder="Vergi dairesi"
+                    className="input w-full"
+                    required
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block text-sm font-medium mb-2">Telefon Numarası</label>
                 <input
-                  type="text"
+                  type="tel"
                   value={phoneNumber}
-                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  onChange={(e) => handlePhoneInput(e.target.value, setPhoneNumber)}
                   disabled={isReadOnly}
-                  placeholder="0xxx xxx xx xx"
+                  placeholder="05XX XXX XX XX"
+                  maxLength={11}
                   className="input w-full"
                 />
               </div>
@@ -304,6 +377,32 @@ export default function CustomerDetailModal({
                   placeholder="Tam adres bilgisi"
                   className="input w-full h-24 resize-none"
                 />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium mb-2">Merkez Yetkili Kişi</label>
+                  <input
+                    type="text"
+                    value={centerAuthorizedPerson}
+                    onChange={(e) => setCenterAuthorizedPerson(e.target.value)}
+                    disabled={isReadOnly}
+                    placeholder="Merkez yetkili kişi adı"
+                    className="input w-full"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium mb-2">Merkez Yetkili Telefon</label>
+                  <input
+                    type="tel"
+                    value={centerAuthorizedPhone}
+                    onChange={(e) => handlePhoneInput(e.target.value, setCenterAuthorizedPhone)}
+                    disabled={isReadOnly}
+                    placeholder="05XX XXX XX XX"
+                    maxLength={11}
+                    className="input w-full"
+                  />
+                </div>
               </div>
             </div>
 
@@ -343,6 +442,19 @@ export default function CustomerDetailModal({
               )}
             </div>
           </>
+        )}
+
+        {/* Geçmiş Tab */}
+        {activeTab === 'history' && !isNew && (
+          <div>
+            <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
+            <AuditLogTimeline logs={customerLogs} loading={customerLogsLoading} />
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className="btn-secondary flex-1">
+                Kapat
+              </button>
+            </div>
+          </div>
         )}
 
         {/* Şantiyeler Tab */}
@@ -388,10 +500,11 @@ export default function CustomerDetailModal({
                   <div>
                     <label className="block text-sm font-medium mb-2">Sorumlu Telefon</label>
                     <input
-                      type="text"
+                      type="tel"
                       value={responsiblePhone}
-                      onChange={(e) => setResponsiblePhone(e.target.value)}
-                      placeholder="0xxx xxx xx xx"
+                      onChange={(e) => handlePhoneInput(e.target.value, setResponsiblePhone)}
+                      placeholder="05XX XXX XX XX"
+                      maxLength={11}
                       className="input w-full"
                     />
                   </div>

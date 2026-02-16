@@ -46,6 +46,17 @@
     @apply bg-background-panel border border-background-border rounded-input px-4 py-3 text-text-primary placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary;
   }
 
+  /* Number input spinner butonlarini gizle */
+  input[type="number"]::-webkit-inner-spin-button,
+  input[type="number"]::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+
+  input[type="number"] {
+    -moz-appearance: textfield;
+  }
+
   /* TipTap Editor Styles */
   .ProseMirror {
     @apply outline-none;

@@ -1,5 +1,5 @@
 import { apiClient } from './apiClient';
-import { Inventory, MaterialCategory } from '../models';
+import { AuditLog, Inventory, InventorySubCategory, MaterialCategory, WarehouseStock } from '../models';
 
 export interface CreateCategoryRequest {
   CategoryName: string;
@@ -13,15 +13,26 @@ export interface CreateCategoryResponse {
 }
 
 export interface CreateInventoryRequest {
+  ItemCode?: string;
   CategoryId: number;
   ItemName: string;
   TotalStock: number;
   OnRent: number;
-  DailyPrice: number;
-  PurchasePrice: number;
+  MonthlyListPrice?: number;
+  UnitPrice?: number;
+  SubCategoryIds?: number[];
 }
 
-export interface UpdateInventoryRequest extends CreateInventoryRequest {}
+export interface UpdateInventoryRequest {
+  ItemCode?: string;
+  CategoryId?: number;
+  ItemName?: string;
+  TotalStock?: number;
+  OnRent?: number;
+  MonthlyListPrice?: number;
+  UnitPrice?: number;
+  SubCategoryIds?: number[];
+}
 
 export interface CreateInventoryResponse {
   ItemId: number;
@@ -78,6 +89,18 @@ export const inventoryService = {
 
   async getPriceTiersAsync(itemId: number) {
     return apiClient.get(`/inventory/${itemId}/price-tiers`);
+  },
+
+  async getSubCategoriesAsync(itemId: number): Promise<InventorySubCategory[]> {
+    return apiClient.get<InventorySubCategory[]>(`/inventory/${itemId}/subcategories`);
+  },
+
+  async getWarehousesByItemAsync(itemId: number): Promise<WarehouseStock[]> {
+    return apiClient.get<WarehouseStock[]>(`/inventory/${itemId}/warehouses`);
+  },
+
+  async getAuditLogsByItemAsync(itemId: number): Promise<AuditLog[]> {
+    return apiClient.get<AuditLog[]>(`/inventory/${itemId}/audit-logs`);
   },
 };
 

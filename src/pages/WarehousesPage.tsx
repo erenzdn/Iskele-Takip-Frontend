@@ -1,10 +1,13 @@
 import { useState, useEffect, Fragment } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { warehouseService } from '../services/warehouseService';
 import { Warehouse, WarehouseStock } from '../models';
+import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import WarehouseDetailModal from '../components/modals/WarehouseDetailModal';
 
 export default function WarehousesPage() {
+  const navigate = useNavigate();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
@@ -119,20 +122,23 @@ export default function WarehousesPage() {
             <table className="w-full">
               <thead>
                 <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '25%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '22%' }}>
                     Depo Adı
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '30%' }}>
+                  <th className="text-left p-4 font-semibold" style={{ width: '26%' }}>
                     Adres
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '15%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '12%' }}>
                     Ürün Çeşidi
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '15%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '12%' }}>
                     Toplam Miktar
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '15%' }}>
+                  <th className="text-center p-4 font-semibold" style={{ width: '12%' }}>
                     Durum
+                  </th>
+                  <th className="text-left p-4 font-semibold" style={{ width: '16%' }}>
+                    Oluşturan / Son Güncelleyen
                   </th>
                 </tr>
               </thead>
@@ -156,13 +162,21 @@ export default function WarehousesPage() {
                         className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${
                           isExpanded ? 'bg-background-hover' : ''
                         }`}
-                        onClick={() => handleToggleExpand(warehouse)}
+                        onClick={() => navigate(`/warehouses/${warehouse.WarehouseId}`)}
                       >
                         <td className="p-4">
                           <div className="flex items-center gap-2">
-                            <span className={`text-text-secondary transition-transform ${isExpanded ? 'rotate-90' : ''}`}>
-                              ▶
-                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleToggleExpand(warehouse);
+                              }}
+                              className="text-text-secondary transition-transform hover:text-text-primary"
+                              title={isExpanded ? 'Kapat' : 'Depodaki malzemeleri göster'}
+                            >
+                              <span className={isExpanded ? 'inline-block rotate-90' : 'inline-block'}>▶</span>
+                            </button>
                             <div>
                               <div className="font-medium">{warehouse.WarehouseName}</div>
                               {warehouse.Description && (
@@ -190,6 +204,13 @@ export default function WarehousesPage() {
                           <div className="flex items-center justify-center gap-2">
                             {statusBadge}
                             <button
+                              onClick={() => navigate(`/warehouses/${warehouse.WarehouseId}`)}
+                              className="btn-secondary text-xs px-3 py-1 ml-2"
+                              title="Depo içeriğini gör"
+                            >
+                              Depo Detayı
+                            </button>
+                            <button
                               onClick={(e) => handleOpenDetail(warehouse, e)}
                               className="text-blue-400 hover:text-blue-300 ml-2"
                               title="Düzenle"
@@ -198,11 +219,17 @@ export default function WarehousesPage() {
                             </button>
                           </div>
                         </td>
+                        <td className="p-4 text-sm text-text-secondary">
+                          <div>Oluşturan: {warehouse.CreatedByUserFullName || warehouse.CreatedByUserName || '-'}</div>
+                          <div>{formatShortDateTime(warehouse.CreatedAt)}</div>
+                          <div className="mt-1">Güncelleyen: {warehouse.LastModifiedByUserFullName || warehouse.LastModifiedByUserName || '-'}</div>
+                          <div>{formatShortDateTime(warehouse.LastModifiedAt)}</div>
+                        </td>
                       </tr>
                       {/* Genişletilmiş malzeme listesi */}
                       {isExpanded && (
                         <tr key={`${warehouse.WarehouseId}-expanded`}>
-                          <td colSpan={5} className="p-0">
+                          <td colSpan={6} className="p-0">
                             <div className="bg-background-secondary p-4 border-b border-background-border">
                               {loadingStock ? (
                                 <div className="text-center py-4 text-text-secondary">
