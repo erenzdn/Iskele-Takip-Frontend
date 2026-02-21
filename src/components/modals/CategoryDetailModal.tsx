@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { MaterialCategory, SubCategory } from '../../models';
 import { inventoryService } from '../../services/inventoryService';
 import { subcategoryService } from '../../services/subcategoryService';
+import ConfirmModal from './ConfirmModal';
 
 interface CategoryDetailModalProps {
   category?: MaterialCategory | null;
@@ -41,6 +42,9 @@ export default function CategoryDetailModal({
   // Yeni modda, alt kategori ekleme sekmesinde mevcut alt kategorileri goster
   const [parentSubCategories, setParentSubCategories] = useState<SubCategory[]>([]);
   const [parentSubCategoriesLoading, setParentSubCategoriesLoading] = useState(false);
+  const [showDeleteCategoryConfirm, setShowDeleteCategoryConfirm] = useState(false);
+  const [showDeleteSubCategoryConfirm, setShowDeleteSubCategoryConfirm] = useState(false);
+  const [subCategoryToDelete, setSubCategoryToDelete] = useState<SubCategory | null>(null);
 
   useEffect(() => {
     if (category) {
@@ -128,15 +132,17 @@ export default function CategoryDetailModal({
     }
   };
 
-  const handleDeleteCategory = async () => {
+  const handleDeleteCategoryClick = () => {
     if (!category) return;
-    if (!confirm('Bu kategoriyi silmek istediğinizden emin misiniz? Kategoriye ait alt kategoriler de silinecektir.')) {
-      return;
-    }
+    setShowDeleteCategoryConfirm(true);
+  };
 
+  const handleDeleteCategoryConfirm = async () => {
+    if (!category) return;
     try {
       setIsBusy(true);
       await inventoryService.deleteCategoryAsync(category.CategoryId);
+      setShowDeleteCategoryConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete category error:', error);
@@ -230,14 +236,18 @@ export default function CategoryDetailModal({
   };
 
   // ---- Alt kategori silme ----
-  const handleDeleteSubCategory = async (sc: SubCategory) => {
-    if (!confirm(`"${sc.SubCategoryName}" alt kategorisini silmek istediğinizden emin misiniz?`)) {
-      return;
-    }
+  const handleDeleteSubCategoryClick = (sc: SubCategory) => {
+    setSubCategoryToDelete(sc);
+    setShowDeleteSubCategoryConfirm(true);
+  };
 
+  const handleDeleteSubCategoryConfirm = async () => {
+    if (!subCategoryToDelete) return;
     try {
       setSubCategoryBusy(true);
-      await subcategoryService.deleteAsync(sc.SubCategoryId);
+      await subcategoryService.deleteAsync(subCategoryToDelete.SubCategoryId);
+      setShowDeleteSubCategoryConfirm(false);
+      setSubCategoryToDelete(null);
       if (category) {
         loadSubCategories(category.CategoryId);
       } else if (selectedParentCategoryId) {
@@ -307,7 +317,7 @@ export default function CategoryDetailModal({
                   Düzenle
                 </button>
                 <button
-                  onClick={() => handleDeleteSubCategory(sc)}
+                  onClick={() => handleDeleteSubCategoryClick(sc)}
                   disabled={subCategoryBusy}
                   className="text-red-400 hover:text-red-300 text-sm px-2"
                 >
@@ -548,7 +558,7 @@ export default function CategoryDetailModal({
               {!isReadOnly && (
                 <>
                   <button
-                    onClick={handleDeleteCategory}
+                    onClick={handleDeleteCategoryClick}
                     disabled={isBusy}
                     className="btn-danger flex-1"
                   >
@@ -570,6 +580,24 @@ export default function CategoryDetailModal({
           </>
         )}
       </div>
+      <ConfirmModal
+        open={showDeleteCategoryConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu kategoriyi silmek istediğinizden emin misiniz? Kategoriye ait alt kategoriler de silinecektir."
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteCategoryConfirm}
+        onCancel={() => setShowDeleteCategoryConfirm(false)}
+      />
+      <ConfirmModal
+        open={showDeleteSubCategoryConfirm}
+        title="Onaylıyor musunuz?"
+        message={subCategoryToDelete ? `"${subCategoryToDelete.SubCategoryName}" alt kategorisini silmek istediğinizden emin misiniz?` : ''}
+        variant="danger"
+        loading={subCategoryBusy}
+        onConfirm={handleDeleteSubCategoryConfirm}
+        onCancel={() => { setShowDeleteSubCategoryConfirm(false); setSubCategoryToDelete(null); }}
+      />
     </div>
   );
 }

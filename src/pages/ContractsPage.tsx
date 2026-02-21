@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { ClipboardIcon, NotePencilIcon } from '@phosphor-icons/react';
 import { contractService } from '../services/contractService';
 import { quoteService } from '../services/quoteService';
 import { customerService } from '../services/customerService';
@@ -168,17 +169,6 @@ export default function ContractsPage() {
     }
   };
 
-  const getTabLabel = () => {
-    switch (activeTab) {
-      case 'active':
-        return 'Aktif Sözleşmeler';
-      case 'completed':
-        return 'Kapalı Sözleşmeler';
-      case 'quotes':
-        return 'Teklifler';
-    }
-  };
-
   const getAddButtonLabel = () => {
     return activeTab === 'quotes' ? '+ Yeni Teklif' : '+ Yeni Sözleşme';
   };
@@ -187,7 +177,7 @@ export default function ContractsPage() {
     if (contracts.length === 0) {
       return (
         <EmptyState
-          icon="📋"
+          icon={<ClipboardIcon size={48} weight="duotone" />}
           title={activeTab === 'active' ? 'Aktif sözleşme bulunmuyor' : 'Kapalı sözleşme bulunmuyor'}
           description={
             activeTab === 'active'
@@ -201,7 +191,7 @@ export default function ContractsPage() {
     return (
       <div className="card">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full table-compact">
             <thead>
               <tr className="border-b border-background-border">
                 <th className="text-left p-4 font-semibold" style={{ width: '7%' }}>
@@ -297,7 +287,7 @@ export default function ContractsPage() {
     if (quotes.length === 0) {
       return (
         <EmptyState
-          icon="📝"
+          icon={<NotePencilIcon size={48} weight="duotone" />}
           title="Henüz teklif bulunmuyor"
           description="Yeni bir teklif oluşturun"
         />
@@ -307,7 +297,7 @@ export default function ContractsPage() {
     return (
       <div className="card">
         <div className="overflow-x-auto">
-          <table className="w-full">
+          <table className="w-full table-compact">
             <thead>
               <tr className="border-b border-background-border">
                 <th className="text-left p-4 font-semibold" style={{ width: '8%' }}>

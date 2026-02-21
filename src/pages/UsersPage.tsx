@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { UserIcon } from '@phosphor-icons/react';
 import { userService } from '../services/userService';
 import { User } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
@@ -114,14 +115,14 @@ export default function UsersPage() {
 
       {users.length === 0 ? (
         <EmptyState
-          icon="👤"
+          icon={<UserIcon size={48} weight="duotone" />}
           title="Henüz kullanıcı bulunmuyor"
           description="Yeni kullanıcı eklemek için yukarıdaki butonu kullanın"
         />
       ) : (
         <div className="card">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-compact">
               <thead>
                 <tr className="border-b border-background-border">
                   <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>

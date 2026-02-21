@@ -15,6 +15,8 @@ export interface CreateQuoteRequest {
   TotalPrice: number;
   Status?: QuoteStatus;
   Notes?: string;
+  Iskonto?: number;
+  VatRate?: number;
   details: CreateQuoteDetailRequest[];
 }
 
@@ -26,6 +28,8 @@ export interface UpdateQuoteRequest {
   TotalPrice?: number;
   Status?: QuoteStatus;
   Notes?: string;
+  Iskonto?: number;
+  VatRate?: number;
   details?: CreateQuoteDetailRequest[];
 }
 
@@ -36,6 +40,12 @@ export interface CreateQuoteResponse {
 export interface ConvertQuoteResponse {
   message: string;
   ContractId: number;
+}
+
+export interface WarehouseAssignment {
+  ItemId: number;
+  WarehouseId: number;
+  Quantity: number;
 }
 
 export const quoteService = {
@@ -72,8 +82,19 @@ export const quoteService = {
     return apiClient.delete<void>(`/quotes/${id}`);
   },
 
-  async convertToContractAsync(id: number): Promise<ConvertQuoteResponse> {
-    return apiClient.post<ConvertQuoteResponse>(`/quotes/${id}/convert`, {});
+  /** Dönüşüm seçenekleri: defaultWarehouseId (tümü tek depodan) veya warehouseAssignments (ürün bazlı) */
+  async convertToContractAsync(
+    id: number,
+    options?: { warehouseAssignments?: WarehouseAssignment[]; defaultWarehouseId?: number }
+  ): Promise<ConvertQuoteResponse> {
+    const body: Record<string, unknown> = {};
+    if (options?.defaultWarehouseId != null) {
+      body.defaultWarehouseId = options.defaultWarehouseId;
+    }
+    if (options?.warehouseAssignments?.length) {
+      body.warehouseAssignments = options.warehouseAssignments;
+    }
+    return apiClient.post<ConvertQuoteResponse>(`/quotes/${id}/convert`, body);
   },
 
   async acceptQuoteAsync(id: number): Promise<Quote> {

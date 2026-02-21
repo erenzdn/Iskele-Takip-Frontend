@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { PriceTier, Inventory } from '../../models';
 import { priceTierService } from '../../services/priceTierService';
+import ConfirmModal from './ConfirmModal';
 
 interface PriceTierDetailModalProps {
   tier: PriceTier | null;
@@ -20,6 +21,7 @@ export default function PriceTierDetailModal({
   const [maxDays, setMaxDays] = useState<number | ''>(30);
   const [priceMultiplier, setPriceMultiplier] = useState<number | ''>(1.0);
   const [isBusy, setIsBusy] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (tier) {
@@ -67,14 +69,17 @@ export default function PriceTierDetailModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!tier || !confirm('Bu tarifeyi silmek istediğinizden emin misiniz?')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!tier) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!tier) return;
     try {
       setIsBusy(true);
       await priceTierService.deleteAsync(tier.TierId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete price tier error:', error);
@@ -159,7 +164,7 @@ export default function PriceTierDetailModal({
         <div className="flex gap-3 mt-6">
           {!isNew && tier && (
             <button
-              onClick={handleDelete}
+              onClick={handleDeleteClick}
               disabled={isBusy}
               className="btn-danger flex-1"
             >
@@ -178,6 +183,15 @@ export default function PriceTierDetailModal({
           </button>
         </div>
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu tarifeyi silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { CurrencyCircleDollarIcon } from '@phosphor-icons/react';
 import { priceTierService } from '../services/priceTierService';
 import { inventoryService } from '../services/inventoryService';
 import { PriceTier, Inventory } from '../models';
@@ -135,14 +136,14 @@ export default function PriceTiersPage() {
 
       {priceTiers.length === 0 ? (
         <EmptyState
-          icon="💰"
+          icon={<CurrencyCircleDollarIcon size={48} weight="duotone" />}
           title="Henüz fiyat tarifesi bulunmuyor"
           description="Süreye göre fiyat çarpanları tanımlayın"
         />
       ) : (
         <div className="card">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-compact">
               <thead>
                 <tr className="border-b border-background-border">
                   <th className="text-left p-4 font-semibold" style={{ width: '40%' }}>

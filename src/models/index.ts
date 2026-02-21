@@ -83,6 +83,8 @@ export interface Contract {
   ActualEndDate?: string; // ISO 8601 format
   InitialTotalPrice: number;
   FinalCalculatedPrice?: number;
+  Iskonto?: number;  // yüzde
+  VatRate?: number;  // yüzde
   IsCompleted: boolean;
   CreatedAt?: string;
   CreatedByUserFullName?: string;
@@ -99,6 +101,7 @@ export interface ContractDetail {
   DetailId: number;
   ContractId: number;
   ItemId: number;
+  WarehouseId?: number;
   RentedQuantity: number;
   ReturnedQuantity: number;
   DailyPriceAtRent: number;
@@ -258,6 +261,8 @@ export interface ContractDetailItem {
   DetailId: number;
   Item?: Inventory;
   ItemId: number;
+  WarehouseId: number;
+  WarehouseName?: string;
   RentedQuantity: number;
   ReturnedQuantity: number;
   DailyPriceAtRent: number;
@@ -276,6 +281,43 @@ export interface ReturnItemResponse {
   RentedQuantity: number;
   ReturnedQuantity: number;
   RemainingOnRent: number;
+  ReturnDate: string;
+  LateDays: number;
+  LateFee: number;
+  WarehouseId: number;
+  ContractCompleted: boolean;
+}
+
+// Sözleşme İade Geçmişi
+export interface ContractReturn {
+  ReturnId: number;
+  ContractId: number;
+  ItemId: number;
+  ItemName: string;
+  WarehouseId?: number;
+  WarehouseName?: string;
+  ReturnQuantity: number;
+  ReturnDate: string;
+  LateDays: number;
+  LateFee: number;
+  CreatedAt: string;
+}
+
+// Sözleşme Fiyat Hesaplama
+export interface ContractPriceCalculation {
+  contractId: number;
+  plannedDays: number;
+  basePrice: number;
+  totalLateFee: number;
+  finalPrice: number;
+  returns: {
+    ReturnId: number;
+    ItemId: number;
+    ReturnQuantity: number;
+    ReturnDate: string;
+    LateDays: number;
+    LateFee: number;
+  }[];
 }
 
 // Alış Faturası
@@ -289,6 +331,8 @@ export interface PurchaseInvoice {
   Subtotal: number;
   VatAmount: number;
   TotalAmount: number;
+  Iskonto?: number;  // yüzde
+  VatRate?: number;  // yüzde
   CreatedAt?: string;
   CreatedByUserFullName?: string;
   CreatedByUserName?: string;
@@ -345,6 +389,8 @@ export interface Quote {
   TotalPrice: number;
   Status: QuoteStatus;
   Notes?: string;
+  Iskonto?: number;  // yüzde
+  VatRate?: number;  // yüzde
   CreatedAt: string; // ISO 8601 format
   UpdatedAt: string; // ISO 8601 format
   ConvertedContractId?: number;

@@ -3,6 +3,7 @@ import { AuditLog, Customer, ConstructionSite } from '../../models';
 import { customerService } from '../../services/customerService';
 import { siteService } from '../../services/siteService';
 import AuditLogTimeline from '../AuditLogTimeline';
+import ConfirmModal from './ConfirmModal';
 
 interface CustomerDetailModalProps {
   customer: Customer | null;
@@ -51,6 +52,9 @@ export default function CustomerDetailModal({
   const [siteAddress, setSiteAddress] = useState('');
   const [responsiblePerson, setResponsiblePerson] = useState('');
   const [responsiblePhone, setResponsiblePhone] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteSiteConfirm, setShowDeleteSiteConfirm] = useState(false);
+  const [siteToDelete, setSiteToDelete] = useState<ConstructionSite | null>(null);
 
   useEffect(() => {
     if (customer) {
@@ -145,14 +149,17 @@ export default function CustomerDetailModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!customer || !confirm('Bu müşteriyi silmek istediğinizden emin misiniz?')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!customer) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!customer) return;
     try {
       setIsBusy(true);
       await customerService.deleteAsync(customer.CustomerId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete customer error:', error);
@@ -221,14 +228,18 @@ export default function CustomerDetailModal({
     }
   };
 
-  const handleDeleteSite = async (site: ConstructionSite) => {
-    if (!confirm(`"${site.SiteName}" şantiyesini silmek istediğinizden emin misiniz?`)) {
-      return;
-    }
+  const handleDeleteSiteClick = (site: ConstructionSite) => {
+    setSiteToDelete(site);
+    setShowDeleteSiteConfirm(true);
+  };
 
+  const handleDeleteSiteConfirm = async () => {
+    if (!siteToDelete) return;
     try {
       setIsBusy(true);
-      await siteService.deleteAsync(site.SiteId);
+      await siteService.deleteAsync(siteToDelete.SiteId);
+      setShowDeleteSiteConfirm(false);
+      setSiteToDelete(null);
       loadSites();
     } catch (error) {
       console.error('Delete site error:', error);
@@ -416,7 +427,7 @@ export default function CustomerDetailModal({
                 <>
                   {!isNew && customer && (
                     <button
-                      onClick={handleDelete}
+                      onClick={handleDeleteClick}
                       disabled={isBusy}
                       className="btn-danger flex-1"
                     >
@@ -572,7 +583,7 @@ export default function CustomerDetailModal({
                           Düzenle
                         </button>
                         <button
-                          onClick={() => handleDeleteSite(site)}
+                          onClick={() => handleDeleteSiteClick(site)}
                           className="btn-danger text-sm px-3 py-1"
                         >
                           Sil
@@ -592,6 +603,24 @@ export default function CustomerDetailModal({
           </div>
         )}
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu müşteriyi silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmModal
+        open={showDeleteSiteConfirm}
+        title="Onaylıyor musunuz?"
+        message={siteToDelete ? `"${siteToDelete.SiteName}" şantiyesini silmek istediğinizden emin misiniz?` : ''}
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteSiteConfirm}
+        onCancel={() => { setShowDeleteSiteConfirm(false); setSiteToDelete(null); }}
+      />
     </div>
   );
 }

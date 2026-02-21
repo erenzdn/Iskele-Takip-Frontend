@@ -1,27 +1,41 @@
 import { useEffect } from 'react';
 import { Link, useLocation } from 'react-router-dom';
+import {
+  ChartLineIcon,
+  ClipboardIcon,
+  CurrencyCircleDollarIcon,
+  GearIcon,
+  PackageIcon,
+  ReceiptIcon,
+  ScrollIcon,
+  UserIcon,
+  UsersIcon,
+  WarehouseIcon,
+} from '@phosphor-icons/react';
 import { useAuthStore } from '../store/authStore';
 
 interface MainLayoutProps {
   children: React.ReactNode;
 }
 
-type MenuItem = { path: string; label: string; icon: string; requiredPermission?: string };
+const iconProps = { size: 20, weight: 'regular' as const, color: 'currentColor' };
+
+type MenuItem = { path: string; label: string; icon: React.ReactNode; requiredPermission?: string };
 
 const mainMenuItems: MenuItem[] = [
-  { path: '/', label: 'Dashboard', icon: '📊' },
-  { path: '/customers', label: 'Müşteriler', icon: '👥', requiredPermission: 'customers_view' },
-  { path: '/inventory', label: 'Envanter', icon: '📦', requiredPermission: 'inventory_view' },
-  { path: '/warehouses', label: 'Depolar', icon: '🏭', requiredPermission: 'warehouses_view' },
-  { path: '/contracts', label: 'Sözleşmeler', icon: '📋', requiredPermission: 'contracts_view' },
-  { path: '/purchase-invoices', label: 'Alış Faturaları', icon: '🧾', requiredPermission: 'purchaseInvoices_view' },
+  { path: '/', label: 'Dashboard', icon: <ChartLineIcon {...iconProps} /> },
+  { path: '/customers', label: 'Müşteriler', icon: <UsersIcon {...iconProps} />, requiredPermission: 'customers_view' },
+  { path: '/inventory', label: 'Envanter', icon: <PackageIcon {...iconProps} />, requiredPermission: 'inventory_view' },
+  { path: '/warehouses', label: 'Depolar', icon: <WarehouseIcon {...iconProps} />, requiredPermission: 'warehouses_view' },
+  { path: '/contracts', label: 'Sözleşmeler', icon: <ClipboardIcon {...iconProps} />, requiredPermission: 'contracts_view' },
+  { path: '/purchase-invoices', label: 'Alış Faturaları', icon: <ReceiptIcon {...iconProps} />, requiredPermission: 'purchaseInvoices_view' },
 ];
 
 const managementMenuItems: MenuItem[] = [
-  { path: '/price-tiers', label: 'Fiyat Tarifeleri', icon: '💰', requiredPermission: 'priceTiers_view' },
-  { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: '⚙️', requiredPermission: 'pricingRules_view' },
-  { path: '/users', label: 'Kullanıcılar', icon: '👤', requiredPermission: 'users_view' },
-  { path: '/audit-logs', label: 'Audit Logları', icon: '📋', requiredPermission: 'auditLogs_view' },
+  { path: '/price-tiers', label: 'Fiyat Tarifeleri', icon: <CurrencyCircleDollarIcon {...iconProps} />, requiredPermission: 'priceTiers_view' },
+  { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: <GearIcon {...iconProps} />, requiredPermission: 'pricingRules_view' },
+  { path: '/users', label: 'Kullanıcılar', icon: <UserIcon {...iconProps} />, requiredPermission: 'users_view' },
+  { path: '/audit-logs', label: 'Audit Logları', icon: <ScrollIcon {...iconProps} />, requiredPermission: 'auditLogs_view' },
 ];
 
 function filterByPermission(items: MenuItem[], permissions: string[]) {
@@ -40,7 +54,7 @@ function NavLink({ item, isActive }: { item: MenuItem; isActive: boolean }) {
           : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
       }`}
     >
-      <span className="text-lg">{item.icon}</span>
+      <span className="flex shrink-0 items-center">{item.icon}</span>
       <span className="font-medium">{item.label}</span>
     </Link>
   );

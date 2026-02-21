@@ -4,6 +4,7 @@ import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { subcategoryService } from '../../services/subcategoryService';
 import AuditLogTimeline from '../AuditLogTimeline';
+import ConfirmModal from './ConfirmModal';
 
 interface InventoryDetailModalProps {
   item: Inventory | null;
@@ -48,6 +49,7 @@ export default function InventoryDetailModal({
   const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
   const [itemLogs, setItemLogs] = useState<AuditLog[]>([]);
   const [itemLogsLoading, setItemLogsLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (item) {
@@ -231,14 +233,17 @@ export default function InventoryDetailModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!item || !confirm('Bu malzemeyi silmek istediğinizden emin misiniz?')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!item) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!item) return;
     try {
       setIsBusy(true);
       await inventoryService.deleteAsync(item.ItemId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete inventory error:', error);
@@ -425,11 +430,16 @@ export default function InventoryDetailModal({
                         <div className="w-32">
                           <label className="block text-xs text-text-secondary mb-1">Miktar</label>
                           <input
-                            type="number"
-                            value={ws.quantity}
-                            onChange={(e) => handleWarehouseStockChange(index, 'quantity', e.target.value === '' ? '' : Number(e.target.value))}
-                            min="0"
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={ws.quantity === '' ? '' : ws.quantity}
+                            onChange={(e) => {
+                              const raw = e.target.value.replace(/[^0-9]/g, '');
+                              handleWarehouseStockChange(index, 'quantity', raw === '' ? '' : parseInt(raw, 10));
+                            }}
                             className="input w-full"
+                            placeholder="0"
                           />
                         </div>
                         {warehouseStocks.length > 1 && (
@@ -627,7 +637,7 @@ export default function InventoryDetailModal({
             <>
               {!isNew && item && (
                 <button
-                  onClick={handleDelete}
+                  onClick={handleDeleteClick}
                   disabled={isBusy}
                   className="btn-danger flex-1"
                 >
@@ -655,6 +665,15 @@ export default function InventoryDetailModal({
         </>
         )}
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu malzemeyi silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

@@ -119,7 +119,6 @@ export default function ContractTemplateEditorModal({
       
       // Editöre ekle
       if (editor) {
-        const imageUrl = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}/template-images/${response.ImageId}`;
         editor.chain().focus().setImage({ src: `image:${response.ImageId}` }).run();
       }
 

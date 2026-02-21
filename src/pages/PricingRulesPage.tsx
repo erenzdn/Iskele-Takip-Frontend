@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { GearIcon } from '@phosphor-icons/react';
 import { pricingRulesService } from '../services/pricingRulesService';
 import { PricingRule, PricingRuleType } from '../models';
 import EmptyState from '../components/EmptyState';
@@ -118,14 +119,14 @@ export default function PricingRulesPage() {
 
       {rules.length === 0 ? (
         <EmptyState
-          icon="⚙️"
+          icon={<GearIcon size={48} weight="duotone" />}
           title="Henüz fiyatlandırma kuralı bulunmuyor"
           description="Yeni bir kural ekleyerek başlayın"
         />
       ) : (
         <div className="card">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-compact">
               <thead>
                 <tr className="border-b border-background-border">
                   <th className="text-left p-4 font-semibold" style={{ width: '40%' }}>

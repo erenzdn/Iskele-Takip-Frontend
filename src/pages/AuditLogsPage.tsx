@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { ScrollIcon } from '@phosphor-icons/react';
 import { auditLogService, AuditLogsParams } from '../services/auditLogService';
 import { userService } from '../services/userService';
 import { AuditLog, AuditAction, User } from '../models';
@@ -278,14 +279,14 @@ export default function AuditLogsPage() {
         </div>
       ) : logs.length === 0 ? (
         <EmptyState
-          icon="📋"
+          icon={<ScrollIcon size={48} weight="duotone" />}
           title="Kayıt bulunamadı"
           description="Seçilen filtrelere uygun audit log kaydı yok"
         />
       ) : (
         <div className="card overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-compact">
               <thead>
                 <tr className="border-b border-background-border bg-background-hover">
                   <th className="text-left p-4 font-semibold">Tarih</th>

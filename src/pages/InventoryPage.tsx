@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { PackageIcon } from '@phosphor-icons/react';
 import { inventoryService } from '../services/inventoryService';
 import { Inventory, MaterialCategory } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
@@ -7,7 +8,7 @@ import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
 
 export default function InventoryPage() {
-  const [inventory, setInventory] = useState<Inventory[]>([]);
+  const [, setInventory] = useState<Inventory[]>([]);
   const [allInventory, setAllInventory] = useState<Inventory[]>([]);
   const [categories, setCategories] = useState<MaterialCategory[]>([]);
   const [selectedCategory, setSelectedCategory] = useState<MaterialCategory | null>(null);
@@ -249,14 +250,14 @@ export default function InventoryPage() {
 
       {filteredInventory.length === 0 ? (
         <EmptyState
-          icon="📦"
+          icon={<PackageIcon size={48} weight="duotone" />}
           title="Henüz envanter kalemi bulunmuyor"
           description="Önce kategori, sonra malzeme ekleyin"
         />
       ) : (
         <div className="card">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-compact">
               <thead>
                 <tr className="border-b border-background-border">
                   <th className="text-left p-4 font-semibold" style={{ width: '8%' }}>

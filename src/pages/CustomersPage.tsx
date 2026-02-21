@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { UsersIcon } from '@phosphor-icons/react';
 import { customerService } from '../services/customerService';
 import { Customer } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
@@ -103,14 +104,14 @@ export default function CustomersPage() {
 
       {customers.length === 0 ? (
         <EmptyState
-          icon="👥"
+          icon={<UsersIcon size={48} weight="duotone" />}
           title="Henüz müşteri bulunmuyor"
           description="Yeni müşteri eklemek için yukarıdaki butonu kullanın"
         />
       ) : (
         <div className="card">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-compact">
               <thead>
                 <tr className="border-b border-background-border">
                   <th className="text-left p-4 font-semibold" style={{ width: '24%' }}>

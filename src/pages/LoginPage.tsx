@@ -55,7 +55,7 @@ export default function LoginPage() {
         } else if (error.message.includes('404')) {
           errorMsg = 'API endpoint bulunamadı. Backend\'in çalıştığından emin olun.';
         } else if (error.message.includes('Network Error') || error.message.includes('Failed to fetch')) {
-          errorMsg = 'Backend API\'ye bağlanılamıyor. Backend\'in http://localhost:3000 adresinde çalıştığından emin olun.';
+          errorMsg = `Backend API'ye bağlanılamıyor. Backend'in ${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'} adresinde çalıştığından emin olun.`;
         } else {
           errorMsg = error.message;
         }

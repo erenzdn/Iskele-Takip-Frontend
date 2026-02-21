@@ -9,6 +9,8 @@ export interface CreatePurchaseInvoiceRequest {
   Subtotal: number;
   VatAmount: number;
   TotalAmount: number;
+  Iskonto?: number;
+  VatRate?: number;
 }
 
 export interface UpdatePurchaseInvoiceRequest {
@@ -19,6 +21,8 @@ export interface UpdatePurchaseInvoiceRequest {
   Subtotal?: number;
   VatAmount?: number;
   TotalAmount?: number;
+  Iskonto?: number;
+  VatRate?: number;
 }
 
 export interface CreatePurchaseInvoiceResponse {

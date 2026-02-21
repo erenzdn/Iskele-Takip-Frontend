@@ -3,6 +3,7 @@ import { PurchaseInvoice, Customer } from '../../models';
 import { purchaseInvoiceService } from '../../services/purchaseInvoiceService';
 import { customerService } from '../../services/customerService';
 import { formatCurrency } from '../../utils/formatters';
+import ConfirmModal from './ConfirmModal';
 
 interface PurchaseInvoiceDetailModalProps {
   invoice: PurchaseInvoice | null;
@@ -28,6 +29,7 @@ export default function PurchaseInvoiceDetailModal({
   const [newCustomerEmail, setNewCustomerEmail] = useState('');
   const [newCustomerAddress, setNewCustomerAddress] = useState('');
   const [savingCustomer, setSavingCustomer] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   // Form alanları
   const [invoiceDate, setInvoiceDate] = useState('');
@@ -35,46 +37,27 @@ export default function PurchaseInvoiceDetailModal({
   const [customerId, setCustomerId] = useState<number | ''>('');
   const [description, setDescription] = useState('');
 
-  // Yeni hesaplama alanları
+  // Tutar alanları (tek iskonto, backend ile uyumlu)
   const [quantity, setQuantity] = useState<number>(1);
   const [unitPrice, setUnitPrice] = useState<number>(0);
-  const [discount1, setDiscount1] = useState<number>(0);
-  const [discount2, setDiscount2] = useState<number>(0);
-  const [discount3, setDiscount3] = useState<number>(0);
+  const [iskonto, setIskonto] = useState<number>(0);
   const [vatRate, setVatRate] = useState<number>(20);
 
-  // Hesaplanan değerler
+  // Ön izleme: tek iskonto + KDV (backend hesaplamasına uyum için basit formül)
   const calculations = useMemo(() => {
-    // Toplam = Miktar x Birim Fiyat
     const grossTotal = quantity * unitPrice;
-
-    // Kademeli iskonto hesaplaması
-    const discount1Amount = grossTotal * (discount1 / 100);
-    const afterDiscount1 = grossTotal - discount1Amount;
-
-    const discount2Amount = afterDiscount1 * (discount2 / 100);
-    const afterDiscount2 = afterDiscount1 - discount2Amount;
-
-    const discount3Amount = afterDiscount2 * (discount3 / 100);
-    const subtotal = afterDiscount2 - discount3Amount;
-
-    const totalDiscountAmount = discount1Amount + discount2Amount + discount3Amount;
-
-    // KDV hesaplama
+    const discountAmount = grossTotal * (iskonto / 100);
+    const subtotal = grossTotal - discountAmount;
     const vatAmount = subtotal * (vatRate / 100);
     const totalAmount = subtotal + vatAmount;
-
     return {
       grossTotal,
-      discount1Amount,
-      discount2Amount,
-      discount3Amount,
-      totalDiscountAmount,
+      discountAmount,
       subtotal,
       vatAmount,
       totalAmount,
     };
-  }, [quantity, unitPrice, discount1, discount2, discount3, vatRate]);
+  }, [quantity, unitPrice, iskonto, vatRate]);
 
   useEffect(() => {
     loadCustomers();
@@ -85,17 +68,16 @@ export default function PurchaseInvoiceDetailModal({
       setCustomerId(invoice.CustomerId);
       setDescription(invoice.Description || '');
 
-      // Mevcut faturadan değerleri tersine hesapla
-      // Backend'den gelen subtotal ve vatAmount'u kullan
-      if (invoice.Subtotal > 0) {
+      // Backend'den gelen değerleri doğrudan kullan (geri hesaplama yok)
+      setIskonto(invoice.Iskonto ?? 0);
+      if (invoice.VatRate != null) {
+        setVatRate(invoice.VatRate);
+      } else if (invoice.Subtotal > 0) {
         setVatRate(Math.round((invoice.VatAmount / invoice.Subtotal) * 100));
       }
-      // Miktar ve birim fiyatı subtotal'dan geri hesapla (iskonto yok varsayarak)
       setQuantity(1);
-      setUnitPrice(invoice.Subtotal);
-      setDiscount1(0);
-      setDiscount2(0);
-      setDiscount3(0);
+      const iskontoPct = (invoice.Iskonto ?? 0) / 100;
+      setUnitPrice(iskontoPct < 1 ? invoice.Subtotal / (1 - iskontoPct) : invoice.Subtotal);
     } else {
       // Yeni fatura için bugünün tarihini varsayılan yap
       const today = new Date().toISOString().split('T')[0];
@@ -188,6 +170,8 @@ export default function PurchaseInvoiceDetailModal({
         Subtotal: calculations.subtotal,
         VatAmount: calculations.vatAmount,
         TotalAmount: calculations.totalAmount,
+        Iskonto: iskonto,
+        VatRate: vatRate,
       };
 
       if (isNew) {
@@ -204,14 +188,17 @@ export default function PurchaseInvoiceDetailModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!invoice || !confirm('Bu faturayı silmek istediğinizden emin misiniz?')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!invoice) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!invoice) return;
     try {
       setIsBusy(true);
       await purchaseInvoiceService.deleteAsync(invoice.InvoiceId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete invoice error:', error);
@@ -438,50 +425,20 @@ export default function PurchaseInvoiceDetailModal({
               </div>
             </div>
 
-            {/* İskontolar */}
-            <div className="grid grid-cols-3 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">İskonto 1 (%)</label>
-                <input
-                  type="number"
-                  value={discount1}
-                  onChange={(e) => setDiscount1(parseFloat(e.target.value) || 0)}
-                  disabled={isReadOnly}
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  placeholder="0"
-                  className="input w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">İskonto 2 (%)</label>
-                <input
-                  type="number"
-                  value={discount2}
-                  onChange={(e) => setDiscount2(parseFloat(e.target.value) || 0)}
-                  disabled={isReadOnly}
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  placeholder="0"
-                  className="input w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">İskonto 3 (%)</label>
-                <input
-                  type="number"
-                  value={discount3}
-                  onChange={(e) => setDiscount3(parseFloat(e.target.value) || 0)}
-                  disabled={isReadOnly}
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  placeholder="0"
-                  className="input w-full"
-                />
-              </div>
+            {/* İskonto (tek alan, backend ile uyumlu) */}
+            <div className="mb-4">
+              <label className="block text-sm font-medium mb-2">İskonto (%)</label>
+              <input
+                type="number"
+                value={iskonto}
+                onChange={(e) => setIskonto(parseFloat(e.target.value) || 0)}
+                disabled={isReadOnly}
+                min="0"
+                max="100"
+                step="0.01"
+                placeholder="0"
+                className="input w-32"
+              />
             </div>
 
             {/* KDV Oranı */}
@@ -507,31 +464,11 @@ export default function PurchaseInvoiceDetailModal({
                 <span>{formatCurrency(calculations.grossTotal)}</span>
               </div>
 
-              {calculations.totalDiscountAmount > 0 && (
-                <>
-                  {discount1 > 0 && (
-                    <div className="flex justify-between mb-1 text-sm">
-                      <span className="text-text-secondary pl-4">İskonto 1 ({discount1}%):</span>
-                      <span className="text-red-400">-{formatCurrency(calculations.discount1Amount)}</span>
-                    </div>
-                  )}
-                  {discount2 > 0 && (
-                    <div className="flex justify-between mb-1 text-sm">
-                      <span className="text-text-secondary pl-4">İskonto 2 ({discount2}%):</span>
-                      <span className="text-red-400">-{formatCurrency(calculations.discount2Amount)}</span>
-                    </div>
-                  )}
-                  {discount3 > 0 && (
-                    <div className="flex justify-between mb-1 text-sm">
-                      <span className="text-text-secondary pl-4">İskonto 3 ({discount3}%):</span>
-                      <span className="text-red-400">-{formatCurrency(calculations.discount3Amount)}</span>
-                    </div>
-                  )}
-                  <div className="flex justify-between mb-2 text-red-400">
-                    <span>İskonto Toplamı:</span>
-                    <span>-{formatCurrency(calculations.totalDiscountAmount)}</span>
-                  </div>
-                </>
+              {calculations.discountAmount > 0 && (
+                <div className="flex justify-between mb-2 text-red-400">
+                  <span>İskonto ({iskonto}%):</span>
+                  <span>-{formatCurrency(calculations.discountAmount)}</span>
+                </div>
               )}
 
               <div className="flex justify-between mb-2 border-t border-background-border pt-2">
@@ -563,7 +500,7 @@ export default function PurchaseInvoiceDetailModal({
             <>
               {!isNew && invoice && (
                 <button
-                  onClick={handleDelete}
+                  onClick={handleDeleteClick}
                   disabled={isBusy}
                   className="btn-danger flex-1"
                 >
@@ -589,6 +526,15 @@ export default function PurchaseInvoiceDetailModal({
           )}
         </div>
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu faturayı silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

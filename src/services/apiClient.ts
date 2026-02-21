@@ -4,6 +4,12 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const SIGNING_SECRET = import.meta.env.VITE_SIGNING_SECRET;
 const SIGNING_ENABLED = import.meta.env.VITE_SIGNING_ENABLED === 'true';
 
+/** Sadece development'ta loglar; production'da API istek/yanıt detayları görünmez. */
+const isDev = import.meta.env.DEV;
+function devLog(...args: unknown[]) {
+  if (isDev) console.log(...args);
+}
+
 // Signing aktifse secret zorunlu
 if (SIGNING_ENABLED && !SIGNING_SECRET) {
   throw new Error(
@@ -113,7 +119,7 @@ class ApiClient {
     (headers as Record<string, string>)['X-Nonce'] = nonce;
     (headers as Record<string, string>)['X-Signature'] = signature;
 
-    console.log(`[API SIGNING] Endpoint: ${endpoint}, Timestamp: ${timestamp}, Nonce: ${nonce}`);
+    devLog(`[API SIGNING] Endpoint: ${endpoint}, Timestamp: ${timestamp}, Nonce: ${nonce}`);
   }
 
   private async createRequest(
@@ -146,12 +152,8 @@ class ApiClient {
 
     const request = new Request(url, config);
 
-    // Log request
-    console.log(`[API REQUEST] ${method} ${url}`);
-    if (body) {
-      console.log('[API REQUEST BODY]', body);
-      console.log('[API REQUEST BODY JSON]', JSON.stringify(body));
-    }
+    devLog(`[API REQUEST] ${method} ${url}`);
+    if (body) devLog('[API REQUEST BODY]', body);
 
     return request;
   }
@@ -160,14 +162,13 @@ class ApiClient {
     try {
       const response = await fetch(request);
       
-      // Log response
-      console.log(`[API RESPONSE] ${response.status} for ${request.url}`);
+      devLog(`[API RESPONSE] ${response.status} for ${request.url}`);
 
       if (!response.ok) {
         let errorText = '';
         try {
           errorText = await response.text();
-          console.log('[API ERROR RESPONSE]', errorText);
+          devLog('[API ERROR RESPONSE]', errorText);
         } catch {
           errorText = 'Yanıt okunamadı';
         }
@@ -183,24 +184,24 @@ class ApiClient {
       }
 
       const text = await response.text();
-      console.log('[API RESPONSE BODY]', text);
-      
+      devLog('[API RESPONSE BODY]', text);
+
       if (!text) {
         throw new Error('Boş yanıt alındı');
       }
-      
+
       let data: T;
       try {
         data = JSON.parse(text) as T;
-        console.log('[API PARSED DATA]', data);
+        devLog('[API PARSED DATA]', data);
       } catch (parseError) {
-        console.error('[API PARSE ERROR]', parseError, 'Raw text:', text);
+        if (isDev) console.error('[API PARSE ERROR]', parseError, 'Raw text:', text);
         throw new Error('API yanıtı parse edilemedi');
       }
       
       return data;
     } catch (error) {
-      console.error('[API ERROR]', error);
+      devLog('[API ERROR]', error);
       throw error;
     }
   }
@@ -238,7 +239,7 @@ class ApiClient {
     // Request signing header'larını ekle
     await this.addSignatureHeaders(headers, 'GET', endpoint);
 
-    console.log(`[API REQUEST] GET ${url} (blob)`);
+    devLog(`[API REQUEST] GET ${url} (blob)`);
 
     try {
       const response = await fetch(url, {
@@ -246,13 +247,13 @@ class ApiClient {
         headers,
       });
 
-      console.log(`[API RESPONSE] ${response.status} for ${url} (blob)`);
+      devLog(`[API RESPONSE] ${response.status} for ${url} (blob)`);
 
       if (!response.ok) {
         let errorText = '';
         try {
           errorText = await response.text();
-          console.log('[API ERROR RESPONSE]', errorText);
+          devLog('[API ERROR RESPONSE]', errorText);
         } catch {
           errorText = 'Yanıt okunamadı';
         }
@@ -265,7 +266,7 @@ class ApiClient {
       const blob = await response.blob();
       return blob;
     } catch (error) {
-      console.error('[API ERROR]', error);
+      devLog('[API ERROR]', error);
       throw error;
     }
   }
@@ -294,21 +295,19 @@ class ApiClient {
       config.body = JSON.stringify(body);
     }
 
-    console.log(`[API REQUEST] POST ${url} (blob)`);
-    if (body) {
-      console.log('[API REQUEST BODY]', body);
-    }
+    devLog(`[API REQUEST] POST ${url} (blob)`);
+    if (body) devLog('[API REQUEST BODY]', body);
 
     try {
       const response = await fetch(url, config);
 
-      console.log(`[API RESPONSE] ${response.status} for ${url} (blob)`);
+      devLog(`[API RESPONSE] ${response.status} for ${url} (blob)`);
 
       if (!response.ok) {
         let errorText = '';
         try {
           errorText = await response.text();
-          console.log('[API ERROR RESPONSE]', errorText);
+          devLog('[API ERROR RESPONSE]', errorText);
         } catch {
           errorText = 'Yanıt okunamadı';
         }
@@ -321,7 +320,7 @@ class ApiClient {
       const blob = await response.blob();
       return blob;
     } catch (error) {
-      console.error('[API ERROR]', error);
+      devLog('[API ERROR]', error);
       throw error;
     }
   }

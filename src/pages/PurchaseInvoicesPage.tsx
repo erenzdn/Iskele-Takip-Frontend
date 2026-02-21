@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { ReceiptIcon } from '@phosphor-icons/react';
 import { purchaseInvoiceService } from '../services/purchaseInvoiceService';
 import { PurchaseInvoice } from '../models';
 import EmptyState from '../components/EmptyState';
@@ -130,14 +131,14 @@ export default function PurchaseInvoicesPage() {
 
       {invoices.length === 0 ? (
         <EmptyState
-          icon="🧾"
+          icon={<ReceiptIcon size={48} weight="duotone" />}
           title="Henüz alış faturası bulunmuyor"
           description="Yeni alış faturası eklemek için yukarıdaki butonu kullanın"
         />
       ) : (
         <div className="card">
           <div className="overflow-x-auto">
-            <table className="w-full">
+            <table className="w-full table-compact">
               <thead>
                 <tr className="border-b border-background-border">
                   <th className="text-left p-4 font-semibold" style={{ width: '10%' }}>

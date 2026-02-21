@@ -1,12 +1,16 @@
 import { useState, useEffect } from 'react';
-import { AuditLog, Contract, Customer, Inventory, ContractDetailItem, ConstructionSite, ReturnItemResponse, ContractTemplate } from '../../models';
+import { AuditLog, Contract, Customer, Inventory, ContractDetailItem, ConstructionSite, ReturnItemResponse, ContractReturn, ContractPriceCalculation, ContractTemplate, Warehouse } from '../../models';
 import { contractService } from '../../services/contractService';
 import { customerService } from '../../services/customerService';
 import { inventoryService } from '../../services/inventoryService';
+import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
 import { contractTemplateService } from '../../services/contractTemplateService';
 import ContractTemplateEditorModal from './ContractTemplateEditorModal';
 import AuditLogTimeline from '../AuditLogTimeline';
+import ConfirmModal from './ConfirmModal';
+import SearchableItemCombobox from '../SearchableItemCombobox';
+import { getApiErrorMessage } from '../../utils/apiError';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -34,14 +38,28 @@ export default function ContractDetailModal({
   );
   const [actualEndDate, setActualEndDate] = useState<string>('');
   const [contractItems, setContractItems] = useState<ContractDetailItem[]>([]);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [itemQuantity, setItemQuantity] = useState<number | ''>(1);
+  const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | ''>('');
+  /** Miktar inputu – sadece rakam, yazarken giriş kaybı olmaması için string */
+  const [itemQuantityStr, setItemQuantityStr] = useState<string>('1');
   const [isBusy, setIsBusy] = useState(false);
 
-  // İade işlemi state'leri
-  const [returnItemId, setReturnItemId] = useState<number | null>(null);
-  const [returnQuantity, setReturnQuantity] = useState<number | ''>(1);
+  // İade işlemi state'leri - returnDetailKey: "itemId-warehouseId" formatında
+  const [returnDetailKey, setReturnDetailKey] = useState<string | null>(null);
+  const [returnWarehouseId, setReturnWarehouseId] = useState<number | ''>('');
+  /** İade miktarı inputu – sadece rakam */
+  const [returnQuantityStr, setReturnQuantityStr] = useState<string>('1');
+  const [returnDate, setReturnDate] = useState<string>(new Date().toISOString().split('T')[0]);
   const [isReturning, setIsReturning] = useState(false);
+
+  // İade geçmişi state'leri
+  const [contractReturns, setContractReturns] = useState<ContractReturn[]>([]);
+  const [returnsLoading, setReturnsLoading] = useState(false);
+
+  // Fiyat hesaplama state'leri
+  const [priceCalculation, setPriceCalculation] = useState<ContractPriceCalculation | null>(null);
+  const [isCalculating, setIsCalculating] = useState(false);
 
   // Şablon yönetimi state'leri
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
@@ -49,14 +67,40 @@ export default function ContractDetailModal({
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ContractTemplate | null>(null);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
-  const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
+  const [activeTab, setActiveTab] = useState<'info' | 'return' | 'returns' | 'history'>('info');
   const [contractLogs, setContractLogs] = useState<AuditLog[]>([]);
   const [contractLogsLoading, setContractLogsLoading] = useState(false);
+  const [fullContract, setFullContract] = useState<Contract | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showReturnConfirm, setShowReturnConfirm] = useState(false);
+  const [showAddItemConfirm, setShowAddItemConfirm] = useState(false);
+  const [iskonto, setIskonto] = useState<number>(0);
+  const [vatRate, setVatRate] = useState<number>(20);
 
   useEffect(() => {
     loadData();
     loadTemplates();
   }, []);
+
+  // Mevcut sözleşme açıldığında tam detayı yükle (ContractDetails liste API'sinde gelmez)
+  useEffect(() => {
+    if (contract?.ContractId && !isNew) {
+      let cancelled = false;
+      const loadFullContract = async () => {
+        try {
+          const full = await contractService.getByIdAsync(contract.ContractId);
+          if (!cancelled) setFullContract(full);
+        } catch (err) {
+          console.error('Load contract details error:', err);
+          if (!cancelled) setFullContract(contract);
+        }
+      };
+      loadFullContract();
+      return () => { cancelled = true; };
+    } else {
+      setFullContract(null);
+    }
+  }, [contract?.ContractId, isNew]);
 
   const loadContractLogs = async () => {
     if (!contract?.ContractId) return;
@@ -72,11 +116,41 @@ export default function ContractDetailModal({
     }
   };
 
+  const loadContractReturns = async () => {
+    if (!contract?.ContractId) return;
+    try {
+      setReturnsLoading(true);
+      const data = await contractService.getReturnsAsync(contract.ContractId);
+      setContractReturns(data ?? []);
+    } catch (error) {
+      console.error('Load contract returns error:', error);
+      setContractReturns([]);
+    } finally {
+      setReturnsLoading(false);
+    }
+  };
+
+  const handleCalculatePrice = async () => {
+    if (!contract?.ContractId) return;
+    try {
+      setIsCalculating(true);
+      const result = await contractService.calculatePriceAsync(contract.ContractId);
+      setPriceCalculation(result);
+    } catch (error) {
+      console.error('Calculate price error:', error);
+      alert(getApiErrorMessage(error) || 'Fiyat hesaplama hatası');
+    } finally {
+      setIsCalculating(false);
+    }
+  };
+
   useEffect(() => {
     if (contract?.ContractId && !isNew) {
       loadContractLogs();
+      loadContractReturns();
     } else {
       setContractLogs([]);
+      setContractReturns([]);
     }
   }, [contract?.ContractId, isNew]);
 
@@ -90,32 +164,44 @@ export default function ContractDetailModal({
   };
 
   useEffect(() => {
-    if (contract) {
-      setSelectedCustomerId(contract.CustomerId);
-      setSelectedSiteId(contract.SiteId || '');
-      setStartDate(contract.StartDate.split('T')[0]);
-      setPlannedEndDate(contract.PlannedEndDate.split('T')[0]);
-      if (contract.ActualEndDate) {
-        setActualEndDate(contract.ActualEndDate.split('T')[0]);
+    const source = fullContract ?? contract;
+    if (source) {
+      setSelectedCustomerId(source.CustomerId);
+      setSelectedSiteId(source.SiteId || '');
+      setStartDate(source.StartDate.split('T')[0]);
+      setPlannedEndDate(source.PlannedEndDate.split('T')[0]);
+      if (source.ActualEndDate) {
+        setActualEndDate(source.ActualEndDate.split('T')[0]);
       }
-      if (contract.ContractDetails) {
-        const items: ContractDetailItem[] = contract.ContractDetails.map((detail) => ({
-          DetailId: detail.DetailId,
-          ItemId: detail.ItemId,
-          RentedQuantity: detail.RentedQuantity,
-          ReturnedQuantity: detail.ReturnedQuantity,
-          DailyPriceAtRent: detail.DailyPriceAtRent,
-          Item: undefined,
-          ItemName: '',
-        }));
+      setIskonto((source as { Iskonto?: number }).Iskonto ?? 0);
+      setVatRate((source as { VatRate?: number }).VatRate ?? 20);
+      // Backend GET /contracts/:id "details" döndürür, ContractDetails değil
+      const details = (source as any).details ?? source.ContractDetails ?? [];
+      if (details.length > 0) {
+        const items: ContractDetailItem[] = details.map((detail: any) => {
+          const wh = warehouses.find((w) => w.WarehouseId === detail.WarehouseId);
+          return {
+            DetailId: detail.DetailId,
+            ItemId: detail.ItemId,
+            WarehouseId: detail.WarehouseId ?? 0,
+            WarehouseName: wh?.WarehouseName ?? detail.WarehouseName ?? '',
+            RentedQuantity: detail.RentedQuantity,
+            ReturnedQuantity: detail.ReturnedQuantity,
+            DailyPriceAtRent: detail.DailyPriceAtRent,
+            Item: undefined,
+            ItemName: detail.ItemName ?? '',
+          };
+        });
         setContractItems(items);
+      } else {
+        setContractItems([]);
       }
       // Şantiyeleri yükle
-      if (contract.CustomerId) {
-        loadSites(contract.CustomerId);
+      if (source.CustomerId) {
+        loadSites(source.CustomerId);
       }
     }
-  }, [contract]);
+  }, [contract, fullContract, warehouses]);
 
   // Müşteri değiştiğinde şantiyeleri yükle
   useEffect(() => {
@@ -142,38 +228,44 @@ export default function ContractDetailModal({
   };
 
   useEffect(() => {
-    // Load item names for contract items
-    const loadItemNames = async () => {
-      const itemsWithNames = await Promise.all(
-        contractItems.map(async (item) => {
-          try {
-            const inventoryItem = await inventoryService.getByIdAsync(item.ItemId);
-            return {
-              ...item,
-              Item: inventoryItem,
-              ItemName: inventoryItem.ItemName,
-            };
-          } catch {
-            return { ...item, ItemName: 'Bilinmiyor' };
-          }
-        })
-      );
-      setContractItems(itemsWithNames);
-    };
+    // Ürün adlarını /inventory/:id ile tek tek çekmek yerine,
+    // zaten yüklenmiş olan /inventory listesinden (availableItems) eşle.
+    // Böylece backend'de GET /inventory/:id olmasa bile isimler görünür.
+    if (availableItems.length === 0 || contractItems.length === 0) return;
 
-    if (contractItems.length > 0 && contractItems[0].ItemName === '') {
-      loadItemNames();
+    const inventoryMap = new Map<number, Inventory>();
+    for (const inv of availableItems) {
+      inventoryMap.set(inv.ItemId, inv);
     }
-  }, [contractItems.length]);
+
+    setContractItems((prev) => {
+      let changed = false;
+      const next = prev.map((item) => {
+        // Boş veya önceki denemeden "Bilinmiyor" kalanları doldur.
+        if (item.ItemName && item.ItemName !== 'Bilinmiyor') return item;
+        const inv = inventoryMap.get(item.ItemId);
+        if (!inv) return item;
+        changed = true;
+        return {
+          ...item,
+          Item: inv,
+          ItemName: inv.ItemName,
+        };
+      });
+      return changed ? next : prev;
+    });
+  }, [availableItems, contractItems.length]);
 
   const loadData = async () => {
     try {
-      const [custData, invData] = await Promise.all([
+      const [custData, invData, whData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(),
+        warehouseService.getAllAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
+      setWarehouses(whData);
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -196,32 +288,57 @@ export default function ContractDetailModal({
     0
   );
 
-  const handleAddItem = () => {
-    if (!selectedItemId) return;
-    const qty = Number(itemQuantity) || 1;
+  const handleAddItemClick = () => {
+    if (!selectedItemId || !selectedWarehouseId) {
+      alert('Malzeme ve depo seçimi zorunludur');
+      return;
+    }
+    setShowAddItemConfirm(true);
+  };
 
-    const selectedItem = availableItems.find((i) => i.ItemId === Number(selectedItemId));
+  const handleAddItem = async () => {
+    if (!selectedItemId || !selectedWarehouseId) {
+      alert('Malzeme ve depo seçimi zorunludur');
+      return;
+    }
+    const qty = Math.max(1, parseInt(itemQuantityStr, 10) || 1);
+    const whId = Number(selectedWarehouseId);
+    const itemId = Number(selectedItemId);
+
+    const selectedItem = availableItems.find((i) => i.ItemId === itemId);
     if (!selectedItem) return;
 
-    // Müsait stok kontrolü
-    const availableStock = selectedItem.TotalStock - selectedItem.OnRent;
-    const alreadyInContract = contractItems.find(ci => ci.ItemId === selectedItem.ItemId)?.RentedQuantity || 0;
-    const effectiveAvailable = availableStock + (isNew ? 0 : alreadyInContract);
+    // Depo bazlı stok kontrolü
+    let warehouseStock = 0;
+    try {
+      const whStocks = await inventoryService.getWarehousesByItemAsync(itemId);
+      const whStock = whStocks.find((ws) => ws.WarehouseId === whId);
+      warehouseStock = whStock?.Quantity ?? 0;
+    } catch {
+      // Depo stoku alınamazsa global stok kullan
+      warehouseStock = selectedItem.TotalStock - selectedItem.OnRent;
+    }
 
-    const existingItem = contractItems.find((i) => i.ItemId === Number(selectedItemId));
-    const newTotalQuantity = existingItem 
-      ? existingItem.RentedQuantity + qty 
-      : qty;
+    const existingDetail = contractItems.find(
+      (i) => i.ItemId === itemId && i.WarehouseId === whId
+    );
+    const alreadyInContract = existingDetail?.RentedQuantity ?? 0;
+    const effectiveAvailable = warehouseStock + (isNew ? 0 : alreadyInContract);
+    const newTotalQuantity = existingDetail ? existingDetail.RentedQuantity + qty : qty;
 
     if (newTotalQuantity > effectiveAvailable) {
-      alert(`Yetersiz stok! "${selectedItem.ItemName}" için müsait stok: ${effectiveAvailable}, istenen: ${newTotalQuantity}`);
+      const wh = warehouses.find((w) => w.WarehouseId === whId);
+      alert(
+        `Yetersiz depo stoku! "${selectedItem.ItemName}" için ${wh?.WarehouseName ?? 'seçili depoda'} müsait: ${effectiveAvailable}, istenen: ${newTotalQuantity}`
+      );
       return;
     }
 
-    if (existingItem) {
+    const wh = warehouses.find((w) => w.WarehouseId === whId);
+    if (existingDetail) {
       setContractItems(
         contractItems.map((i) =>
-          i.ItemId === Number(selectedItemId)
+          i.ItemId === itemId && i.WarehouseId === whId
             ? { ...i, RentedQuantity: i.RentedQuantity + qty }
             : i
         )
@@ -231,7 +348,9 @@ export default function ContractDetailModal({
         ...contractItems,
         {
           DetailId: 0,
-          ItemId: Number(selectedItemId),
+          ItemId: itemId,
+          WarehouseId: whId,
+          WarehouseName: wh?.WarehouseName ?? '',
           RentedQuantity: qty,
           ReturnedQuantity: 0,
           DailyPriceAtRent: (selectedItem.MonthlyListPrice || 0) / 30,
@@ -241,12 +360,16 @@ export default function ContractDetailModal({
       ]);
     }
 
+    setShowAddItemConfirm(false);
     setSelectedItemId('');
-    setItemQuantity(1);
+    setSelectedWarehouseId('');
+    setItemQuantityStr('1');
   };
 
-  const handleRemoveItem = (itemId: number) => {
-    setContractItems(contractItems.filter((i) => i.ItemId !== itemId));
+  const handleRemoveItem = (itemId: number, warehouseId: number) => {
+    setContractItems(
+      contractItems.filter((i) => !(i.ItemId === itemId && i.WarehouseId === warehouseId))
+    );
   };
 
   const handleSave = async () => {
@@ -261,16 +384,36 @@ export default function ContractDetailModal({
       return;
     }
 
+    // Yeni sözleşmede her kalemde depo zorunlu; depo stoğu ancak böyle düşer
+    if (isNew) {
+      const withoutWarehouse = contractItems.filter((i) => !i.WarehouseId || i.WarehouseId === 0);
+      if (withoutWarehouse.length > 0) {
+        alert(
+          'Depo stoğundan düşüm için her malzemede depo seçilmesi zorunludur. Lütfen tüm kalemlere depo atayın veya ilgili kalemleri silip depo seçerek tekrar ekleyin.'
+        );
+        return;
+      }
+    }
+
     try {
       setIsBusy(true);
-      const details = contractItems.map((item) => ({
-        ItemId: item.ItemId,
-        RentedQuantity: item.RentedQuantity,
-        ReturnedQuantity: item.ReturnedQuantity || 0,
-        DailyPriceAtRent: item.DailyPriceAtRent,
-      }));
+      // Backend: detayda WarehouseId veya warehouseId kabul edilir; yeni sözleşmede depo stoğu için her kalemde depo zorunlu
+      const details = isNew
+        ? contractItems.map((item) => ({
+            ItemId: item.ItemId,
+            WarehouseId: item.WarehouseId,
+            RentedQuantity: item.RentedQuantity,
+            DailyPriceAtRent: item.DailyPriceAtRent,
+          }))
+        : contractItems.map((item) => ({
+            ItemId: item.ItemId,
+            WarehouseId: item.WarehouseId,
+            RentedQuantity: item.RentedQuantity,
+            ReturnedQuantity: item.ReturnedQuantity || 0,
+            DailyPriceAtRent: item.DailyPriceAtRent,
+          }));
 
-      // Request body oluştur - SiteId sadece seçilmişse dahil et
+      // Sadece backend'in yazdığı alanlar: CustomerId, SiteId, StartDate, PlannedEndDate, InitialTotalPrice, IsCompleted; defaultWarehouseId (son harf büyük I)
       const requestBody: Record<string, unknown> = {
         CustomerId: Number(selectedCustomerId),
         StartDate: new Date(startDate).toISOString(),
@@ -280,9 +423,18 @@ export default function ContractDetailModal({
         details,
       };
 
-      // SiteId sadece seçilmişse ekle (null/undefined gönderme)
       if (selectedSiteId) {
         requestBody.SiteId = Number(selectedSiteId);
+      }
+      requestBody.Iskonto = iskonto;
+      requestBody.VatRate = vatRate;
+
+      // Yazım: defaultWarehouseId (büyük I); yanlış yazım backend'de yok sayılır
+      if (isNew && contractItems.length > 0) {
+        const firstWh = contractItems[0].WarehouseId;
+        if (firstWh && contractItems.every((i) => i.WarehouseId === firstWh)) {
+          requestBody.defaultWarehouseId = firstWh;
+        }
       }
 
       console.log('=== SÖZLEŞME KAYDETME DEBUG ===');
@@ -303,24 +455,27 @@ export default function ContractDetailModal({
       onClose();
     } catch (error) {
       console.error('Save contract error:', error);
-      alert('Kaydetme hatası');
+      alert(getApiErrorMessage(error) || 'Kaydetme hatası');
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!contract || contract.IsCompleted || !confirm('Bu sözleşmeyi silmek istediğinizden emin misiniz?')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!contract || contract.IsCompleted) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!contract || contract.IsCompleted) return;
     try {
       setIsBusy(true);
       await contractService.deleteAsync(contract.ContractId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete contract error:', error);
-      alert('Silme hatası');
+      alert(getApiErrorMessage(error) || 'Silme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -336,19 +491,45 @@ export default function ContractDetailModal({
       onClose();
     } catch (error) {
       console.error('Complete contract error:', error);
-      alert('Tamamlama hatası');
+      alert(getApiErrorMessage(error) || 'Tamamlama hatası');
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handleReturnItem = async (itemId: number) => {
-    if (!contract || contract.IsCompleted) return;
+  const handleReturnClick = () => {
+    const effectiveContract = fullContract ?? contract;
+    if (!contract || !effectiveContract || effectiveContract.IsCompleted || !returnDetailKey) return;
+    const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
+    const itemId = Number(itemIdStr);
+    const warehouseId = Number(warehouseIdStr);
+    const item = contractItems.find(
+      (i) => i.ItemId === itemId && i.WarehouseId === warehouseId
+    );
+    if (!item) return;
+    const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
+    const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+    if (qty <= 0 || qty > remainingOnRent) {
+      alert(`İade miktarı 1 ile ${remainingOnRent} arasında olmalıdır`);
+      return;
+    }
+    setShowReturnConfirm(true);
+  };
 
-    const item = contractItems.find((i) => i.ItemId === itemId);
+  const handleReturnItem = async () => {
+    const effectiveContract = fullContract ?? contract;
+    if (!contract || !effectiveContract || effectiveContract.IsCompleted || !returnDetailKey) return;
+
+    const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
+    const itemId = Number(itemIdStr);
+    const warehouseId = Number(warehouseIdStr);
+
+    const item = contractItems.find(
+      (i) => i.ItemId === itemId && i.WarehouseId === warehouseId
+    );
     if (!item) return;
 
-    const qty = Number(returnQuantity) || 0;
+    const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
     const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
     if (qty <= 0 || qty > remainingOnRent) {
       alert(`İade miktarı 1 ile ${remainingOnRent} arasında olmalıdır`);
@@ -357,48 +538,80 @@ export default function ContractDetailModal({
 
     try {
       setIsReturning(true);
+      const options: { returnDate?: string; returnWarehouseId?: number } = {};
+      if (returnDate) options.returnDate = new Date(returnDate).toISOString();
+      if (returnWarehouseId) options.returnWarehouseId = Number(returnWarehouseId);
+
       const result: ReturnItemResponse = await contractService.returnItemAsync(
         contract.ContractId,
         itemId,
-        qty
+        warehouseId,
+        qty,
+        options
       );
 
       // Başarılı iade sonrası contract items güncelle
       setContractItems((prevItems) =>
         prevItems.map((i) =>
-          i.ItemId === itemId
+          i.ItemId === itemId && i.WarehouseId === warehouseId
             ? { ...i, ReturnedQuantity: result.ReturnedQuantity }
             : i
         )
       );
 
-      // İade formunu kapat
-      setReturnItemId(null);
-      setReturnQuantity(1);
+      // İade formunu kapat ve onay modal'ını kapat
+      setShowReturnConfirm(false);
+      setReturnDetailKey(null);
+      setReturnQuantityStr('1');
+      setReturnDate(new Date().toISOString().split('T')[0]);
+      setReturnWarehouseId('');
 
-      alert(
-        `İade başarılı!\nİade edilen: ${qty} adet\nKirada kalan: ${result.RemainingOnRent} adet`
-      );
-    } catch (error) {
+      // İade geçmişini yenile
+      loadContractReturns();
+
+      // Gecikme ücreti bilgisi ile mesaj oluştur
+      let message = `İade başarılı!\nİade edilen: ${qty} adet\nKirada kalan: ${result.RemainingOnRent} adet`;
+      if (result.LateDays > 0) {
+        message += `\n\nGecikme: ${result.LateDays} gün`;
+        message += `\nGecikme ücreti: ₺${result.LateFee.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}`;
+      }
+      if (result.ContractCompleted) {
+        message += '\n\nTüm ürünler iade edildi. Sözleşme otomatik olarak tamamlandı.';
+      }
+
+      alert(message);
+
+      // Sözleşme otomatik tamamlandıysa modal'ı kapat
+      if (result.ContractCompleted) {
+        onClose();
+      }
+    } catch (error: unknown) {
       console.error('Return item error:', error);
-      alert('İade işlemi başarısız');
+      alert(getApiErrorMessage(error) || 'İade işlemi başarısız');
     } finally {
       setIsReturning(false);
     }
   };
 
-  const openReturnForm = (itemId: number) => {
-    const item = contractItems.find((i) => i.ItemId === itemId);
-    if (item) {
-      const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
-      setReturnItemId(itemId);
-      setReturnQuantity(Math.min(1, remainingOnRent));
+  const openReturnForm = (item: ContractDetailItem) => {
+    const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+    if (remainingOnRent > 0) {
+      setReturnDetailKey(`${item.ItemId}-${item.WarehouseId}`);
+      setReturnQuantityStr('1');
+      setReturnWarehouseId(item.WarehouseId); // Varsayılan: aynı depoya iade
     }
   };
 
   const closeReturnForm = () => {
-    setReturnItemId(null);
-    setReturnQuantity(1);
+    setReturnDetailKey(null);
+    setReturnQuantityStr('1');
+    setReturnWarehouseId('');
+  };
+
+  /** Sadece rakam girişine izin ver (miktar / iade miktarı) */
+  const handleNumericInput = (setter: (v: string) => void, e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value.replace(/[^0-9]/g, '');
+    setter(raw);
   };
 
   const formatCurrency = (amount: number) => {
@@ -427,7 +640,7 @@ export default function ContractDetailModal({
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Generate document error:', error);
-      alert('Döküman oluşturma hatası');
+      alert(getApiErrorMessage(error) || 'Döküman oluşturma hatası');
     } finally {
       setIsBusy(false);
     }
@@ -452,6 +665,38 @@ export default function ContractDetailModal({
             >
               Bilgiler
             </button>
+            {(fullContract ?? contract) && !(fullContract ?? contract)!.IsCompleted && (
+              <button
+                onClick={() => setActiveTab('return')}
+                className={`px-4 py-2 font-medium transition-colors ${
+                  activeTab === 'return'
+                    ? 'text-accent border-b-2 border-accent'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                İade Al
+                {contractItems.some(i => (i.RentedQuantity - i.ReturnedQuantity) > 0) && (
+                  <span className="ml-1.5 bg-green-600/30 text-green-400 text-xs px-1.5 py-0.5 rounded-full">
+                    {contractItems.filter(i => (i.RentedQuantity - i.ReturnedQuantity) > 0).length}
+                  </span>
+                )}
+              </button>
+            )}
+            <button
+              onClick={() => setActiveTab('returns')}
+              className={`px-4 py-2 font-medium transition-colors ${
+                activeTab === 'returns'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              İade Geçmişi
+              {contractReturns.length > 0 && (
+                <span className="ml-1.5 bg-accent/20 text-accent text-xs px-1.5 py-0.5 rounded-full">
+                  {contractReturns.length}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => setActiveTab('history')}
               className={`px-4 py-2 font-medium transition-colors ${
@@ -463,6 +708,192 @@ export default function ContractDetailModal({
               Geçmiş
             </button>
           </div>
+        )}
+
+        {activeTab === 'return' && !isNew && (
+          <>
+            <h3 className="text-lg font-semibold mb-3">Ürün İade Al</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Müşteriden gelen ürünleri iade almak için aşağıdaki listeden ürün seçin, miktar ve tarih girin.
+            </p>
+            {contractItems.length === 0 ? (
+              <div className="text-center py-8 text-text-secondary">
+                Bu sözleşmede kiralanan malzeme bulunmuyor veya yükleniyor...
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {contractItems.map((item) => {
+                  const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+                  const itemKey = `${item.ItemId}-${item.WarehouseId}`;
+                  const isReturnFormOpen = returnDetailKey === itemKey;
+
+                  return (
+                    <div key={itemKey} className="card">
+                      <div className="flex items-center justify-between">
+                        <div className="flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{item.ItemName}</span>
+                            {item.WarehouseName && (
+                              <span className="text-xs px-2 py-0.5 bg-background-secondary rounded text-text-secondary">
+                                {item.WarehouseName}
+                              </span>
+                            )}
+                          </div>
+                          <div className="text-sm text-text-secondary">
+                            Kirada: {remainingOnRent} / {item.RentedQuantity} adet
+                            {item.ReturnedQuantity > 0 && (
+                              <span className="ml-2 text-green-400">✓ İade: {item.ReturnedQuantity}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          {remainingOnRent > 0 ? (
+                            <button
+                              onClick={() => openReturnForm(item)}
+                              className="btn-success text-sm px-4 py-2"
+                              disabled={isReturning}
+                            >
+                              İade Al
+                            </button>
+                          ) : (
+                            <span className="text-sm text-green-400">Tamamı iade edildi</span>
+                          )}
+                        </div>
+                      </div>
+
+                      {isReturnFormOpen && remainingOnRent > 0 && (
+                        <div className="mt-3 pt-3 border-t border-background-border">
+                          <div className="flex flex-wrap items-center gap-3">
+                            <label className="text-sm">İade Miktarı:</label>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={returnQuantityStr}
+                              onChange={(e) => handleNumericInput(setReturnQuantityStr, e)}
+                              className="input w-24"
+                              placeholder="1"
+                              disabled={isReturning}
+                              aria-label="İade miktarı"
+                            />
+                            <span className="text-sm text-text-secondary">/ {remainingOnRent} adet</span>
+                            <label className="text-sm ml-2">İade Tarihi:</label>
+                            <input
+                              type="date"
+                              value={returnDate}
+                              onChange={(e) => setReturnDate(e.target.value)}
+                              className="input w-40"
+                              disabled={isReturning}
+                            />
+                            <label className="text-sm ml-2">Hedef Depo:</label>
+                            <select
+                              value={returnWarehouseId}
+                              onChange={(e) => setReturnWarehouseId(Number(e.target.value) || '')}
+                              className="input w-40"
+                              disabled={isReturning}
+                            >
+                              <option value="">Kaynak depoya iade</option>
+                              {warehouses.map((wh) => (
+                                <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                                  {wh.WarehouseName}
+                                </option>
+                              ))}
+                            </select>
+                            <div className="flex-1" />
+                            <button
+                              onClick={closeReturnForm}
+                              className="btn-secondary text-sm px-3 py-1"
+                              disabled={isReturning}
+                            >
+                              İptal
+                            </button>
+                            <button
+                              onClick={handleReturnClick}
+                              className="btn-success text-sm px-3 py-1"
+                              disabled={isReturning}
+                            >
+                              {isReturning ? 'İşleniyor...' : 'Onayla'}
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className="btn-secondary flex-1">
+                Kapat
+              </button>
+            </div>
+          </>
+        )}
+
+        {activeTab === 'returns' && !isNew && (
+          <>
+            <h3 className="text-lg font-semibold mb-3">İade Geçmişi</h3>
+            {returnsLoading ? (
+              <div className="text-center py-8 text-text-secondary">Yükleniyor...</div>
+            ) : contractReturns.length === 0 ? (
+              <div className="text-center py-8 text-text-secondary">
+                Bu sözleşmede henüz iade kaydı bulunmuyor.
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {contractReturns.map((ret) => (
+                  <div key={ret.ReturnId} className="card">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <span className="font-medium">{ret.ItemName}</span>
+                          {ret.WarehouseName && (
+                            <span className="text-xs px-2 py-0.5 bg-background-secondary rounded text-text-secondary">
+                              {ret.WarehouseName}
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-sm text-text-secondary">
+                          {ret.ReturnQuantity} adet iade
+                          {' — '}
+                          {new Date(ret.ReturnDate).toLocaleDateString('tr-TR')}
+                        </div>
+                        {ret.LateDays > 0 && (
+                          <div className="text-xs mt-1 flex gap-3">
+                            <span className="text-orange-400">
+                              Gecikme: {ret.LateDays} gün
+                            </span>
+                            <span className="text-red-400">
+                              Gecikme ücreti: {formatCurrency(ret.LateFee)}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="text-xs text-text-secondary">
+                        {new Date(ret.CreatedAt).toLocaleString('tr-TR')}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {/* Toplam gecikme ücreti özeti */}
+                {contractReturns.some(r => r.LateFee > 0) && (
+                  <div className="card bg-orange-900/30 p-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium">Toplam Gecikme Ücreti</span>
+                      <span className="font-bold text-orange-300">
+                        {formatCurrency(contractReturns.reduce((sum, r) => sum + r.LateFee, 0))}
+                      </span>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            <div className="flex gap-3 mt-6">
+              <button onClick={onClose} className="btn-secondary flex-1">
+                Kapat
+              </button>
+            </div>
+          </>
         )}
 
         {activeTab === 'history' && !isNew && (
@@ -599,6 +1030,37 @@ export default function ContractDetailModal({
             </div>
           </div>
 
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">İskonto (%)</label>
+              <input
+                type="number"
+                value={iskonto}
+                onChange={(e) => setIskonto(parseFloat(e.target.value) || 0)}
+                disabled={isReadOnly}
+                min={0}
+                max={100}
+                step={0.01}
+                className="input w-32"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">KDV Oranı (%)</label>
+              <input
+                type="number"
+                value={vatRate}
+                onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                disabled={isReadOnly}
+                min={0}
+                max={100}
+                step={1}
+                className="input w-32"
+                placeholder="20"
+              />
+            </div>
+          </div>
+
           <div className="card bg-blue-900 p-4">
             <div className="grid grid-cols-3 gap-4 text-sm">
               <div>
@@ -621,64 +1083,51 @@ export default function ContractDetailModal({
           </div>
 
           {!isReadOnly && (
-            <div className="card border-2 border-dashed border-background-border p-4">
+            <div className="card border border-background-border p-4">
               <h3 className="font-semibold mb-3">Malzeme Ekle</h3>
-              <div className="flex gap-3">
-                <select
+              <div className="flex flex-wrap gap-4">
+                <SearchableItemCombobox
+                  items={availableItems}
                   value={selectedItemId}
-                  onChange={(e) => setSelectedItemId(Number(e.target.value) || '')}
-                  className="input flex-1"
+                  onChange={(id) => {
+                    setSelectedItemId(id);
+                    setSelectedWarehouseId('');
+                  }}
+                  displayMode="contract"
+                  placeholder="Malzeme adı, kodu veya kategori ile ara..."
+                />
+                <select
+                  value={selectedWarehouseId}
+                  onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || '')}
+                  className="input flex-1 min-w-[140px]"
+                  disabled={!selectedItemId}
                 >
-                  <option value="">Malzeme seçin</option>
-                  {availableItems.map((item) => {
-                    const availableStock = item.TotalStock - item.OnRent;
-                    const alreadyInContract = contractItems.find(ci => ci.ItemId === item.ItemId)?.RentedQuantity || 0;
-                    const effectiveAvailable = availableStock + (isNew ? 0 : alreadyInContract);
-                    
-                    return (
-                      <option 
-                        key={item.ItemId} 
-                        value={item.ItemId}
-                        disabled={effectiveAvailable <= 0}
-                      >
-                        {item.ItemName} - ₺{(item.MonthlyListPrice ?? 0).toFixed(2)}/ay 
-                        {effectiveAvailable > 0 
-                          ? ` (Müsait: ${effectiveAvailable})` 
-                          : ' (Stok Yok)'}
-                      </option>
-                    );
-                  })}
+                  <option value="">Depo seçin</option>
+                  {warehouses.map((wh) => (
+                    <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                      {wh.WarehouseName}
+                    </option>
+                  ))}
                 </select>
                 <input
-                  type="number"
-                  value={itemQuantity}
-                  onChange={(e) => setItemQuantity(e.target.value === '' ? '' : Number(e.target.value))}
-                  min="1"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={itemQuantityStr}
+                  onChange={(e) => handleNumericInput(setItemQuantityStr, e)}
                   className="input w-24"
                   placeholder="Miktar"
+                  aria-label="Miktar"
                 />
-                <button onClick={handleAddItem} className="btn-primary">
+                <button onClick={handleAddItemClick} className="btn-primary">
                   Ekle
                 </button>
               </div>
-              {/* Seçili malzeme için stok uyarısı */}
-              {selectedItemId && (() => {
-                const selectedItem = availableItems.find(i => i.ItemId === Number(selectedItemId));
-                if (selectedItem) {
-                  const availableStock = selectedItem.TotalStock - selectedItem.OnRent;
-                  const alreadyInContract = contractItems.find(ci => ci.ItemId === selectedItem.ItemId)?.RentedQuantity || 0;
-                  const effectiveAvailable = availableStock + (isNew ? 0 : alreadyInContract);
-                  
-                  if (itemQuantity > effectiveAvailable) {
-                    return (
-                      <div className="mt-2 text-sm text-red-400 bg-red-900/30 p-2 rounded">
-                        ⚠️ Uyarı: İstenen miktar ({itemQuantity}) müsait stoktan ({effectiveAvailable}) fazla!
-                      </div>
-                    );
-                  }
-                }
-                return null;
-              })()}
+              {selectedItemId && !selectedWarehouseId && (
+                <div className="mt-2 text-sm text-amber-400">
+                  Depo seçimi zorunludur. Stok kontrolü depo bazlı yapılır.
+                </div>
+              )}
             </div>
           )}
 
@@ -744,13 +1193,21 @@ export default function ContractDetailModal({
               <div className="space-y-2">
                 {contractItems.map((item) => {
                   const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
-                  const isReturnFormOpen = returnItemId === item.ItemId;
+                  const itemKey = `${item.ItemId}-${item.WarehouseId}`;
+                  const isReturnFormOpen = returnDetailKey === itemKey;
 
                   return (
-                    <div key={item.ItemId} className="card">
+                    <div key={itemKey} className="card">
                       <div className="flex items-center justify-between">
                         <div className="flex-1">
-                          <div className="font-medium">{item.ItemName}</div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-medium">{item.ItemName}</span>
+                            {item.WarehouseName && (
+                              <span className="text-xs px-2 py-0.5 bg-background-secondary rounded text-text-secondary">
+                                {item.WarehouseName}
+                              </span>
+                            )}
+                          </div>
                           <div className="text-sm text-text-secondary">
                             Efektif günlük: {formatCurrency(item.DailyPriceAtRent)} × {item.RentedQuantity} adet
                           </div>
@@ -771,9 +1228,9 @@ export default function ContractDetailModal({
                             {formatCurrency(item.DailyPriceAtRent * item.RentedQuantity)}
                           </div>
                           {/* İade butonu - sadece aktif sözleşmelerde ve kirada malzeme varsa */}
-                          {!isNew && contract && !contract.IsCompleted && remainingOnRent > 0 && isReadOnly && (
+                          {!isNew && (fullContract ?? contract) && !(fullContract ?? contract)!.IsCompleted && remainingOnRent > 0 && isReadOnly && (
                             <button
-                              onClick={() => openReturnForm(item.ItemId)}
+                              onClick={() => openReturnForm(item)}
                               className="btn-secondary text-sm px-3 py-1"
                               disabled={isReturning}
                             >
@@ -782,7 +1239,7 @@ export default function ContractDetailModal({
                           )}
                           {!isReadOnly && (
                             <button
-                              onClick={() => handleRemoveItem(item.ItemId)}
+                              onClick={() => handleRemoveItem(item.ItemId, item.WarehouseId)}
                               className="text-error hover:text-red-700 text-xl"
                             >
                               ✕
@@ -794,20 +1251,44 @@ export default function ContractDetailModal({
                       {/* İade formu */}
                       {isReturnFormOpen && (
                         <div className="mt-3 pt-3 border-t border-background-border">
-                          <div className="flex items-center gap-3">
+                          <div className="flex flex-wrap items-center gap-3">
                             <label className="text-sm">İade Miktarı:</label>
                             <input
-                              type="number"
-                              value={returnQuantity}
-                              onChange={(e) => setReturnQuantity(e.target.value === '' ? '' : Math.max(1, Math.min(remainingOnRent, Number(e.target.value))))}
-                              min="1"
-                              max={remainingOnRent}
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={returnQuantityStr}
+                              onChange={(e) => handleNumericInput(setReturnQuantityStr, e)}
                               className="input w-24"
+                              placeholder="1"
                               disabled={isReturning}
+                              aria-label="İade miktarı"
                             />
                             <span className="text-sm text-text-secondary">
                               / {remainingOnRent} adet
                             </span>
+                            <label className="text-sm ml-2">İade Tarihi:</label>
+                            <input
+                              type="date"
+                              value={returnDate}
+                              onChange={(e) => setReturnDate(e.target.value)}
+                              className="input w-40"
+                              disabled={isReturning}
+                            />
+                            <label className="text-sm ml-2">Hedef Depo:</label>
+                            <select
+                              value={returnWarehouseId}
+                              onChange={(e) => setReturnWarehouseId(Number(e.target.value) || '')}
+                              className="input w-40"
+                              disabled={isReturning}
+                            >
+                              <option value="">Kaynak depoya iade</option>
+                              {warehouses.map((wh) => (
+                                <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                                  {wh.WarehouseName}
+                                </option>
+                              ))}
+                            </select>
                             <div className="flex-1" />
                             <button
                               onClick={closeReturnForm}
@@ -817,7 +1298,7 @@ export default function ContractDetailModal({
                               İptal
                             </button>
                             <button
-                              onClick={() => handleReturnItem(item.ItemId)}
+                              onClick={handleReturnClick}
                               className="btn-success text-sm px-3 py-1"
                               disabled={isReturning}
                             >
@@ -852,6 +1333,69 @@ export default function ContractDetailModal({
               <div className="text-xs text-text-secondary mt-1">
                 (Gerçekleşen süre üzerinden)
               </div>
+            </div>
+          )}
+
+          {/* Fiyat Hesaplama Bölümü */}
+          {!isNew && contract && !contract.IsCompleted && (
+            <div className="card border border-background-border p-4">
+              <div className="flex items-center justify-between mb-3">
+                <div>
+                  <div className="font-semibold">Fiyat Hesaplama</div>
+                  <div className="text-xs text-text-secondary mt-0.5">
+                    Temel ücret ve gecikme ücretleri kırılımını hesapla
+                  </div>
+                </div>
+                <button
+                  onClick={handleCalculatePrice}
+                  disabled={isCalculating}
+                  className="btn-primary text-sm px-4 py-2"
+                >
+                  {isCalculating ? 'Hesaplanıyor...' : 'Fiyat Hesapla'}
+                </button>
+              </div>
+
+              {priceCalculation && (
+                <div className="space-y-2 mt-3 pt-3 border-t border-background-border">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="card bg-blue-900/30 p-3">
+                      <div className="text-xs text-text-secondary">Planlanan Süre</div>
+                      <div className="text-lg font-bold">{priceCalculation.plannedDays} gün</div>
+                    </div>
+                    <div className="card bg-blue-900/30 p-3">
+                      <div className="text-xs text-text-secondary">Temel Ücret</div>
+                      <div className="text-lg font-bold">{formatCurrency(priceCalculation.basePrice)}</div>
+                    </div>
+                  </div>
+                  {priceCalculation.totalLateFee > 0 && (
+                    <div className="card bg-orange-900/30 p-3">
+                      <div className="text-xs text-text-secondary mb-1">Toplam Gecikme Ücreti</div>
+                      <div className="text-lg font-bold text-orange-300">
+                        {formatCurrency(priceCalculation.totalLateFee)}
+                      </div>
+                      {priceCalculation.returns.length > 0 && (
+                        <div className="mt-2 space-y-1">
+                          {priceCalculation.returns.map((ret) => (
+                            <div key={ret.ReturnId} className="text-xs text-text-secondary flex justify-between">
+                              <span>
+                                {ret.ReturnQuantity} adet - {new Date(ret.ReturnDate).toLocaleDateString('tr-TR')}
+                                {ret.LateDays > 0 && ` (${ret.LateDays} gün gecikme)`}
+                              </span>
+                              <span className="text-orange-400">{formatCurrency(ret.LateFee)}</span>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
+                  <div className="card bg-green-900 p-3">
+                    <div className="text-xs text-text-secondary mb-1">Final Fiyat</div>
+                    <div className="text-2xl font-bold text-green-300">
+                      {formatCurrency(priceCalculation.finalPrice)}
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -897,7 +1441,7 @@ export default function ContractDetailModal({
               {!isNew && contract && !contract.IsCompleted && (
                 <>
                   <button
-                    onClick={handleDelete}
+                    onClick={handleDeleteClick}
                     disabled={isBusy}
                     className="btn-danger flex-1"
                   >
@@ -934,6 +1478,41 @@ export default function ContractDetailModal({
         )}
       </div>
 
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu sözleşmeyi silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmModal
+        open={showReturnConfirm}
+        title="Onaylıyor musunuz?"
+        message={returnDetailKey ? (() => {
+          const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
+          const itemId = Number(itemIdStr);
+          const warehouseId = Number(warehouseIdStr);
+          const item = contractItems.find((i) => i.ItemId === itemId && i.WarehouseId === warehouseId);
+          const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
+          return item ? `Bu iadeyi onaylıyor musunuz? (${qty} adet, ${item.ItemName})` : 'Bu iadeyi onaylıyor musunuz?';
+        })() : 'Bu iadeyi onaylıyor musunuz?'}
+        loading={isReturning}
+        onConfirm={handleReturnItem}
+        onCancel={() => setShowReturnConfirm(false)}
+      />
+      <ConfirmModal
+        open={showAddItemConfirm}
+        title="Onaylıyor musunuz?"
+        message={selectedItemId && (() => {
+          const item = availableItems.find((i) => i.ItemId === selectedItemId);
+          const qty = Math.max(1, parseInt(itemQuantityStr, 10) || 1);
+          return item ? `Bu malzemeyi sözleşmeye eklemek istediğinize emin misiniz? (${qty} adet, ${item.ItemName})` : 'Bu malzemeyi sözleşmeye eklemek istediğinize emin misiniz?';
+        })() || 'Bu malzemeyi sözleşmeye eklemek istediğinize emin misiniz?'}
+        onConfirm={handleAddItem}
+        onCancel={() => setShowAddItemConfirm(false)}
+      />
       {/* Şablon Editör Modal */}
       {isTemplateEditorOpen && (
         <ContractTemplateEditorModal

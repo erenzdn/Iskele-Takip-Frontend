@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { Warehouse, WarehouseStock, WarehouseStockResponse } from '../models';
 import { warehouseService } from '../services/warehouseService';
+import { contractService } from '../services/contractService';
 
 export default function WarehouseDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -16,6 +17,13 @@ export default function WarehouseDetailPage() {
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | 'all'>('all');
   const [minQuantity, setMinQuantity] = useState<number | ''>('');
   const [maxQuantity, setMaxQuantity] = useState<number | ''>('');
+  const [activeTab, setActiveTab] = useState<'stock' | 'rented'>('stock');
+  const [rentedItems, setRentedItems] = useState<{ ItemId: number; ItemName: string; CategoryName: string; Quantity: number }[]>([]);
+  const [loadingRented, setLoadingRented] = useState(false);
+  const [rentedSearchText, setRentedSearchText] = useState('');
+  const [rentedCategoryName, setRentedCategoryName] = useState<string>('all');
+  const [rentedMinQty, setRentedMinQty] = useState<number | ''>('');
+  const [rentedMaxQty, setRentedMaxQty] = useState<number | ''>('');
 
   useEffect(() => {
     const warehouseId = Number(id);
@@ -41,6 +49,24 @@ export default function WarehouseDetailPage() {
 
     loadData();
   }, [id, navigate]);
+
+  useEffect(() => {
+    const warehouseId = Number(id);
+    if (!warehouseId || Number.isNaN(warehouseId) || activeTab !== 'rented') return;
+    const load = async () => {
+      try {
+        setLoadingRented(true);
+        const data = await contractService.getRentedItemsByWarehouseAsync(warehouseId);
+        setRentedItems(data);
+      } catch (err) {
+        console.error('Load rented items error:', err);
+        setRentedItems([]);
+      } finally {
+        setLoadingRented(false);
+      }
+    };
+    load();
+  }, [id, activeTab]);
 
   const handleRefresh = async () => {
     if (!warehouse?.WarehouseId) return;
@@ -87,6 +113,28 @@ export default function WarehouseDetailPage() {
       name: name || `Kategori #${id}`,
     }));
   }, [stock]);
+
+  const filteredRentedItems = useMemo(() => {
+    const text = rentedSearchText.trim().toLowerCase();
+    return rentedItems.filter((r) => {
+      const name = r.ItemName?.toLowerCase() ?? '';
+      const cat = r.CategoryName?.toLowerCase() ?? '';
+      const okText = !text || name.includes(text) || cat.includes(text);
+      const okCat = rentedCategoryName === 'all' || (r.CategoryName || '') === rentedCategoryName;
+      const okMin = rentedMinQty === '' || r.Quantity >= rentedMinQty;
+      const okMax = rentedMaxQty === '' || r.Quantity <= rentedMaxQty;
+      return okText && okCat && okMin && okMax;
+    });
+  }, [rentedItems, rentedSearchText, rentedCategoryName, rentedMinQty, rentedMaxQty]);
+
+  const rentedCategoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    rentedItems.forEach((r) => {
+      const n = r.CategoryName?.trim() || '';
+      if (n) set.add(n);
+    });
+    return Array.from(set).sort();
+  }, [rentedItems]);
 
   if (loading) {
     return (
@@ -165,6 +213,154 @@ export default function WarehouseDetailPage() {
       )}
 
       <div className="card p-4 space-y-4">
+        <div className="flex gap-2 border-b border-background-border mb-4">
+          <button
+            type="button"
+            onClick={() => setActiveTab('stock')}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === 'stock'
+                ? 'text-accent border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Depodaki Malzemeler
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('rented')}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === 'rented'
+                ? 'text-accent border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Kiradaki Ürünler
+          </button>
+        </div>
+
+        {activeTab === 'rented' && (
+          <>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold">Kiradaki Ürünler</h2>
+                <p className="text-sm text-text-secondary">
+                  Bu depodan kiraya verilmiş ve henüz iade edilmemiş ürünler. Arama ve filtreleri kullanarak daraltabilirsiniz.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setRentedSearchText('');
+                  setRentedCategoryName('all');
+                  setRentedMinQty('');
+                  setRentedMaxQty('');
+                }}
+                className="btn-secondary"
+              >
+                Filtreleri Sıfırla
+              </button>
+            </div>
+
+            {loadingRented ? (
+              <div className="text-text-secondary py-6">Yükleniyor...</div>
+            ) : rentedItems.length === 0 ? (
+              <div className="text-text-secondary text-center py-6">
+                Bu depodan kirada ürün bulunmuyor.
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Ara</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute inset-y-0 left-3 flex items-center text-text-secondary text-sm">🔍</span>
+                        <input
+                          type="text"
+                          className="input w-full pl-8"
+                          placeholder="Malzeme veya kategori adı..."
+                          value={rentedSearchText}
+                          onChange={(e) => setRentedSearchText(e.target.value)}
+                        />
+                      </div>
+                      {rentedSearchText && (
+                        <button type="button" onClick={() => setRentedSearchText('')} className="btn-secondary whitespace-nowrap">
+                          Temizle
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="w-full lg:w-48">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Kategori</label>
+                    <select
+                      className="input w-full"
+                      value={rentedCategoryName}
+                      onChange={(e) => setRentedCategoryName(e.target.value)}
+                    >
+                      <option value="all">Tüm kategoriler</option>
+                      {rentedCategoryOptions.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="w-full lg:w-56 flex gap-2">
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-text-secondary mb-1">Kirada (min)</label>
+                      <input
+                        type="number"
+                        className="input w-full"
+                        min={0}
+                        value={rentedMinQty === '' ? '' : rentedMinQty}
+                        onChange={(e) => setRentedMinQty(e.target.value === '' ? '' : Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-text-secondary mb-1">Kirada (max)</label>
+                      <input
+                        type="number"
+                        className="input w-full"
+                        min={0}
+                        value={rentedMaxQty === '' ? '' : rentedMaxQty}
+                        onChange={(e) => setRentedMaxQty(e.target.value === '' ? '' : Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm table-compact">
+                    <thead>
+                      <tr className="border-b border-background-border">
+                        <th className="text-left p-3 font-medium text-text-secondary">Malzeme</th>
+                        <th className="text-left p-3 font-medium text-text-secondary">Kategori</th>
+                        <th className="text-center p-3 font-medium text-text-secondary">Kirada (Miktar)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredRentedItems.map((r) => (
+                        <tr key={r.ItemId} className="border-b border-background-border/50 hover:bg-background-hover">
+                          <td className="p-3 font-medium">{r.ItemName}</td>
+                          <td className="p-3 text-text-secondary">{r.CategoryName || '-'}</td>
+                          <td className="p-3 text-center">
+                            <span className="font-bold text-orange-400">
+                              {r.Quantity.toLocaleString('tr-TR')}
+                            </span>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                  {filteredRentedItems.length === 0 && (
+                    <div className="text-text-secondary text-center py-6">Arama kriterlerine uygun kirada ürün yok.</div>
+                  )}
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {activeTab === 'stock' && (
+        <>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
@@ -276,11 +472,11 @@ export default function WarehouseDetailPage() {
           </div>
         </div>
 
-        {loadingStock && (
+        {activeTab === 'stock' && loadingStock && (
           <div className="text-text-secondary text-sm">Depo stokları güncelleniyor...</div>
         )}
 
-        {filteredStock.length === 0 ? (
+        {activeTab === 'stock' && (filteredStock.length === 0 ? (
           <div className="text-text-secondary text-center py-6">
             {stock.length === 0
               ? 'Bu depoda henüz malzeme bulunmuyor.'
@@ -288,7 +484,7 @@ export default function WarehouseDetailPage() {
           </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-sm table-compact">
               <thead>
                 <tr className="border-b border-background-border">
                   <th className="text-left p-3 font-medium text-text-secondary">Malzeme</th>
@@ -311,6 +507,8 @@ export default function WarehouseDetailPage() {
               </tbody>
             </table>
           </div>
+        ))}
+        </>
         )}
       </div>
     </div>

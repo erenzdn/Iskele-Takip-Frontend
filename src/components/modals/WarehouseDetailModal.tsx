@@ -3,6 +3,7 @@ import { AuditLog, Warehouse, WarehouseStock, Inventory } from '../../models';
 import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
 import AuditLogTimeline from '../AuditLogTimeline';
+import ConfirmModal from './ConfirmModal';
 
 interface WarehouseDetailModalProps {
   warehouse: Warehouse | null;
@@ -27,12 +28,16 @@ export default function WarehouseDetailModal({
   const [showAddStock, setShowAddStock] = useState(false);
   const [inventoryItems, setInventoryItems] = useState<Inventory[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [quantity, setQuantity] = useState<number | ''>(0);
+  /** Miktar inputu – sadece rakam, string state ile giriş kaybı önlenir */
+  const [quantityStr, setQuantityStr] = useState<string>('0');
   const [editingStockId, setEditingStockId] = useState<number | null>(null);
-  const [editingQuantity, setEditingQuantity] = useState<number | ''>(0);
+  const [editingQuantityStr, setEditingQuantityStr] = useState<string>('0');
   const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
   const [warehouseLogs, setWarehouseLogs] = useState<AuditLog[]>([]);
   const [warehouseLogsLoading, setWarehouseLogsLoading] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showRemoveStockConfirm, setShowRemoveStockConfirm] = useState(false);
+  const [removeStockTarget, setRemoveStockTarget] = useState<WarehouseStock | null>(null);
 
   useEffect(() => {
     if (warehouse) {
@@ -118,14 +123,17 @@ export default function WarehouseDetailModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!warehouse || !confirm('Bu depoyu silmek istediğinizden emin misiniz?\nDikkat: Depodaki tüm stok kayıtları da silinecektir!')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!warehouse) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!warehouse) return;
     try {
       setIsBusy(true);
       await warehouseService.deleteAsync(warehouse.WarehouseId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete warehouse error:', error);
@@ -139,11 +147,12 @@ export default function WarehouseDetailModal({
     await loadInventoryItems();
     setShowAddStock(true);
     setSelectedItemId('');
-    setQuantity(0);
+    setQuantityStr('0');
   };
 
   const handleAddStock = async () => {
-    if (!warehouse || !selectedItemId || Number(quantity) <= 0) {
+    const qty = Math.max(0, parseInt(quantityStr, 10) || 0);
+    if (!warehouse || !selectedItemId || qty <= 0) {
       alert('Lütfen ürün seçin ve geçerli bir miktar girin');
       return;
     }
@@ -152,11 +161,11 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.addOrUpdateStockAsync(warehouse.WarehouseId, {
         ItemId: Number(selectedItemId),
-        Quantity: Number(quantity),
+        Quantity: qty,
       });
       setShowAddStock(false);
       setSelectedItemId('');
-      setQuantity(0);
+      setQuantityStr('0');
       await loadStock();
     } catch (error) {
       console.error('Add stock error:', error);
@@ -168,11 +177,12 @@ export default function WarehouseDetailModal({
 
   const handleStartEditStock = (stockItem: WarehouseStock) => {
     setEditingStockId(stockItem.StockId);
-    setEditingQuantity(stockItem.Quantity);
+    setEditingQuantityStr(String(stockItem.Quantity));
   };
 
   const handleSaveEditStock = async (stockItem: WarehouseStock) => {
-    if (!warehouse || Number(editingQuantity) < 0) {
+    const qty = Math.max(0, parseInt(editingQuantityStr, 10) || 0);
+    if (!warehouse || qty < 0) {
       alert('Geçerli bir miktar girin');
       return;
     }
@@ -181,7 +191,7 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.addOrUpdateStockAsync(warehouse.WarehouseId, {
         ItemId: stockItem.ItemId,
-        Quantity: Number(editingQuantity),
+        Quantity: qty,
       });
       setEditingStockId(null);
       await loadStock();
@@ -197,14 +207,19 @@ export default function WarehouseDetailModal({
     setEditingStockId(null);
   };
 
-  const handleRemoveStock = async (stockItem: WarehouseStock) => {
-    if (!warehouse || !confirm(`"${stockItem.ItemName}" ürününü depodan kaldırmak istediğinizden emin misiniz?`)) {
-      return;
-    }
+  const handleRemoveStockClick = (stockItem: WarehouseStock) => {
+    if (!warehouse) return;
+    setRemoveStockTarget(stockItem);
+    setShowRemoveStockConfirm(true);
+  };
 
+  const handleRemoveStockConfirm = async () => {
+    if (!warehouse || !removeStockTarget) return;
     try {
       setIsBusy(true);
-      await warehouseService.removeStockAsync(warehouse.WarehouseId, stockItem.ItemId);
+      await warehouseService.removeStockAsync(warehouse.WarehouseId, removeStockTarget.ItemId);
+      setShowRemoveStockConfirm(false);
+      setRemoveStockTarget(null);
       await loadStock();
     } catch (error) {
       console.error('Remove stock error:', error);
@@ -354,18 +369,20 @@ export default function WarehouseDetailModal({
                   <div>
                     <label className="block text-sm font-medium mb-2">Miktar</label>
                     <input
-                      type="number"
-                      value={quantity}
-                      onChange={(e) => setQuantity(e.target.value === '' ? '' : Number(e.target.value))}
-                      min="1"
+                      type="text"
+                      inputMode="numeric"
+                      pattern="[0-9]*"
+                      value={quantityStr}
+                      onChange={(e) => setQuantityStr(e.target.value.replace(/[^0-9]/g, ''))}
                       className="input w-full"
+                      placeholder="0"
                     />
                   </div>
                 </div>
                 <div className="flex gap-2 mt-4">
                   <button
                     onClick={handleAddStock}
-                    disabled={isBusy || !selectedItemId || Number(quantity) <= 0}
+                    disabled={isBusy || !selectedItemId || (parseInt(quantityStr, 10) || 0) <= 0}
                     className="btn-primary text-sm"
                   >
                     Ekle
@@ -388,7 +405,7 @@ export default function WarehouseDetailModal({
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm">
+                <table className="w-full text-sm table-compact">
                   <thead>
                     <tr className="border-b border-background-border">
                       <th className="text-left p-3 font-semibold">Ürün</th>
@@ -405,10 +422,11 @@ export default function WarehouseDetailModal({
                         <td className="p-3 text-center">
                           {editingStockId === item.StockId ? (
                             <input
-                              type="number"
-                              value={editingQuantity}
-                              onChange={(e) => setEditingQuantity(e.target.value === '' ? '' : Number(e.target.value))}
-                              min="0"
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={editingQuantityStr}
+                              onChange={(e) => setEditingQuantityStr(e.target.value.replace(/[^0-9]/g, ''))}
                               className="input w-20 text-center"
                               autoFocus
                             />
@@ -448,7 +466,7 @@ export default function WarehouseDetailModal({
                                 ✎
                               </button>
                               <button
-                                onClick={() => handleRemoveStock(item)}
+                                onClick={() => handleRemoveStockClick(item)}
                                 disabled={isBusy}
                                 className="text-red-500 hover:text-red-400 px-2"
                                 title="Kaldır"
@@ -478,7 +496,7 @@ export default function WarehouseDetailModal({
             <>
               {!isNew && warehouse && (
                 <button
-                  onClick={handleDelete}
+                  onClick={handleDeleteClick}
                   disabled={isBusy}
                   className="btn-danger flex-1"
                 >
@@ -506,6 +524,24 @@ export default function WarehouseDetailModal({
         </>
         )}
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu depoyu silmek istediğinizden emin misiniz?\nDikkat: Depodaki tüm stok kayıtları da silinecektir!"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmModal
+        open={showRemoveStockConfirm}
+        title="Onaylıyor musunuz?"
+        message={removeStockTarget ? `"${removeStockTarget.ItemName}" ürününü depodan kaldırmak istediğinizden emin misiniz?` : ''}
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleRemoveStockConfirm}
+        onCancel={() => { setShowRemoveStockConfirm(false); setRemoveStockTarget(null); }}
+      />
     </div>
   );
 }

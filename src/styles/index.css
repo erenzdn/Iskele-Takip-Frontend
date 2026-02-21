@@ -125,5 +125,16 @@
   .ProseMirror pre code {
     @apply bg-transparent p-0;
   }
+
+  /* Liste/tablo satırlarını daha kompakt gösterir – sayfada daha fazla veri görünür */
+  .table-compact th,
+  .table-compact td {
+    padding: 0.375rem 0.75rem !important;
+    font-size: 0.8125rem;
+    line-height: 1.35;
+  }
+  .table-compact th {
+    font-weight: 600;
+  }
 }
 

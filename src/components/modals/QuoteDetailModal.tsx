@@ -6,11 +6,16 @@ import {
   QuoteDetailItem,
   ConstructionSite,
   QuoteStatus,
+  Warehouse,
 } from '../../models';
-import { quoteService } from '../../services/quoteService';
+import { quoteService, WarehouseAssignment } from '../../services/quoteService';
 import { customerService } from '../../services/customerService';
+import { getApiErrorMessage } from '../../utils/apiError';
 import { inventoryService } from '../../services/inventoryService';
+import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
+import ConfirmModal from './ConfirmModal';
+import SearchableItemCombobox from '../SearchableItemCombobox';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -32,10 +37,25 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   );
   const [quoteItems, setQuoteItems] = useState<QuoteDetailItem[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  const [itemQuantity, setItemQuantity] = useState<number | ''>(1);
+  /** Miktar inputu için string state - yazarken giriş kaybını önler, sadece rakam kabul eder */
+  const [itemQuantityStr, setItemQuantityStr] = useState<string>('1');
   const [status, setStatus] = useState<QuoteStatus>(QuoteStatus.Pending);
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+
+  // Sözleşmeye dönüştürme - depo atama: 'global' | 'defaultWarehouse' | 'perItem'
+  const [showConvertModal, setShowConvertModal] = useState(false);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [convertMode, setConvertMode] = useState<'global' | 'defaultWarehouse' | 'perItem'>('global');
+  const [defaultWarehouseIdForConvert, setDefaultWarehouseIdForConvert] = useState<number | ''>('');
+  // perItemAssignments[ItemId] = { WarehouseId, Quantity }[]
+  const [perItemAssignments, setPerItemAssignments] = useState<
+    Record<number, { WarehouseId: number; Quantity: number }[]>
+  >({});
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showAddItemConfirm, setShowAddItemConfirm] = useState(false);
+  const [iskonto, setIskonto] = useState<number>(0);
+  const [vatRate, setVatRate] = useState<number>(20);
 
   useEffect(() => {
     loadData();
@@ -49,6 +69,8 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       setPlannedEndDate(quote.PlannedEndDate.split('T')[0]);
       setStatus(quote.Status);
       setNotes(quote.Notes || '');
+      setIskonto(quote.Iskonto ?? 0);
+      setVatRate(quote.VatRate ?? 20);
 
       if (quote.QuoteDetails) {
         const items: QuoteDetailItem[] = quote.QuoteDetails.map((detail) => ({
@@ -120,12 +142,14 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
 
   const loadData = async () => {
     try {
-      const [custData, invData] = await Promise.all([
+      const [custData, invData, whData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(),
+        warehouseService.getAllAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
+      setWarehouses(whData);
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -140,13 +164,20 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     0
   );
 
+  const handleAddItemClick = () => {
+    if (!selectedItemId) return;
+    const selectedItem = availableItems.find((i) => i.ItemId === Number(selectedItemId));
+    if (!selectedItem) return;
+    setShowAddItemConfirm(true);
+  };
+
   const handleAddItem = () => {
     if (!selectedItemId) return;
 
     const selectedItem = availableItems.find((i) => i.ItemId === Number(selectedItemId));
     if (!selectedItem) return;
 
-    const qty = Number(itemQuantity) || 1;
+    const qty = Math.max(1, parseInt(itemQuantityStr, 10) || 1);
     const existingItem = quoteItems.find((i) => i.ItemId === Number(selectedItemId));
 
     if (existingItem) {
@@ -169,8 +200,20 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       ]);
     }
 
+    setShowAddItemConfirm(false);
     setSelectedItemId('');
-    setItemQuantity(1);
+    setItemQuantityStr('1');
+  };
+
+  /** Sadece rakam girişine izin ver (boş veya pozitif tam sayı) */
+  const handleQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const raw = e.target.value;
+    if (raw === '') {
+      setItemQuantityStr('');
+      return;
+    }
+    const digitsOnly = raw.replace(/[^0-9]/g, '');
+    setItemQuantityStr(digitsOnly);
   };
 
   const handleRemoveItem = (itemId: number) => {
@@ -203,6 +246,8 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
         TotalPrice: totalPrice,
         Status: status,
         Notes: notes || undefined,
+        Iskonto: iskonto,
+        VatRate: vatRate,
         details,
       };
 
@@ -226,19 +271,21 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     }
   };
 
-  const handleDelete = async () => {
-    if (!quote || !confirm('Bu teklifi silmek istediğinizden emin misiniz?')) {
-      return;
-    }
-
+  const handleDeleteClick = () => {
+    if (!quote) return;
     if (quote.ConvertedContractId) {
       alert('Sözleşmeye dönüştürülmüş teklifler silinemez.');
       return;
     }
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!quote) return;
     try {
       setIsBusy(true);
       await quoteService.deleteAsync(quote.QuoteId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete quote error:', error);
@@ -282,6 +329,44 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     }
   };
 
+  const openConvertModal = () => {
+    if (!quote || quote.Status !== QuoteStatus.Accepted || quote.ConvertedContractId) return;
+    setShowConvertModal(true);
+    setPerItemAssignments({});
+  };
+
+  const addWarehouseAssignment = (itemId: number) => {
+    const current = perItemAssignments[itemId] ?? [];
+    setPerItemAssignments({
+      ...perItemAssignments,
+      [itemId]: [...current, { WarehouseId: warehouses[0]?.WarehouseId ?? 0, Quantity: 1 }],
+    });
+  };
+
+  const updateWarehouseAssignment = (
+    itemId: number,
+    index: number,
+    field: 'WarehouseId' | 'Quantity',
+    value: number
+  ) => {
+    const current = [...(perItemAssignments[itemId] ?? [])];
+    current[index] = { ...current[index], [field]: value };
+    setPerItemAssignments({ ...perItemAssignments, [itemId]: current });
+  };
+
+  const removeWarehouseAssignment = (itemId: number, index: number) => {
+    const current = (perItemAssignments[itemId] ?? []).filter((_, i) => i !== index);
+    if (current.length === 0) {
+      const { [itemId]: _, ...rest } = perItemAssignments;
+      setPerItemAssignments(rest);
+    } else {
+      setPerItemAssignments({ ...perItemAssignments, [itemId]: current });
+    }
+  };
+
+  const getAssignmentTotalForItem = (itemId: number) =>
+    (perItemAssignments[itemId] ?? []).reduce((sum, a) => sum + a.Quantity, 0);
+
   const handleConvertToContract = async () => {
     if (!quote) return;
 
@@ -295,18 +380,46 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       return;
     }
 
-    if (!confirm('Bu teklifi sözleşmeye dönüştürmek istediğinizden emin misiniz?')) {
+    if (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) {
+      alert('Tüm kalemler tek depodan çıkacaksa lütfen bir depo seçin.');
       return;
     }
 
+    let options: { warehouseAssignments?: WarehouseAssignment[]; defaultWarehouseId?: number } | undefined;
+
+    if (convertMode === 'defaultWarehouse' && defaultWarehouseIdForConvert) {
+      options = { defaultWarehouseId: Number(defaultWarehouseIdForConvert) };
+    } else if (convertMode === 'perItem') {
+      const assignments: WarehouseAssignment[] = [];
+      for (const item of quoteItems) {
+        const itemAssignments = perItemAssignments[item.ItemId] ?? [];
+        const total = itemAssignments.reduce((s, a) => s + a.Quantity, 0);
+        if (total !== item.Quantity) {
+          alert(
+            `"${item.ItemName}" için atanan toplam miktar (${total}) teklif miktarı (${item.Quantity}) ile eşleşmiyor.`
+          );
+          return;
+        }
+        for (const a of itemAssignments) {
+          if (a.Quantity > 0) {
+            assignments.push({ ItemId: item.ItemId, WarehouseId: a.WarehouseId, Quantity: a.Quantity });
+          }
+        }
+      }
+      options = assignments.length > 0 ? { warehouseAssignments: assignments } : undefined;
+    }
+    // convertMode === 'global' => options undefined (boş body)
+
     try {
       setIsBusy(true);
-      const result = await quoteService.convertToContractAsync(quote.QuoteId);
+      const result = await quoteService.convertToContractAsync(quote.QuoteId, options);
+      setShowConvertModal(false);
       alert(`Teklif başarıyla sözleşmeye dönüştürüldü!\nSözleşme ID: ${result.ContractId}`);
       onClose();
-    } catch (error) {
+    } catch (error: unknown) {
       console.error('Convert quote error:', error);
-      alert('Dönüştürme hatası. Envanterde yeterli stok olduğundan emin olun.');
+      const msg = getApiErrorMessage(error);
+      alert(msg || 'Dönüştürme hatası. Envanterde yeterli stok olduğundan emin olun.');
     } finally {
       setIsBusy(false);
     }
@@ -414,6 +527,38 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
             </div>
           </div>
 
+          {/* İskonto ve KDV */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">İskonto (%)</label>
+              <input
+                type="number"
+                value={iskonto}
+                onChange={(e) => setIskonto(parseFloat(e.target.value) || 0)}
+                disabled={isReadOnly}
+                min={0}
+                max={100}
+                step={0.01}
+                className="input w-32"
+                placeholder="0"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">KDV Oranı (%)</label>
+              <input
+                type="number"
+                value={vatRate}
+                onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                disabled={isReadOnly}
+                min={0}
+                max={100}
+                step={1}
+                className="input w-32"
+                placeholder="20"
+              />
+            </div>
+          </div>
+
           {/* Notlar */}
           <div>
             <label className="block text-sm font-medium mb-2">Notlar</label>
@@ -458,33 +603,33 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
 
           {/* Malzeme Ekleme */}
           {!isReadOnly && (
-            <div className="card border-2 border-dashed border-background-border p-4">
+            <div className="card border border-background-border p-4">
               <h3 className="font-semibold mb-3">Malzeme Ekle</h3>
-              <div className="flex gap-3">
-                <select
-                  value={selectedItemId}
-                  onChange={(e) => setSelectedItemId(Number(e.target.value) || '')}
-                  className="input flex-1"
-                >
-                  <option value="">Malzeme seçin</option>
-                  {availableItems.map((item) => (
-                    <option key={item.ItemId} value={item.ItemId}>
-                      {item.ItemName} - ₺{(item.MonthlyListPrice ?? 0).toFixed(2)}/ay (Stok:{' '}
-                      {item.TotalStock - item.OnRent})
-                    </option>
-                  ))}
-                </select>
-                <input
-                  type="number"
-                  value={itemQuantity}
-                  onChange={(e) => setItemQuantity(e.target.value === '' ? '' : Number(e.target.value))}
-                  min="1"
-                  className="input w-24"
-                  placeholder="Miktar"
-                />
-                <button onClick={handleAddItem} className="btn-primary">
-                  Ekle
-                </button>
+              <div className="flex flex-wrap gap-4 items-end">
+                <div className="flex-1 min-w-0 w-full sm:w-auto">
+                  <SearchableItemCombobox
+                    items={availableItems}
+                    value={selectedItemId}
+                    onChange={setSelectedItemId}
+                    displayMode="quote"
+                    placeholder="Malzeme adı, kodu veya kategori ile ara..."
+                  />
+                </div>
+                <div className="flex gap-2 flex-shrink-0 items-center">
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    value={itemQuantityStr}
+                    onChange={handleQuantityInputChange}
+                    className="input w-24"
+                    placeholder="Miktar"
+                    aria-label="Miktar"
+                  />
+                  <button onClick={handleAddItemClick} className="btn-primary">
+                    Ekle
+                  </button>
+                </div>
               </div>
             </div>
           )}
@@ -569,7 +714,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
               {/* Sözleşmeye Dönüştür - sadece kabul edilmiş ve henüz dönüştürülmemiş için */}
               {status === QuoteStatus.Accepted && !quote?.ConvertedContractId && (
                 <button
-                  onClick={handleConvertToContract}
+                  onClick={openConvertModal}
                   disabled={isBusy}
                   className="btn-success flex-1"
                 >
@@ -587,7 +732,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
           {!isReadOnly && (
             <>
               {!isNew && quote && status === QuoteStatus.Pending && (
-                <button onClick={handleDelete} disabled={isBusy} className="btn-danger flex-1">
+                <button onClick={handleDeleteClick} disabled={isBusy} className="btn-danger flex-1">
                   Sil
                 </button>
               )}
@@ -601,6 +746,181 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
           )}
         </div>
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu teklifi silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmModal
+        open={showAddItemConfirm}
+        title="Onaylıyor musunuz?"
+        message={selectedItemId ? (() => {
+          const item = availableItems.find((i) => i.ItemId === Number(selectedItemId));
+          const qty = Math.max(1, parseInt(itemQuantityStr, 10) || 1);
+          return item ? `Bu kalemi teklife eklemek istediğinize emin misiniz? (${qty} adet, ${item.ItemName})` : 'Bu kalemi teklife eklemek istediğinize emin misiniz?';
+        })() : 'Bu kalemi teklife eklemek istediğinize emin misiniz?'}
+        onConfirm={handleAddItem}
+        onCancel={() => setShowAddItemConfirm(false)}
+      />
+      {/* Sözleşmeye Dönüştür - Depo Atama Modal */}
+      {showConvertModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60]">
+          <div className="bg-background-panel rounded-panel w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
+            <h3 className="text-xl font-bold mb-4">Sözleşmeye Dönüştür – Stok / Depo</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Stok güncellemesi nasıl yapılsın? Sadece global envanter, tümü tek depodan veya ürün bazlı depo ataması seçebilirsiniz.
+            </p>
+
+            <div className="space-y-3 mb-4">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="convertMode"
+                  checked={convertMode === 'global'}
+                  onChange={() => setConvertMode('global')}
+                  className="rounded-full"
+                />
+                <span className="text-sm">Sadece global envanter güncellensin (depo stoğu değişmesin)</span>
+              </label>
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="convertMode"
+                  checked={convertMode === 'defaultWarehouse'}
+                  onChange={() => setConvertMode('defaultWarehouse')}
+                  className="rounded-full"
+                />
+                <span className="text-sm">Tüm kalemler tek depodan çıksın</span>
+              </label>
+              {convertMode === 'defaultWarehouse' && (
+                <div className="ml-6">
+                  <select
+                    value={defaultWarehouseIdForConvert}
+                    onChange={(e) => setDefaultWarehouseIdForConvert(Number(e.target.value) || '')}
+                    className="input w-full max-w-xs"
+                  >
+                    <option value="">Depo seçin</option>
+                    {warehouses.map((wh) => (
+                      <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                        {wh.WarehouseName}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              )}
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="radio"
+                  name="convertMode"
+                  checked={convertMode === 'perItem'}
+                  onChange={() => setConvertMode('perItem')}
+                  className="rounded-full"
+                />
+                <span className="text-sm">Ürün bazlı depo ataması yap</span>
+              </label>
+            </div>
+
+            {convertMode === 'perItem' && (
+              <div className="space-y-4 mb-6">
+                {quoteItems.map((item) => {
+                  const assignments = perItemAssignments[item.ItemId] ?? [];
+                  const total = getAssignmentTotalForItem(item.ItemId);
+                  const isValid = total === item.Quantity;
+
+                  return (
+                    <div key={item.ItemId} className="card p-4">
+                      <div className="font-medium mb-2">
+                        {item.ItemName} — Toplam: {item.Quantity} adet
+                        {assignments.length > 0 && (
+                          <span
+                            className={`ml-2 text-sm ${isValid ? 'text-green-400' : 'text-red-400'}`}
+                          >
+                            (Atanan: {total} {!isValid && '— eşleşmiyor!'})
+                          </span>
+                        )}
+                      </div>
+                      <div className="space-y-2">
+                        {assignments.map((a, idx) => (
+                          <div key={idx} className="flex gap-2 items-center">
+                            <select
+                              value={a.WarehouseId}
+                              onChange={(e) =>
+                                updateWarehouseAssignment(
+                                  item.ItemId,
+                                  idx,
+                                  'WarehouseId',
+                                  Number(e.target.value)
+                                )
+                              }
+                              className="input flex-1"
+                            >
+                              {warehouses.map((wh) => (
+                                <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                                  {wh.WarehouseName}
+                                </option>
+                              ))}
+                            </select>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={a.Quantity === 0 ? '' : a.Quantity}
+                              onChange={(e) => {
+                                const raw = e.target.value.replace(/[^0-9]/g, '');
+                                const num = raw === '' ? 0 : Math.max(0, parseInt(raw, 10));
+                                updateWarehouseAssignment(item.ItemId, idx, 'Quantity', num);
+                              }}
+                              className="input w-24"
+                              placeholder="Adet"
+                            />
+                            <button
+                              onClick={() => removeWarehouseAssignment(item.ItemId, idx)}
+                              className="text-error hover:text-red-700 text-xl px-1"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          onClick={() => addWarehouseAssignment(item.ItemId)}
+                          className="btn-secondary text-sm px-3 py-1"
+                        >
+                          + Depo ekle
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowConvertModal(false)}
+                className="btn-secondary flex-1"
+              >
+                İptal
+              </button>
+              <button
+                onClick={handleConvertToContract}
+                disabled={
+                  isBusy ||
+                  (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) ||
+                  (convertMode === 'perItem' &&
+                    quoteItems.some((q) => getAssignmentTotalForItem(q.ItemId) !== q.Quantity))
+                }
+                className="btn-success flex-1"
+              >
+                {isBusy ? 'Dönüştürülüyor...' : 'Dönüştür'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
