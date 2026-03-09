@@ -54,7 +54,6 @@ export interface InventorySubCategory {
 export interface Inventory {
   ItemId: number;
   ItemCode?: string;
-  CategoryId: number;
   ItemName: string;
   TotalStock: number;
   OnRent: number;
@@ -62,6 +61,9 @@ export interface Inventory {
   PurchasePrice: number;
   MonthlyListPrice?: number;
   UnitPrice?: number;
+  MonthlyListPriceEur?: number;
+  UnitPriceEur?: number;
+  Categories?: MaterialCategory[];
   SubCategories?: SubCategory[];
   CreatedAt?: string;
   CreatedByUserFullName?: string;
@@ -69,13 +71,13 @@ export interface Inventory {
   LastModifiedAt?: string | null;
   LastModifiedByUserFullName?: string | null;
   LastModifiedByUserName?: string | null;
-  Category?: MaterialCategory;
   PriceTiers?: PriceTier[];
   ContractDetails?: ContractDetail[];
 }
 
 export interface Contract {
   ContractId: number;
+  ContractCode?: string;
   CustomerId: number;
   SiteId?: number; // Şantiye ID (opsiyonel)
   StartDate: string; // ISO 8601 format
@@ -333,6 +335,14 @@ export interface PurchaseInvoice {
   TotalAmount: number;
   Iskonto?: number;  // yüzde
   VatRate?: number;  // yüzde
+  DocumentNo?: string;
+  ItemId?: number;
+  ItemName?: string;
+  WarehouseId?: number;
+  WarehouseName?: string;
+  Quantity?: number;
+  Currency?: string;
+  ExchangeRate?: number;
   CreatedAt?: string;
   CreatedByUserFullName?: string;
   CreatedByUserName?: string;
@@ -382,6 +392,7 @@ export enum QuoteStatus {
 
 export interface Quote {
   QuoteId: number;
+  QuoteCode?: string;
   CustomerId: number;
   SiteId?: number;
   StartDate: string; // ISO 8601 format

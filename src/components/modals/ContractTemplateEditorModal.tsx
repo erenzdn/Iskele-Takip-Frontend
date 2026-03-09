@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { ClipboardIcon } from '@phosphor-icons/react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
@@ -381,7 +382,8 @@ export default function ContractTemplateEditorModal({
                 onClick={insertMaterialTable}
                 className="btn-secondary text-sm px-3 py-1"
               >
-                📋 Malzeme Tablosu
+                <ClipboardIcon size={18} weight="regular" className="inline-block align-middle mr-1.5" aria-hidden />
+                Malzeme Tablosu
               </button>
             </div>
           </div>

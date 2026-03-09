@@ -75,30 +75,30 @@ export default function CustomersPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Müşteriler</h1>
-          <p className="text-text-secondary">Müşteri bilgilerini yönetin</p>
+      <div className="mb-3 flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-text-primary">Müşteriler</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={loadCustomers} className="btn-secondary py-2 px-3 text-sm">
+            Yenile
+          </button>
+          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+            + Yeni Müşteri
+          </button>
         </div>
-        <button onClick={handleAddNew} className="btn-primary">
-          + Yeni Müşteri
-        </button>
       </div>
 
-      <div className="mb-6 flex gap-4">
+      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="Müşteri adı, vergi no, e-posta, telefon veya yetkili kişi ile ara..."
-          className="input flex-1"
+          placeholder="Müşteri adı, vergi no, e-posta, telefon..."
+          className="input flex-1 min-w-[200px] py-2 px-3 text-sm"
         />
-        <button onClick={handleSearch} className="btn-secondary">
+        <button onClick={handleSearch} className="btn-secondary py-2 px-3 text-sm">
           Ara
-        </button>
-        <button onClick={loadCustomers} className="btn-secondary">
-          Yenile
         </button>
       </div>
 
@@ -109,73 +109,77 @@ export default function CustomersPage() {
           description="Yeni müşteri eklemek için yukarıdaki butonu kullanın"
         />
       ) : (
-        <div className="card">
-          <div className="overflow-x-auto">
-            <table className="w-full table-compact">
-              <thead>
-                <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '24%' }}>
+        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+          {/* Sabit yükseklik: viewport - üst alan (~200px). Satır ~20px → 1080p'de ~40, 768p'de ~25 satır görünür */}
+          <div className="overflow-auto max-h-[calc(100vh-200px)] min-h-[320px]">
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 border-b border-background-border">
+                <tr>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
                     Müşteri Adı
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '14%' }}>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
                     Telefon
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
                     E-posta
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '16%' }}>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
                     Merkez Yetkili
                   </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
-                    Sözleşme Sayısı
+                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" style={{ width: '6%' }}>
+                    Sözleşme
                   </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
-                    Oluşturan / Son Güncelleyen
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">
+                    Kayıt Bilgisi
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {customers.map((customer) => (
+                {customers.map((customer, index) => (
                   <tr
                     key={customer.CustomerId}
-                    className="border-b border-background-border hover:bg-background-hover cursor-pointer"
+                    className={`border-b border-background-border cursor-pointer hover:bg-background-hover ${
+                      index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
+                    }`}
                     onClick={() => handleOpenDetail(customer)}
                   >
-                    <td className="p-4">
-                      <div className="font-medium">{customer.Name}</div>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className="font-medium text-text-primary">{customer.Name}</span>
                       {customer.TaxId && (
-                        <div className="text-sm text-text-secondary">VN: {customer.TaxId}</div>
+                        <span className="text-text-secondary ml-1">VN: {customer.TaxId}</span>
                       )}
                     </td>
-                    <td className="p-4">{customer.PhoneNumber || '-'}</td>
-                    <td className="p-4 opacity-80">{customer.Email || '-'}</td>
-                    <td className="p-4">
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
+                      {customer.PhoneNumber || '-'}
+                    </td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary opacity-90">
+                      {customer.Email || '-'}
+                    </td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
                       {customer.CenterAuthorizedPerson ? (
-                        <div>
-                          <div className="font-medium text-sm">{customer.CenterAuthorizedPerson}</div>
-                          {customer.CenterAuthorizedPhone && (
-                            <div className="text-sm text-text-secondary">{customer.CenterAuthorizedPhone}</div>
-                          )}
-                        </div>
+                        <span>
+                          {customer.CenterAuthorizedPerson}
+                          {customer.CenterAuthorizedPhone ? ` • ${customer.CenterAuthorizedPhone}` : ''}
+                        </span>
                       ) : (
                         <span className="text-text-secondary">-</span>
                       )}
                     </td>
-                    <td className="p-4 text-center">
-                      <span className="badge bg-blue-600 text-white">
-                        {customer.Contracts?.length || 0}
-                      </span>
+                    <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className="text-text-primary font-medium">{customer.Contracts?.length || 0}</span>
                     </td>
-                    <td className="p-4 text-sm text-text-secondary">
-                      <div>Oluşturan: {customer.CreatedByUserFullName || customer.CreatedByUserName || '-'}</div>
-                      <div>{formatShortDateTime(customer.CreatedAt)}</div>
-                      <div className="mt-1">Son güncelleyen: {customer.LastModifiedByUserFullName || customer.LastModifiedByUserName || '-'}</div>
-                      <div>{formatShortDateTime(customer.LastModifiedAt)}</div>
+                    <td className="py-0.5 px-2 align-middle text-text-secondary">
+                      {customer.CreatedByUserFullName || customer.CreatedByUserName || '-'} • {formatShortDateTime(customer.CreatedAt)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+            <span>Toplam: {customers.length} müşteri</span>
+            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
       )}

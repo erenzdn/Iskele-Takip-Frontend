@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react';
+import { useAuthStore } from '../../store/authStore';
+import { CheckIcon, XIcon } from '@phosphor-icons/react';
 import {
   Quote,
   Customer,
@@ -15,7 +17,7 @@ import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
 import ConfirmModal from './ConfirmModal';
-import SearchableItemCombobox from '../SearchableItemCombobox';
+import ProductPickerModal from './ProductPickerModal';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -36,9 +38,6 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   );
   const [quoteItems, setQuoteItems] = useState<QuoteDetailItem[]>([]);
-  const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  /** Miktar inputu için string state - yazarken giriş kaybını önler, sadece rakam kabul eder */
-  const [itemQuantityStr, setItemQuantityStr] = useState<string>('1');
   const [status, setStatus] = useState<QuoteStatus>(QuoteStatus.Pending);
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
@@ -53,9 +52,13 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     Record<number, { WarehouseId: number; Quantity: number }[]>
   >({});
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
-  const [showAddItemConfirm, setShowAddItemConfirm] = useState(false);
+  const [showProductPickerModal, setShowProductPickerModal] = useState(false);
+  const [lastAddedItemIds, setLastAddedItemIds] = useState<number[]>([]);
   const [iskonto, setIskonto] = useState<number>(0);
+  /** Satır bazlı iskonto (%) - key: ItemId. Üstteki iskonto değişince tüm satırlara yansır; satırda tek tek de düzenlenebilir. */
+  const [itemIskonto, setItemIskonto] = useState<Record<number, number>>({});
   const [vatRate, setVatRate] = useState<number>(20);
+  const [quoteCode, setQuoteCode] = useState<string>('');
 
   useEffect(() => {
     loadData();
@@ -71,6 +74,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       setNotes(quote.Notes || '');
       setIskonto(quote.Iskonto ?? 0);
       setVatRate(quote.VatRate ?? 20);
+      setQuoteCode(quote.QuoteCode ?? '');
 
       if (quote.QuoteDetails) {
         const items: QuoteDetailItem[] = quote.QuoteDetails.map((detail) => ({
@@ -82,6 +86,12 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
           ItemName: detail.ItemName || '',
         }));
         setQuoteItems(items);
+        const globalIsk = quote.Iskonto ?? 0;
+        setItemIskonto((prev) => {
+          const next = { ...prev };
+          items.forEach((i) => (next[i.ItemId] = globalIsk));
+          return next;
+        });
       }
 
       if (quote.CustomerId) {
@@ -156,7 +166,8 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   };
 
   const plannedDays = Math.ceil(
-    (new Date(plannedEndDate).getTime() - new Date(startDate).getTime()) / (1000 * 60 * 60 * 24)
+    (new Date(plannedEndDate).getTime() - new Date(startDate).getTime()) /
+      (1000 * 60 * 60 * 24)
   );
 
   const totalPrice = quoteItems.reduce(
@@ -164,26 +175,29 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     0
   );
 
-  const handleAddItemClick = () => {
-    if (!selectedItemId) return;
-    const selectedItem = availableItems.find((i) => i.ItemId === Number(selectedItemId));
-    if (!selectedItem) return;
-    setShowAddItemConfirm(true);
-  };
+  /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
+  const getItemIskonto = (itemId: number) => itemIskonto[itemId] ?? iskonto;
 
-  const handleAddItem = () => {
-    if (!selectedItemId) return;
+  // Toplam tutar kırılımları (satır bazlı iskonto)
+  const subtotal = totalPrice;
+  const discountAmount = quoteItems.reduce((sum, item) => {
+    const lineTotal = item.DailyPrice * item.Quantity * plannedDays;
+    const pct = getItemIskonto(item.ItemId);
+    return sum + lineTotal * (pct / 100);
+  }, 0);
+  const discountedTotal = subtotal - discountAmount;
+  const vatAmount = discountedTotal * (vatRate / 100);
+  const grandTotal = discountedTotal + vatAmount;
 
-    const selectedItem = availableItems.find((i) => i.ItemId === Number(selectedItemId));
-    if (!selectedItem) return;
-
-    const qty = Math.max(1, parseInt(itemQuantityStr, 10) || 1);
-    const existingItem = quoteItems.find((i) => i.ItemId === Number(selectedItemId));
+  /** Panelden ürün + miktar ile listeye ekler. */
+  const addItemFromPicker = (item: Inventory, quantity: number) => {
+    const qty = Math.max(1, quantity);
+    const existingItem = quoteItems.find((i) => i.ItemId === item.ItemId);
 
     if (existingItem) {
       setQuoteItems(
         quoteItems.map((i) =>
-          i.ItemId === Number(selectedItemId) ? { ...i, Quantity: i.Quantity + qty } : i
+          i.ItemId === item.ItemId ? { ...i, Quantity: i.Quantity + qty } : i
         )
       );
     } else {
@@ -191,34 +205,51 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
         ...quoteItems,
         {
           QuoteDetailId: 0,
-          ItemId: Number(selectedItemId),
+          ItemId: item.ItemId,
           Quantity: qty,
-          DailyPrice: (selectedItem.MonthlyListPrice || 0) / 30,
-          Item: selectedItem,
-          ItemName: selectedItem.ItemName,
+          DailyPrice: (item.MonthlyListPrice || 0) / 30,
+          Item: item,
+          ItemName: item.ItemName,
         },
       ]);
+      setItemIskonto((prev) => ({ ...prev, [item.ItemId]: iskonto }));
     }
-
-    setShowAddItemConfirm(false);
-    setSelectedItemId('');
-    setItemQuantityStr('1');
+    setLastAddedItemIds((prev) => [...prev.filter((id) => id !== item.ItemId), item.ItemId]);
   };
 
-  /** Sadece rakam girişine izin ver (boş veya pozitif tam sayı) */
-  const handleQuantityInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value;
-    if (raw === '') {
-      setItemQuantityStr('');
-      return;
-    }
-    const digitsOnly = raw.replace(/[^0-9]/g, '');
-    setItemQuantityStr(digitsOnly);
-  };
+  useEffect(() => {
+    if (lastAddedItemIds.length === 0) return;
+    const t = setTimeout(() => setLastAddedItemIds([]), 1600);
+    return () => clearTimeout(t);
+  }, [lastAddedItemIds]);
 
   const handleRemoveItem = (itemId: number) => {
     setQuoteItems(quoteItems.filter((i) => i.ItemId !== itemId));
   };
+
+  const updateQuoteItemQuantity = (itemId: number, newQty: number) => {
+    const qty = Math.max(1, Math.floor(newQty));
+    setQuoteItems((prev) =>
+      prev.map((i) => (i.ItemId === itemId ? { ...i, Quantity: qty } : i))
+    );
+  };
+
+  const updateQuoteItemIskonto = (itemId: number, value: number) => {
+    const pct = Math.max(0, Math.min(100, value));
+    setItemIskonto((prev) => ({ ...prev, [itemId]: pct }));
+  };
+
+  /** Üstteki iskonto değişince tüm satırlara uygula */
+  const handleGlobalIskontoChange = (value: number) => {
+    setIskonto(value);
+    setItemIskonto((prev) => {
+      const next = { ...prev };
+      quoteItems.forEach((i) => (next[i.ItemId] = value));
+      return next;
+    });
+  };
+
+  const currentUser = useAuthStore((s) => s.user);
 
   const handleSave = async () => {
     if (!selectedCustomerId || quoteItems.length === 0) {
@@ -253,6 +284,9 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
 
       if (selectedSiteId) {
         requestBody.SiteId = Number(selectedSiteId);
+      }
+      if (quoteCode.trim()) {
+        requestBody.QuoteCode = quoteCode.trim();
       }
 
       if (isNew) {
@@ -443,307 +477,444 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-background-panel rounded-panel w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between mb-6">
-          <h2 className="text-2xl font-bold">{isNew ? 'Yeni Teklif' : 'Teklif Detayı'}</h2>
+    <div className="fixed inset-0 z-50 flex flex-col bg-background-main">
+      <header className="shrink-0 flex items-center justify-between px-6 py-4 bg-background-panel border-b border-background-border shadow-sm">
+        <div className="flex items-center gap-3">
+          <h1 className="text-xl font-semibold text-text-primary tracking-tight">
+            {isNew ? 'Yeni Teklif' : 'Teklif Detayı'}
+          </h1>
           {!isNew && getStatusBadge()}
         </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+          aria-label="Kapat"
+        >
+          <XIcon size={22} weight="regular" />
+        </button>
+      </header>
 
-        <div className="space-y-4">
-          {/* Müşteri Seçimi */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Müşteri Seçimi *</label>
-            <select
-              value={selectedCustomerId}
-              onChange={(e) => setSelectedCustomerId(Number(e.target.value) || '')}
-              disabled={isReadOnly}
-              className="input w-full"
-              required
-            >
-              <option value="">Müşteri seçin</option>
-              {customers.map((customer) => (
-                <option key={customer.CustomerId} value={customer.CustomerId}>
-                  {customer.Name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Şantiye Seçimi */}
-          {selectedCustomerId && (
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Şantiye Seçimi {sites.length > 0 ? '*' : '(Opsiyonel)'}
-              </label>
-              {sitesLoading ? (
-                <div className="input w-full text-text-secondary">Yükleniyor...</div>
-              ) : sites.length > 0 ? (
-                <select
-                  value={selectedSiteId}
-                  onChange={(e) => setSelectedSiteId(Number(e.target.value) || '')}
+      <div className="flex-1 overflow-auto">
+        <div className="w-full max-w-6xl mx-auto p-6 space-y-4">
+          {/* Üst kısım: yatay bilgi alanları (kompakt) */}
+          <section className="rounded-xl border border-background-border bg-background-panel p-3 shadow-sm">
+            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 pb-1.5 border-b border-background-border">
+              Genel Bilgiler
+            </h3>
+            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Teklif Kodu (Opsiyonel)</label>
+                <input
+                  type="text"
+                  value={quoteCode}
+                  onChange={(e) => setQuoteCode(e.target.value)}
                   disabled={isReadOnly}
-                  className="input w-full"
-                  required={sites.length > 0}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="Örn: TK-2026-001"
+                  maxLength={50}
+                />
+              </div>
+
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Müşteri Seçimi *</label>
+                <select
+                  value={selectedCustomerId}
+                  onChange={(e) => setSelectedCustomerId(Number(e.target.value) || '')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                  required
                 >
-                  <option value="">Şantiye seçin</option>
-                  {sites.map((site) => (
-                    <option key={site.SiteId} value={site.SiteId}>
-                      {site.SiteName}
-                      {site.SiteAddress && ` - ${site.SiteAddress}`}
-                      {site.ResponsiblePerson && ` (Sorumlu: ${site.ResponsiblePerson})`}
+                  <option value="">Müşteri seçin</option>
+                  {customers.map((customer) => (
+                    <option key={customer.CustomerId} value={customer.CustomerId}>
+                      {customer.Name}
                     </option>
                   ))}
                 </select>
-              ) : (
-                <div className="input w-full text-text-secondary bg-background-secondary">
-                  Bu müşterinin şantiyesi bulunmuyor
+              </div>
+
+              {selectedCustomerId && (
+                <div className="space-y-0.5">
+                  <label className="block text-xs font-medium text-text-primary">
+                    Şantiye Seçimi {sites.length > 0 ? '*' : '(Opsiyonel)'}
+                  </label>
+                  {sitesLoading ? (
+                    <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
+                  ) : sites.length > 0 ? (
+                    <select
+                      value={selectedSiteId}
+                      onChange={(e) => setSelectedSiteId(Number(e.target.value) || '')}
+                      disabled={isReadOnly}
+                      className="input w-full"
+                      required={sites.length > 0}
+                    >
+                      <option value="">Şantiye seçin</option>
+                      {sites.map((site) => (
+                        <option key={site.SiteId} value={site.SiteId}>
+                          {site.SiteName}
+                          {site.SiteAddress && ` - ${site.SiteAddress}`}
+                          {site.ResponsiblePerson && ` (Sorumlu: ${site.ResponsiblePerson})`}
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <div className="input w-full text-text-secondary bg-background-secondary text-sm py-2">
+                      Bu müşterinin şantiyesi bulunmuyor
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-          )}
 
-          {/* Tarihler */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Başlangıç Tarihi</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={(e) => setStartDate(e.target.value)}
-                disabled={isReadOnly}
-                className="input w-full"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Planlanan Bitiş</label>
-              <input
-                type="date"
-                value={plannedEndDate}
-                onChange={(e) => setPlannedEndDate(e.target.value)}
-                disabled={isReadOnly}
-                className="input w-full"
-              />
-            </div>
-          </div>
-
-          {/* İskonto ve KDV */}
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">İskonto (%)</label>
-              <input
-                type="number"
-                value={iskonto}
-                onChange={(e) => setIskonto(parseFloat(e.target.value) || 0)}
-                disabled={isReadOnly}
-                min={0}
-                max={100}
-                step={0.01}
-                className="input w-32"
-                placeholder="0"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">KDV Oranı (%)</label>
-              <input
-                type="number"
-                value={vatRate}
-                onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
-                disabled={isReadOnly}
-                min={0}
-                max={100}
-                step={1}
-                className="input w-32"
-                placeholder="20"
-              />
-            </div>
-          </div>
-
-          {/* Notlar */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Notlar</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              disabled={isReadOnly}
-              className="input w-full h-20 resize-none"
-              placeholder="Teklif ile ilgili notlar..."
-            />
-          </div>
-
-          {/* Süre Bilgisi */}
-          <div className="card bg-blue-900 p-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div className="text-text-secondary mb-1">Planlanan Süre</div>
-                <div className="text-xl font-bold">{plannedDays} gün</div>
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Başlangıç Tarihi</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                />
               </div>
-              <div>
-                <div className="text-text-secondary mb-1">Durum</div>
-                <div className="text-xl font-bold">
+
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Planlanan Bitiş</label>
+                <input
+                  type="date"
+                  value={plannedEndDate}
+                  onChange={(e) => setPlannedEndDate(e.target.value)}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                />
+              </div>
+
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Teklif Sahibi</label>
+                <div className="input w-full bg-background-secondary text-text-secondary py-1.5 px-2 text-xs rounded-lg border border-background-border">
+                  {currentUser?.FullName || currentUser?.Username || '—'}
+                </div>
+              </div>
+
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">İskonto (%)</label>
+                <input
+                  type="number"
+                  value={Number(iskonto) || 0}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
+                  }}
+                  disabled={isReadOnly}
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  className="input w-20 text-sm py-1.5"
+                  placeholder="0"
+                  title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz"
+                />
+              </div>
+
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">KDV (%)</label>
+                <input
+                  type="number"
+                  value={vatRate}
+                  onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                  disabled={isReadOnly}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="input w-20 text-sm py-1.5"
+                  placeholder="20"
+                />
+              </div>
+
+              <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
+                <label className="block text-xs font-medium text-text-primary">Notlar</label>
+                <textarea
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  disabled={isReadOnly}
+                  className="input w-full h-14 resize-none text-sm"
+                  placeholder="Teklif ile ilgili notlar..."
+                />
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-background-border pt-2">
+              <div className="flex flex-wrap items-center gap-4 text-xs text-text-secondary">
+                <span>
+                  <span className="font-medium text-text-primary">Planlanan Süre:</span> {plannedDays} gün
+                </span>
+                <span>
+                  <span className="font-medium text-text-primary">Durum:</span>{' '}
                   {status === QuoteStatus.Pending && 'Beklemede'}
                   {status === QuoteStatus.Accepted && 'Kabul Edildi'}
                   {status === QuoteStatus.Rejected && 'Reddedildi'}
-                </div>
+                </span>
+              </div>
+
+              <div className="flex flex-wrap gap-2">
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setShowProductPickerModal(true)}
+                    className="btn-secondary"
+                  >
+                    Ürün Ekle
+                  </button>
+                )}
+                {!isNew && isReadOnly && (
+                  <>
+                    {status === QuoteStatus.Pending && !quote?.ConvertedContractId && (
+                      <button
+                        onClick={() => setIsReadOnly(false)}
+                        className="btn-primary"
+                      >
+                        Düzenle
+                      </button>
+                    )}
+                    {status === QuoteStatus.Pending && !quote?.ConvertedContractId && (
+                      <>
+                        <button
+                          onClick={handleAccept}
+                          disabled={isBusy}
+                          className="btn-success"
+                        >
+                          Kabul Et
+                        </button>
+                        <button
+                          onClick={handleReject}
+                          disabled={isBusy}
+                          className="btn-danger"
+                        >
+                          Reddet
+                        </button>
+                      </>
+                    )}
+                    {status === QuoteStatus.Accepted && !quote?.ConvertedContractId && (
+                      <button
+                        onClick={openConvertModal}
+                        disabled={isBusy}
+                        className="btn-success"
+                      >
+                        Sözleşmeye Dönüştür
+                      </button>
+                    )}
+                  </>
+                )}
+                {!isReadOnly && (
+                  <>
+                    {!isNew && quote && status === QuoteStatus.Pending && (
+                      <button
+                        onClick={handleDeleteClick}
+                        disabled={isBusy}
+                        className="btn-danger"
+                      >
+                        Sil
+                      </button>
+                    )}
+                    <button onClick={onClose} className="btn-secondary">
+                      İptal
+                    </button>
+                    <button
+                      onClick={handleSave}
+                      disabled={isBusy}
+                      className="btn-primary"
+                    >
+                      {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                    </button>
+                  </>
+                )}
+                {isReadOnly && (
+                  <button onClick={onClose} className="btn-secondary">
+                    Kapat
+                  </button>
+                )}
               </div>
             </div>
-          </div>
+          </section>
 
-          {/* Sözleşmeye Dönüştürüldü Bilgisi */}
+          {/* Sözleşmeye dönüştürüldü bilgisi */}
           {quote?.ConvertedContractId && (
-            <div className="card bg-green-900 p-4">
+            <section className="rounded-xl border border-background-border bg-green-900/30 p-4 shadow-sm">
               <div className="flex items-center gap-2">
-                <span className="text-green-300 text-lg">✓</span>
+                <span className="text-green-300 shrink-0">
+                  <CheckIcon size={20} weight="bold" aria-hidden />
+                </span>
                 <span>
                   Bu teklif sözleşmeye dönüştürüldü (Sözleşme #{quote.ConvertedContractId})
                 </span>
               </div>
-            </div>
+            </section>
           )}
 
-          {/* Malzeme Ekleme */}
-          {!isReadOnly && (
-            <div className="card border border-background-border p-4">
-              <h3 className="font-semibold mb-3">Malzeme Ekle</h3>
-              <div className="flex flex-wrap gap-4 items-end">
-                <div className="flex-1 min-w-0 w-full sm:w-auto">
-                  <SearchableItemCombobox
-                    items={availableItems}
-                    value={selectedItemId}
-                    onChange={setSelectedItemId}
-                    displayMode="quote"
-                    placeholder="Malzeme adı, kodu veya kategori ile ara..."
-                  />
+          {/* Orta kısım: ürün tablosu */}
+          <section className="rounded-xl border border-background-border bg-background-panel shadow-sm flex-1 min-h-[260px] flex flex-col overflow-hidden">
+            <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider px-4 pt-4 pb-2 border-b border-background-border shrink-0">
+              Teklif Kalemleri
+            </h3>
+            <div className="border-0 rounded-b-xl overflow-auto flex-1 min-h-0">
+              <table className="w-full text-sm border-collapse">
+                <thead className="sticky top-0 bg-background-secondary z-10 border-b border-background-border">
+                  <tr>
+                    <th className="text-left px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                      Ürün Kodu
+                    </th>
+                    <th className="text-left px-3 py-2 font-semibold text-text-secondary">
+                      Ürün Adı
+                    </th>
+                    <th className="text-right px-3 py-2 font-semibold text-text-secondary w-24">
+                      Miktar
+                    </th>
+                    <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                      Birim Fiyat
+                    </th>
+                    <th className="text-right px-3 py-2 font-semibold text-text-secondary w-20">
+                      İskonto (%)
+                    </th>
+                    <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                      Toplam
+                    </th>
+                    <th className="text-center px-2 py-2 font-semibold text-text-secondary w-20">
+                      İşlem
+                    </th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {quoteItems.length === 0 ? (
+                    <tr>
+                      <td
+                        colSpan={7}
+                        className="px-3 py-6 text-center text-sm text-text-secondary"
+                      >
+                        Henüz ürün eklenmedi. Üst kısımdan "Ürün Ekle" butonu ile ürün
+                        seçebilirsiniz.
+                      </td>
+                    </tr>
+                  ) : (
+                    quoteItems.map((item) => {
+                      const itemCode =
+                        availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ??
+                        '—';
+                      const lineTotal = item.DailyPrice * item.Quantity * plannedDays;
+                      const justAdded = lastAddedItemIds.includes(item.ItemId);
+                      return (
+                        <tr
+                          key={item.ItemId}
+                          className={`border-b border-background-border hover:bg-background-hover/50 transition-colors duration-300 ${
+                            justAdded ? 'bg-green-500/20' : ''
+                          }`}
+                        >
+                          <td className="px-3 py-2 text-text-secondary">{itemCode}</td>
+                          <td className="px-3 py-2 font-medium">{item.ItemName}</td>
+                          <td className="px-3 py-2 text-right">
+                            {isReadOnly ? (
+                              item.Quantity
+                            ) : (
+                              <input
+                                type="number"
+                                min={1}
+                                value={item.Quantity}
+                                onChange={(e) =>
+                                  updateQuoteItemQuantity(
+                                    item.ItemId,
+                                    Number(e.target.value) || 1
+                                  )
+                                }
+                                className="input w-16 text-right py-1 text-sm"
+                                aria-label="Miktar"
+                              />
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right text-text-secondary">
+                            {formatCurrency(item.DailyPrice)}/gün
+                          </td>
+                          <td className="px-3 py-2 text-right">
+                            {isReadOnly ? (
+                              Number(getItemIskonto(item.ItemId)) || 0
+                            ) : (
+                              <input
+                                type="number"
+                                min={0}
+                                max={100}
+                                step={0.01}
+                                value={Number(getItemIskonto(item.ItemId)) || 0}
+                                onChange={(e) => {
+                                  const v = parseFloat(e.target.value);
+                                  updateQuoteItemIskonto(item.ItemId, Number.isFinite(v) ? v : 0);
+                                }}
+                                className="input w-16 text-right py-1 text-sm"
+                                aria-label="İskonto %"
+                              />
+                            )}
+                          </td>
+                          <td className="px-3 py-2 text-right font-medium text-green-500">
+                            {formatCurrency(lineTotal)}
+                          </td>
+                          <td className="px-2 py-2 text-center">
+                            {!isReadOnly && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveItem(item.ItemId)}
+                                className="text-error hover:text-red-700 inline-flex p-1"
+                                aria-label="Kaldır"
+                              >
+                                <XIcon size={18} weight="regular" />
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </section>
+
+          {/* Alt kısım: finansal özet */}
+          <section className="rounded-xl border border-background-border bg-background-panel p-4 shadow-sm shrink-0">
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 text-sm">
+              <div>
+                <div className="text-text-secondary mb-1">Ara Toplam</div>
+                <div className="font-semibold text-text-primary">
+                  {formatCurrency(subtotal)}
                 </div>
-                <div className="flex gap-2 flex-shrink-0 items-center">
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    pattern="[0-9]*"
-                    value={itemQuantityStr}
-                    onChange={handleQuantityInputChange}
-                    className="input w-24"
-                    placeholder="Miktar"
-                    aria-label="Miktar"
-                  />
-                  <button onClick={handleAddItemClick} className="btn-primary">
-                    Ekle
-                  </button>
+              </div>
+              <div>
+                <div className="text-text-secondary mb-1">
+                  Toplam İskonto
+                </div>
+                <div className="font-semibold text-red-300">
+                  -{formatCurrency(discountAmount)}
+                </div>
+              </div>
+              <div>
+                <div className="text-text-secondary mb-1">İskontolu Toplam</div>
+                <div className="font-semibold text-text-primary">
+                  {formatCurrency(discountedTotal)}
+                </div>
+              </div>
+              <div>
+                <div className="text-text-secondary mb-1">
+                  KDV Toplam ({vatRate || 0}%)
+                </div>
+                <div className="font-semibold text-yellow-300">
+                  {formatCurrency(vatAmount)}
+                </div>
+              </div>
+              <div>
+                <div className="text-text-secondary mb-1">Genel Toplam</div>
+                <div className="text-2xl font-bold text-green-400">
+                  {formatCurrency(grandTotal)}
                 </div>
               </div>
             </div>
-          )}
-
-          {/* Malzeme Listesi */}
-          {quoteItems.length > 0 && (
-            <div>
-              <h3 className="font-semibold mb-3">Teklif Kalemleri</h3>
-              <div className="space-y-2">
-                {quoteItems.map((item) => (
-                  <div key={item.ItemId} className="card">
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="font-medium">{item.ItemName}</div>
-                        <div className="text-sm text-text-secondary">
-                          Efektif günlük: {formatCurrency(item.DailyPrice)} × {item.Quantity} adet
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="text-green-500 font-bold">
-                          {formatCurrency(item.DailyPrice * item.Quantity)}
-                          <span className="text-text-secondary text-sm">/gün</span>
-                        </div>
-                        {!isReadOnly && (
-                          <button
-                            onClick={() => handleRemoveItem(item.ItemId)}
-                            className="text-error hover:text-red-700 text-xl"
-                          >
-                            ✕
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Toplam Tutar */}
-          <div className="card bg-green-900 p-4">
-            <div className="text-sm text-text-secondary mb-1">Toplam Teklif Tutarı</div>
-            <div className="text-3xl font-bold text-green-300">{formatCurrency(totalPrice)}</div>
-            <div className="text-xs text-text-secondary mt-1">
+            <div className="mt-2 text-xs text-text-secondary">
               ({plannedDays} gün üzerinden hesaplanmıştır)
             </div>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex flex-wrap gap-3 mt-6">
-          {/* Düzenleme modu değilse */}
-          {!isNew && isReadOnly && (
-            <>
-              {/* Düzenle butonu - sadece beklemede olanlar için */}
-              {status === QuoteStatus.Pending && !quote?.ConvertedContractId && (
-                <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
-                  Düzenle
-                </button>
-              )}
-
-              {/* Kabul/Red butonları - sadece beklemede olanlar için */}
-              {status === QuoteStatus.Pending && !quote?.ConvertedContractId && (
-                <>
-                  <button
-                    onClick={handleAccept}
-                    disabled={isBusy}
-                    className="btn-success flex-1"
-                  >
-                    Kabul Et
-                  </button>
-                  <button
-                    onClick={handleReject}
-                    disabled={isBusy}
-                    className="btn-danger flex-1"
-                  >
-                    Reddet
-                  </button>
-                </>
-              )}
-
-              {/* Sözleşmeye Dönüştür - sadece kabul edilmiş ve henüz dönüştürülmemiş için */}
-              {status === QuoteStatus.Accepted && !quote?.ConvertedContractId && (
-                <button
-                  onClick={openConvertModal}
-                  disabled={isBusy}
-                  className="btn-success flex-1"
-                >
-                  Sözleşmeye Dönüştür
-                </button>
-              )}
-
-              <button onClick={onClose} className="btn-secondary flex-1">
-                Kapat
-              </button>
-            </>
-          )}
-
-          {/* Düzenleme modundaysa */}
-          {!isReadOnly && (
-            <>
-              {!isNew && quote && status === QuoteStatus.Pending && (
-                <button onClick={handleDeleteClick} disabled={isBusy} className="btn-danger flex-1">
-                  Sil
-                </button>
-              )}
-              <button onClick={onClose} className="btn-secondary flex-1">
-                İptal
-              </button>
-              <button onClick={handleSave} disabled={isBusy} className="btn-primary flex-1">
-                {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
-              </button>
-            </>
-          )}
+          </section>
         </div>
       </div>
       <ConfirmModal
@@ -754,17 +925,6 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
         loading={isBusy}
         onConfirm={handleDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
-      />
-      <ConfirmModal
-        open={showAddItemConfirm}
-        title="Onaylıyor musunuz?"
-        message={selectedItemId ? (() => {
-          const item = availableItems.find((i) => i.ItemId === Number(selectedItemId));
-          const qty = Math.max(1, parseInt(itemQuantityStr, 10) || 1);
-          return item ? `Bu kalemi teklife eklemek istediğinize emin misiniz? (${qty} adet, ${item.ItemName})` : 'Bu kalemi teklife eklemek istediğinize emin misiniz?';
-        })() : 'Bu kalemi teklife eklemek istediğinize emin misiniz?'}
-        onConfirm={handleAddItem}
-        onCancel={() => setShowAddItemConfirm(false)}
       />
       {/* Sözleşmeye Dönüştür - Depo Atama Modal */}
       {showConvertModal && (
@@ -879,9 +1039,9 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                             />
                             <button
                               onClick={() => removeWarehouseAssignment(item.ItemId, idx)}
-                              className="text-error hover:text-red-700 text-xl px-1"
+                              className="text-error hover:text-red-700 text-xl px-1 inline-flex items-center justify-center"
                             >
-                              ✕
+                              <XIcon size={18} weight="regular" aria-hidden />
                             </button>
                           </div>
                         ))}
@@ -921,6 +1081,13 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
           </div>
         </div>
       )}
+      <ProductPickerModal
+        open={showProductPickerModal}
+        onClose={() => setShowProductPickerModal(false)}
+        items={availableItems}
+        onItemSelect={addItemFromPicker}
+        displayMode="quote"
+      />
     </div>
   );
 }

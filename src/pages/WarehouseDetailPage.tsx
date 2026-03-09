@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { MagnifyingGlassIcon } from '@phosphor-icons/react';
 import { Warehouse, WarehouseStock, WarehouseStockResponse } from '../models';
 import { warehouseService } from '../services/warehouseService';
 import { contractService } from '../services/contractService';
@@ -274,7 +275,9 @@ export default function WarehouseDetailPage() {
                     <label className="block text-xs font-medium text-text-secondary mb-1">Ara</label>
                     <div className="flex gap-2">
                       <div className="relative flex-1">
-                        <span className="absolute inset-y-0 left-3 flex items-center text-text-secondary text-sm">🔍</span>
+                        <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-secondary">
+                          <MagnifyingGlassIcon size={18} weight="regular" color="currentColor" aria-hidden />
+                        </span>
                         <input
                           type="text"
                           className="input w-full pl-8"
@@ -327,31 +330,32 @@ export default function WarehouseDetailPage() {
                   </div>
                 </div>
 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm table-compact">
-                    <thead>
-                      <tr className="border-b border-background-border">
-                        <th className="text-left p-3 font-medium text-text-secondary">Malzeme</th>
-                        <th className="text-left p-3 font-medium text-text-secondary">Kategori</th>
-                        <th className="text-center p-3 font-medium text-text-secondary">Kirada (Miktar)</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filteredRentedItems.map((r) => (
-                        <tr key={r.ItemId} className="border-b border-background-border/50 hover:bg-background-hover">
-                          <td className="p-3 font-medium">{r.ItemName}</td>
-                          <td className="p-3 text-text-secondary">{r.CategoryName || '-'}</td>
-                          <td className="p-3 text-center">
-                            <span className="font-bold text-orange-400">
-                              {r.Quantity.toLocaleString('tr-TR')}
-                            </span>
-                          </td>
+                <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+                  <div className="overflow-auto max-h-[320px]">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="sticky top-0 z-10 border-b border-background-border">
+                        <tr>
+                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
+                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kategori</th>
+                          <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kirada (Miktar)</th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                      </thead>
+                      <tbody>
+                        {filteredRentedItems.map((r, idx) => (
+                          <tr key={r.ItemId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}>
+                            <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">{r.ItemName}</td>
+                            <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">{r.CategoryName || '-'}</td>
+                            <td className="py-0.5 px-2 text-center align-middle"><span className="font-medium text-orange-400">{r.Quantity.toLocaleString('tr-TR')}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary shrink-0">
+                    Toplam: {filteredRentedItems.length} çeşit kirada
+                  </div>
                   {filteredRentedItems.length === 0 && (
-                    <div className="text-text-secondary text-center py-6">Arama kriterlerine uygun kirada ürün yok.</div>
+                    <div className="text-text-secondary text-center py-4 text-sm">Arama kriterlerine uygun kirada ürün yok.</div>
                   )}
                 </div>
               </>
@@ -391,8 +395,8 @@ export default function WarehouseDetailPage() {
               </label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <span className="absolute inset-y-0 left-3 flex items-center text-text-secondary text-sm">
-                    🔍
+                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-secondary">
+                    <MagnifyingGlassIcon size={18} weight="regular" color="currentColor" aria-hidden />
                   </span>
                   <input
                     type="text"
@@ -483,29 +487,31 @@ export default function WarehouseDetailPage() {
               : 'Arama kriterlerinize uygun malzeme bulunamadı.'}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm table-compact">
-              <thead>
-                <tr className="border-b border-background-border">
-                  <th className="text-left p-3 font-medium text-text-secondary">Malzeme</th>
-                  <th className="text-left p-3 font-medium text-text-secondary">Kategori</th>
-                  <th className="text-center p-3 font-medium text-text-secondary">Miktar</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredStock.map((s) => (
-                  <tr key={s.StockId} className="border-b border-background-border/50 hover:bg-background-hover">
-                    <td className="p-3 font-medium">{s.ItemName}</td>
-                    <td className="p-3 text-text-secondary">{s.CategoryName || '-'}</td>
-                    <td className="p-3 text-center">
-                      <span className="font-bold text-green-500">
-                        {s.Quantity.toLocaleString('tr-TR')}
-                      </span>
-                    </td>
+          <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+            <div className="overflow-auto max-h-[calc(100vh-380px)] min-h-[240px]">
+              <table className="w-full text-xs border-collapse">
+                <thead className="sticky top-0 z-10 border-b border-background-border">
+                  <tr>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kategori</th>
+                    <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Miktar</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredStock.map((s, idx) => (
+                    <tr key={s.StockId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}>
+                      <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">{s.ItemName}</td>
+                      <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">{s.CategoryName || '-'}</td>
+                      <td className="py-0.5 px-2 text-center align-middle"><span className="font-medium text-green-500">{s.Quantity.toLocaleString('tr-TR')}</span></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+              <span>Toplam: {filteredStock.length} çeşit malzeme</span>
+              <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür</span>
+            </div>
           </div>
         ))}
         </>

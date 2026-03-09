@@ -86,31 +86,25 @@ export default function UsersPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Kullanıcılar</h1>
-          <p className="text-text-secondary">Sistem kullanıcılarını yönetin</p>
+      <div className="mb-3 flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-text-primary">Kullanıcılar</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={loadUsers} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
+          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Kullanıcı</button>
         </div>
-        <button onClick={handleAddNew} className="btn-primary">
-          + Yeni Kullanıcı
-        </button>
       </div>
 
-      <div className="mb-6 flex gap-4">
+      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="Kullanıcı adı, ad soyad veya e-posta ile ara..."
-          className="input flex-1"
+          placeholder="Kullanıcı adı, ad soyad veya e-posta..."
+          className="input flex-1 min-w-[200px] py-2 px-3 text-sm"
         />
-        <button onClick={handleSearch} className="btn-secondary">
-          Ara
-        </button>
-        <button onClick={loadUsers} className="btn-secondary">
-          Yenile
-        </button>
+        <button onClick={handleSearch} className="btn-secondary py-2 px-3 text-sm">Ara</button>
       </div>
 
       {users.length === 0 ? (
@@ -120,72 +114,44 @@ export default function UsersPage() {
           description="Yeni kullanıcı eklemek için yukarıdaki butonu kullanın"
         />
       ) : (
-        <div className="card">
-          <div className="overflow-x-auto">
-            <table className="w-full table-compact">
-              <thead>
-                <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
-                    Kullanıcı Adı
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '20%' }}>
-                    Ad Soyad
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '20%' }}>
-                    E-posta
-                  </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '15%' }}>
-                    İzin Sayısı
-                  </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '10%' }}>
-                    Durum
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
-                    Son Giriş
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
-                    Kayıt Tarihi
-                  </th>
+        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+          <div className="overflow-auto max-h-[calc(100vh-200px)] min-h-[280px]">
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 border-b border-background-border">
+                <tr>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kullanıcı Adı</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ad Soyad</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">E-posta</th>
+                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">İzin</th>
+                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Son Giriş</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Tarihi</th>
                 </tr>
               </thead>
               <tbody>
-                {users.map((user) => (
+                {users.map((user, index) => (
                   <tr
                     key={user.UserId}
-                    className="border-b border-background-border hover:bg-background-hover cursor-pointer"
+                    className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
                     onClick={() => handleOpenDetail(user)}
                   >
-                    <td className="p-4">
-                      <div className="font-medium">{user.Username}</div>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 font-medium text-text-primary">{user.Username}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{user.FullName}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 opacity-90">{user.Email || '-'}</td>
+                    <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{user.Permissions?.length || 0}</td>
+                    <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${user.IsActive ? 'bg-green-600 text-white' : 'bg-red-600 text-white'}`}>{user.IsActive ? 'Aktif' : 'Pasif'}</span>
                     </td>
-                    <td className="p-4">{user.FullName}</td>
-                    <td className="p-4 opacity-80">{user.Email || '-'}</td>
-                    <td className="p-4 text-center">
-                      <span className="badge bg-blue-600 text-white">
-                        {user.Permissions?.length || 0} izin
-                      </span>
-                    </td>
-                    <td className="p-4 text-center">
-                      <span
-                        className={`badge ${
-                          user.IsActive
-                            ? 'bg-green-600 text-white'
-                            : 'bg-red-600 text-white'
-                        }`}
-                      >
-                        {user.IsActive ? 'Aktif' : 'Pasif'}
-                      </span>
-                    </td>
-                    <td className="p-4 text-sm text-text-secondary">
-                      {formatDate(user.LastLoginAt)}
-                    </td>
-                    <td className="p-4 text-sm text-text-secondary">
-                      {formatShortDateTime(user.CreatedAt)}
-                    </td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary">{formatDate(user.LastLoginAt)}</td>
+                    <td className="py-0.5 px-2 align-middle text-text-secondary">{formatShortDateTime(user.CreatedAt)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+            <span>Toplam: {users.length} kullanıcı</span>
+            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
       )}

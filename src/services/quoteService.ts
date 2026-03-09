@@ -8,6 +8,7 @@ export interface CreateQuoteDetailRequest {
 }
 
 export interface CreateQuoteRequest {
+  QuoteCode?: string;
   CustomerId: number;
   SiteId?: number;
   StartDate: string; // ISO 8601
@@ -21,6 +22,7 @@ export interface CreateQuoteRequest {
 }
 
 export interface UpdateQuoteRequest {
+  QuoteCode?: string;
   CustomerId?: number;
   SiteId?: number;
   StartDate?: string;

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { InfoIcon } from '@phosphor-icons/react';
 import { PriceTier, Inventory } from '../../models';
 import { priceTierService } from '../../services/priceTierService';
 import ConfirmModal from './ConfirmModal';
@@ -151,7 +152,7 @@ export default function PriceTierDetailModal({
           </div>
 
           <div className="card bg-blue-900 p-4">
-            <div className="font-semibold mb-2">ℹ️ Fiyat Çarpanı Nasıl Çalışır?</div>
+            <div className="font-semibold mb-2 inline-flex items-center gap-2"><InfoIcon size={18} weight="duotone" className="shrink-0" aria-hidden /> Fiyat Çarpanı Nasıl Çalışır?</div>
             <div className="text-sm opacity-90 mb-2">
               Kiralama süresi bu aralığa düştüğünde, günlük fiyat bu çarpan ile çarpılır.
             </div>

@@ -1,7 +1,9 @@
 import { useState, useEffect, useMemo } from 'react';
-import { PurchaseInvoice, Customer } from '../../models';
+import { PurchaseInvoice, Customer, Inventory, Warehouse } from '../../models';
 import { purchaseInvoiceService } from '../../services/purchaseInvoiceService';
 import { customerService } from '../../services/customerService';
+import { inventoryService } from '../../services/inventoryService';
+import { warehouseService } from '../../services/warehouseService';
 import { formatCurrency } from '../../utils/formatters';
 import ConfirmModal from './ConfirmModal';
 
@@ -20,6 +22,10 @@ export default function PurchaseInvoiceDetailModal({
   const [isBusy, setIsBusy] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [customersLoading, setCustomersLoading] = useState(false);
+  const [items, setItems] = useState<Inventory[]>([]);
+  const [itemsLoading, setItemsLoading] = useState(false);
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [warehousesLoading, setWarehousesLoading] = useState(false);
 
   // Yeni müşteri ekleme state'leri
   const [showNewCustomerForm, setShowNewCustomerForm] = useState(false);
@@ -31,24 +37,40 @@ export default function PurchaseInvoiceDetailModal({
   const [savingCustomer, setSavingCustomer] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+  // Yeni ürün ekleme state'leri
+  const [showNewItemForm, setShowNewItemForm] = useState(false);
+  const [newItemName, setNewItemName] = useState('');
+  const [newItemCode, setNewItemCode] = useState('');
+  const [newItemTotalStock, setNewItemTotalStock] = useState('0');
+  const [savingItem, setSavingItem] = useState(false);
+
   // Form alanları
   const [invoiceDate, setInvoiceDate] = useState('');
   const [entryDate, setEntryDate] = useState('');
   const [customerId, setCustomerId] = useState<number | ''>('');
   const [description, setDescription] = useState('');
+  const [documentNo, setDocumentNo] = useState('');
+  const [itemId, setItemId] = useState<number | ''>('');
+  const [warehouseId, setWarehouseId] = useState<number | ''>('');
+  const [currency, setCurrency] = useState<string>('TL');
+  const [exchangeRate, setExchangeRate] = useState('');
+  const [itemSearch, setItemSearch] = useState('');
 
-  // Tutar alanları (tek iskonto, backend ile uyumlu)
-  const [quantity, setQuantity] = useState<number>(1);
-  const [unitPrice, setUnitPrice] = useState<number>(0);
-  const [iskonto, setIskonto] = useState<number>(0);
-  const [vatRate, setVatRate] = useState<number>(20);
+  // Tutar alanları - string olarak tutulur, input'larda doğal düzenleme sağlanır
+  const [quantity, setQuantity] = useState('1');
+  const [unitPrice, setUnitPrice] = useState('0');
+  const [iskonto, setIskonto] = useState('0');
+  const [vatRate, setVatRate] = useState('20');
 
-  // Ön izleme: tek iskonto + KDV (backend hesaplamasına uyum için basit formül)
   const calculations = useMemo(() => {
-    const grossTotal = quantity * unitPrice;
-    const discountAmount = grossTotal * (iskonto / 100);
+    const qty = parseFloat(quantity) || 0;
+    const price = parseFloat(unitPrice) || 0;
+    const disc = parseFloat(iskonto) || 0;
+    const vat = parseFloat(vatRate) || 0;
+    const grossTotal = qty * price;
+    const discountAmount = grossTotal * (disc / 100);
     const subtotal = grossTotal - discountAmount;
-    const vatAmount = subtotal * (vatRate / 100);
+    const vatAmount = subtotal * (vat / 100);
     const totalAmount = subtotal + vatAmount;
     return {
       grossTotal,
@@ -61,25 +83,32 @@ export default function PurchaseInvoiceDetailModal({
 
   useEffect(() => {
     loadCustomers();
+    loadItems();
+    loadWarehouses();
 
     if (invoice) {
       setInvoiceDate(invoice.InvoiceDate.split('T')[0]);
       setEntryDate(invoice.EntryDate.split('T')[0]);
       setCustomerId(invoice.CustomerId);
       setDescription(invoice.Description || '');
+      setDocumentNo(invoice.DocumentNo || '');
+      setItemId(invoice.ItemId ?? '');
+      setWarehouseId(invoice.WarehouseId ?? '');
+      setCurrency(invoice.Currency || 'TL');
+      setExchangeRate(invoice.ExchangeRate != null ? String(invoice.ExchangeRate) : '');
 
-      // Backend'den gelen değerleri doğrudan kullan (geri hesaplama yok)
-      setIskonto(invoice.Iskonto ?? 0);
+      setIskonto(String(invoice.Iskonto ?? 0));
       if (invoice.VatRate != null) {
-        setVatRate(invoice.VatRate);
+        setVatRate(String(invoice.VatRate));
       } else if (invoice.Subtotal > 0) {
-        setVatRate(Math.round((invoice.VatAmount / invoice.Subtotal) * 100));
+        setVatRate(String(Math.round((invoice.VatAmount / invoice.Subtotal) * 100)));
       }
-      setQuantity(1);
+      const invoiceQty = invoice.Quantity ?? 1;
+      setQuantity(String(invoiceQty));
       const iskontoPct = (invoice.Iskonto ?? 0) / 100;
-      setUnitPrice(iskontoPct < 1 ? invoice.Subtotal / (1 - iskontoPct) : invoice.Subtotal);
+      const grossSubtotal = iskontoPct < 1 ? invoice.Subtotal / (1 - iskontoPct) : invoice.Subtotal;
+      setUnitPrice(String(invoiceQty > 0 ? grossSubtotal / invoiceQty : grossSubtotal));
     } else {
-      // Yeni fatura için bugünün tarihini varsayılan yap
       const today = new Date().toISOString().split('T')[0];
       setInvoiceDate(today);
       setEntryDate(today);
@@ -96,6 +125,73 @@ export default function PurchaseInvoiceDetailModal({
     } finally {
       setCustomersLoading(false);
     }
+  };
+
+  const loadItems = async () => {
+    try {
+      setItemsLoading(true);
+      const data = await inventoryService.getAllAsync();
+      setItems(data);
+    } catch (error) {
+      console.error('Load items error:', error);
+    } finally {
+      setItemsLoading(false);
+    }
+  };
+
+  const loadWarehouses = async () => {
+    try {
+      setWarehousesLoading(true);
+      const data = await warehouseService.getAllAsync();
+      setWarehouses(data);
+    } catch (error) {
+      console.error('Load warehouses error:', error);
+    } finally {
+      setWarehousesLoading(false);
+    }
+  };
+
+  const filteredItems = useMemo(() => {
+    if (!itemSearch.trim()) return items;
+    const search = itemSearch.toLowerCase();
+    return items.filter(
+      (item) =>
+        item.ItemName.toLowerCase().includes(search) ||
+        (item.ItemCode?.toLowerCase().includes(search) ?? false)
+    );
+  }, [items, itemSearch]);
+
+  const handleSaveNewItem = async () => {
+    if (!newItemName.trim()) {
+      alert('Ürün adı zorunludur');
+      return;
+    }
+
+    try {
+      setSavingItem(true);
+      const result = await inventoryService.createAsync({
+        ItemName: newItemName,
+        ItemCode: newItemCode || undefined,
+        TotalStock: parseFloat(newItemTotalStock) || 0,
+        OnRent: 0,
+      });
+
+      await loadItems();
+      setItemId(result.ItemId);
+      resetNewItemForm();
+    } catch (error) {
+      console.error('Save item error:', error);
+      alert('Ürün kaydetme hatası');
+    } finally {
+      setSavingItem(false);
+    }
+  };
+
+  const resetNewItemForm = () => {
+    setShowNewItemForm(false);
+    setNewItemName('');
+    setNewItemCode('');
+    setNewItemTotalStock('0');
   };
 
   // Yeni müşteri kaydetme
@@ -151,17 +247,20 @@ export default function PurchaseInvoiceDetailModal({
       alert('Tedarikçi seçimi zorunludur');
       return;
     }
-    if (quantity <= 0) {
+    const qty = parseFloat(quantity) || 0;
+    const price = parseFloat(unitPrice) || 0;
+    if (qty <= 0) {
       alert('Miktar 0\'dan büyük olmalıdır');
       return;
     }
-    if (unitPrice <= 0) {
+    if (price <= 0) {
       alert('Birim fiyat 0\'dan büyük olmalıdır');
       return;
     }
 
     try {
       setIsBusy(true);
+      const qty = parseFloat(quantity) || 0;
       const payload = {
         InvoiceDate: new Date(invoiceDate).toISOString(),
         EntryDate: new Date(entryDate).toISOString(),
@@ -170,8 +269,14 @@ export default function PurchaseInvoiceDetailModal({
         Subtotal: calculations.subtotal,
         VatAmount: calculations.vatAmount,
         TotalAmount: calculations.totalAmount,
-        Iskonto: iskonto,
-        VatRate: vatRate,
+        Iskonto: parseFloat(iskonto) || 0,
+        VatRate: parseFloat(vatRate) || 0,
+        DocumentNo: documentNo || undefined,
+        ItemId: itemId ? Number(itemId) : undefined,
+        WarehouseId: warehouseId ? Number(warehouseId) : undefined,
+        Quantity: itemId && warehouseId ? qty : undefined,
+        Currency: currency || undefined,
+        ExchangeRate: exchangeRate ? parseFloat(exchangeRate) : undefined,
       };
 
       if (isNew) {
@@ -218,7 +323,7 @@ export default function PurchaseInvoiceDetailModal({
         {/* Özet Bilgiler - Sadece mevcut faturalarda */}
         {isReadOnly && !isNew && invoice && (
           <div className="mb-6 card bg-blue-900 p-4">
-            <div className="grid grid-cols-4 gap-4 text-sm">
+            <div className="grid grid-cols-4 gap-4 text-sm mb-3">
               <div>
                 <div className="text-text-secondary mb-1">Fatura No</div>
                 <div className="text-xl font-bold">#{invoice.InvoiceId}</div>
@@ -236,12 +341,44 @@ export default function PurchaseInvoiceDetailModal({
                 <div className="text-xl font-bold text-accent">{formatCurrency(invoice.TotalAmount)}</div>
               </div>
             </div>
+            <div className="grid grid-cols-4 gap-4 text-sm border-t border-blue-800 pt-3">
+              {invoice.DocumentNo && (
+                <div>
+                  <div className="text-text-secondary mb-1">Evrak No</div>
+                  <div className="font-medium">{invoice.DocumentNo}</div>
+                </div>
+              )}
+              {invoice.ItemName && (
+                <div>
+                  <div className="text-text-secondary mb-1">Ürün</div>
+                  <div className="font-medium">{invoice.ItemName}</div>
+                </div>
+              )}
+              {invoice.WarehouseName && (
+                <div>
+                  <div className="text-text-secondary mb-1">Depo</div>
+                  <div className="font-medium">{invoice.WarehouseName}</div>
+                </div>
+              )}
+              {invoice.Quantity != null && invoice.Quantity > 0 && (
+                <div>
+                  <div className="text-text-secondary mb-1">Miktar</div>
+                  <div className="font-medium">{invoice.Quantity} adet</div>
+                </div>
+              )}
+              {invoice.Currency && invoice.Currency !== 'TL' && (
+                <div>
+                  <div className="text-text-secondary mb-1">Döviz</div>
+                  <div className="font-medium">{invoice.Currency} (Kur: {invoice.ExchangeRate ?? '-'})</div>
+                </div>
+              )}
+            </div>
           </div>
         )}
 
         <div className="space-y-4">
-          {/* Tarihler */}
-          <div className="grid grid-cols-2 gap-4">
+          {/* Tarihler ve Evrak No */}
+          <div className="grid grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium mb-2">Fatura Tarihi *</label>
               <input
@@ -262,6 +399,18 @@ export default function PurchaseInvoiceDetailModal({
                 disabled={isReadOnly}
                 className="input w-full"
                 required
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Evrak No</label>
+              <input
+                type="text"
+                value={documentNo}
+                onChange={(e) => setDocumentNo(e.target.value)}
+                disabled={isReadOnly}
+                maxLength={100}
+                placeholder="Evrak numarası"
+                className="input w-full"
               />
             </div>
           </div>
@@ -377,6 +526,143 @@ export default function PurchaseInvoiceDetailModal({
             </div>
           )}
 
+          {/* Ürün ve Depo Seçimi */}
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium mb-2">Ürün</label>
+              {itemsLoading ? (
+                <div className="text-text-secondary text-sm">Yükleniyor...</div>
+              ) : (
+                <div>
+                  {!isReadOnly && (
+                    <input
+                      type="text"
+                      value={itemSearch}
+                      onChange={(e) => setItemSearch(e.target.value)}
+                      placeholder="Ürün ara..."
+                      className="input w-full mb-1 text-sm"
+                    />
+                  )}
+                  <div className="flex gap-2">
+                    <select
+                      value={itemId}
+                      onChange={(e) => setItemId(e.target.value ? Number(e.target.value) : '')}
+                      disabled={isReadOnly}
+                      className="input flex-1"
+                    >
+                      <option value="">Ürün seçin (opsiyonel)</option>
+                      {filteredItems.map((item) => (
+                        <option key={item.ItemId} value={item.ItemId}>
+                          {item.ItemCode ? `[${item.ItemCode}] ` : ''}{item.ItemName}
+                        </option>
+                      ))}
+                    </select>
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setShowNewItemForm((prev) => !prev)}
+                        className="btn-secondary whitespace-nowrap"
+                      >
+                        {showNewItemForm ? '✕' : '+ Yeni Ürün'}
+                      </button>
+                    )}
+                  </div>
+
+                  {showNewItemForm && !isReadOnly && (
+                    <div className="mt-2 rounded-lg border border-accent bg-blue-900/30 p-3">
+                      <h4 className="text-sm font-semibold mb-2">Yeni Ürün Ekle</h4>
+                      <div className="space-y-2">
+                        <div>
+                          <label className="block text-xs font-medium mb-1">Ürün Adı *</label>
+                          <input
+                            type="text"
+                            value={newItemName}
+                            onChange={(e) => setNewItemName(e.target.value)}
+                            placeholder="Ürün adı"
+                            className="input w-full text-sm"
+                          />
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="block text-xs font-medium mb-1">Ürün Kodu</label>
+                            <input
+                              type="text"
+                              value={newItemCode}
+                              onChange={(e) => setNewItemCode(e.target.value)}
+                              placeholder="Alfanümerik kod"
+                              maxLength={50}
+                              className="input w-full text-sm"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-xs font-medium mb-1">Stok Adedi</label>
+                            <input
+                              type="number"
+                              value={newItemTotalStock}
+                              onChange={(e) => setNewItemTotalStock(e.target.value)}
+                              min="0"
+                              step="1"
+                              placeholder="0"
+                              className="input w-full text-sm"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex gap-2 mt-2">
+                        <button
+                          type="button"
+                          onClick={resetNewItemForm}
+                          className="btn-secondary text-xs py-1 px-2"
+                          disabled={savingItem}
+                        >
+                          İptal
+                        </button>
+                        <button
+                          type="button"
+                          onClick={handleSaveNewItem}
+                          className="btn-primary text-xs py-1 px-2"
+                          disabled={savingItem}
+                        >
+                          {savingItem ? 'Kaydediliyor...' : 'Kaydet'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+            <div>
+              <label className="block text-sm font-medium mb-2">Depo</label>
+              {warehousesLoading ? (
+                <div className="text-text-secondary text-sm">Yükleniyor...</div>
+              ) : (
+                <select
+                  value={warehouseId}
+                  onChange={(e) => setWarehouseId(e.target.value ? Number(e.target.value) : '')}
+                  disabled={isReadOnly}
+                  className="input w-full"
+                >
+                  <option value="">Depo seçin (opsiyonel)</option>
+                  {warehouses.map((wh) => (
+                    <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                      {wh.WarehouseName}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          </div>
+
+          {/* Stok güncelleme bilgi notu */}
+          {!isReadOnly && itemId && warehouseId && (
+            <div className="rounded-lg bg-green-900/30 border border-green-700/50 p-3 text-sm text-green-300 flex items-start gap-2">
+              <span className="shrink-0 mt-0.5">&#9432;</span>
+              <span>
+                Ürün ve depo seçili olduğundan, fatura kaydedildiğinde <strong>{parseFloat(quantity) || 0} adet</strong> ürün otomatik olarak envanter stokuna ve depo stokuna eklenecektir.
+              </span>
+            </div>
+          )}
+
           {/* Açıklama */}
           <div>
             <label className="block text-sm font-medium mb-2">Açıklama</label>
@@ -400,7 +686,7 @@ export default function PurchaseInvoiceDetailModal({
                 <input
                   type="number"
                   value={quantity}
-                  onChange={(e) => setQuantity(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setQuantity(e.target.value)}
                   disabled={isReadOnly}
                   min="0"
                   step="1"
@@ -414,7 +700,7 @@ export default function PurchaseInvoiceDetailModal({
                 <input
                   type="number"
                   value={unitPrice}
-                  onChange={(e) => setUnitPrice(parseFloat(e.target.value) || 0)}
+                  onChange={(e) => setUnitPrice(e.target.value)}
                   disabled={isReadOnly}
                   min="0"
                   step="0.01"
@@ -425,48 +711,78 @@ export default function PurchaseInvoiceDetailModal({
               </div>
             </div>
 
-            {/* İskonto (tek alan, backend ile uyumlu) */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">İskonto (%)</label>
-              <input
-                type="number"
-                value={iskonto}
-                onChange={(e) => setIskonto(parseFloat(e.target.value) || 0)}
-                disabled={isReadOnly}
-                min="0"
-                max="100"
-                step="0.01"
-                placeholder="0"
-                className="input w-32"
-              />
-            </div>
-
-            {/* KDV Oranı */}
-            <div className="mb-4">
-              <label className="block text-sm font-medium mb-2">KDV Oranı (%)</label>
-              <input
-                type="number"
-                value={vatRate}
-                onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
-                disabled={isReadOnly}
-                min="0"
-                max="100"
-                step="1"
-                placeholder="20"
-                className="input w-32"
-              />
+            {/* İskonto, KDV, Para Birimi, Döviz Kuru */}
+            <div className="grid grid-cols-4 gap-4 mb-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">İskonto (%)</label>
+                <input
+                  type="number"
+                  value={iskonto}
+                  onChange={(e) => setIskonto(e.target.value)}
+                  disabled={isReadOnly}
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  placeholder="0"
+                  className="input w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">KDV Oranı (%)</label>
+                <input
+                  type="number"
+                  value={vatRate}
+                  onChange={(e) => setVatRate(e.target.value)}
+                  disabled={isReadOnly}
+                  min="0"
+                  max="100"
+                  step="1"
+                  placeholder="20"
+                  className="input w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Para Birimi</label>
+                <select
+                  value={currency}
+                  onChange={(e) => {
+                    setCurrency(e.target.value);
+                    if (e.target.value === 'TL') setExchangeRate('');
+                  }}
+                  disabled={isReadOnly}
+                  className="input w-full"
+                >
+                  <option value="TL">TL</option>
+                  <option value="EUR">EUR</option>
+                </select>
+              </div>
+              {currency === 'EUR' && (
+                <div>
+                  <label className="block text-sm font-medium mb-2">Döviz Kuru</label>
+                  <input
+                    type="number"
+                    value={exchangeRate}
+                    onChange={(e) => setExchangeRate(e.target.value)}
+                    disabled={isReadOnly}
+                    min="0"
+                    step="0.0001"
+                    placeholder="Kur değeri"
+                    className="input w-full"
+                  />
+                </div>
+              )}
             </div>
 
             {/* Hesaplama Özeti */}
             <div className="mt-4 p-4 bg-background-secondary rounded-lg">
               <div className="flex justify-between mb-2">
-                <span className="text-text-secondary">Toplam ({quantity} x {formatCurrency(unitPrice)}):</span>
+                <span className="text-text-secondary">Toplam ({parseFloat(quantity) || 0} x {formatCurrency(parseFloat(unitPrice) || 0)}):</span>
                 <span>{formatCurrency(calculations.grossTotal)}</span>
               </div>
 
               {calculations.discountAmount > 0 && (
                 <div className="flex justify-between mb-2 text-red-400">
-                  <span>İskonto ({iskonto}%):</span>
+                  <span>İskonto ({parseFloat(iskonto) || 0}%):</span>
                   <span>-{formatCurrency(calculations.discountAmount)}</span>
                 </div>
               )}
@@ -477,7 +793,7 @@ export default function PurchaseInvoiceDetailModal({
               </div>
 
               <div className="flex justify-between mb-2">
-                <span className="text-text-secondary">KDV ({vatRate}%):</span>
+                <span className="text-text-secondary">KDV ({parseFloat(vatRate) || 0}%):</span>
                 <span>{formatCurrency(calculations.vatAmount)}</span>
               </div>
 

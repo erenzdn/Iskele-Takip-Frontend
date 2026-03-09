@@ -157,15 +157,16 @@ export default function ContractsPage() {
   };
 
   const getQuoteStatusBadge = (status: QuoteStatus) => {
+    const c = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
     switch (status) {
       case QuoteStatus.Pending:
-        return <span className="badge bg-yellow-700 text-yellow-100">Beklemede</span>;
+        return <span className={`${c} bg-yellow-700 text-yellow-100`}>Beklemede</span>;
       case QuoteStatus.Accepted:
-        return <span className="badge bg-green-700 text-green-100">Kabul Edildi</span>;
+        return <span className={`${c} bg-green-700 text-green-100`}>Kabul Edildi</span>;
       case QuoteStatus.Rejected:
-        return <span className="badge bg-red-700 text-red-100">Reddedildi</span>;
+        return <span className={`${c} bg-red-700 text-red-100`}>Reddedildi</span>;
       default:
-        return <span className="badge bg-gray-700 text-gray-100">{status}</span>;
+        return <span className={`${c} bg-gray-700 text-gray-100`}>{status}</span>;
     }
   };
 
@@ -189,95 +190,57 @@ export default function ContractsPage() {
     }
 
     return (
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full table-compact">
-            <thead>
-              <tr className="border-b border-background-border">
-                <th className="text-left p-4 font-semibold" style={{ width: '7%' }}>
-                  ID
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
-                  Müşteri
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '16%' }}>
-                  Şantiye
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '11%' }}>
-                  Başlangıç
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '11%' }}>
-                  Bitiş
-                </th>
-                <th className="text-right p-4 font-semibold" style={{ width: '12%' }}>
-                  Tutar
-                </th>
-                <th className="text-center p-4 font-semibold" style={{ width: '11%' }}>
-                  Durum
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '14%' }}>
-                  Oluşturan / Son Güncelleyen
-                </th>
+      <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+        <div className="overflow-auto max-h-[calc(100vh-260px)] min-h-[280px]">
+          <table className="w-full text-xs border-collapse">
+            <thead className="sticky top-0 z-10 border-b border-background-border">
+              <tr>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">ID</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kod</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Müşteri</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Şantiye</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Başlangıç</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Bitiş</th>
+                <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tutar</th>
+                <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Bilgisi</th>
               </tr>
             </thead>
             <tbody>
-              {contracts.map((contract) => (
+              {contracts.map((contract, index) => (
                 <tr
                   key={contract.ContractId}
-                  className="border-b border-background-border hover:bg-background-hover cursor-pointer"
+                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
                   onClick={() => handleOpenContract(contract)}
                 >
-                  <td className="p-4">#{contract.ContractId}</td>
-                  <td className="p-4">
-                    <div className="font-medium">{contract.Customer?.Name}</div>
-                    {contract.Customer?.PhoneNumber && (
-                      <div className="text-sm text-text-secondary">
-                        {contract.Customer.PhoneNumber}
-                      </div>
-                    )}
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">#{contract.ContractId}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{contract.ContractCode || <span className="text-text-secondary">-</span>}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                    <span className="font-medium text-text-primary">{contract.Customer?.Name}</span>
+                    {contract.Customer?.PhoneNumber && <span className="text-text-secondary ml-1">• {contract.Customer.PhoneNumber}</span>}
                   </td>
-                  <td className="p-4">
-                    {contract.Site ? (
-                      <div>
-                        <div className="font-medium">{contract.Site.SiteName}</div>
-                        {contract.Site.ResponsiblePerson && (
-                          <div className="text-sm text-text-secondary">
-                            {contract.Site.ResponsiblePerson}
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <span className="text-text-secondary">-</span>
-                    )}
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
+                    {contract.Site ? <span>{contract.Site.SiteName}{contract.Site.ResponsiblePerson ? ` • ${contract.Site.ResponsiblePerson}` : ''}</span> : <span className="text-text-secondary">-</span>}
                   </td>
-                  <td className="p-4">{formatDate(contract.StartDate)}</td>
-                  <td className="p-4">{formatDate(contract.PlannedEndDate)}</td>
-                  <td className="p-4 text-right">
-                    <span className="text-green-500 font-bold">
-                      {formatCurrency(contract.InitialTotalPrice)}
-                    </span>
-                  </td>
-                  <td className="p-4 text-center">
-                    <span
-                      className={`badge ${
-                        contract.IsCompleted
-                          ? 'bg-green-700 text-green-100'
-                          : 'bg-blue-900 text-blue-100'
-                      }`}
-                    >
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(contract.StartDate)}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(contract.PlannedEndDate)}</td>
+                  <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-green-500 font-medium">{formatCurrency(contract.InitialTotalPrice)}</td>
+                  <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
+                    <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${contract.IsCompleted ? 'bg-green-700 text-green-100' : 'bg-blue-900 text-blue-100'}`}>
                       {contract.IsCompleted ? 'Tamamlandı' : 'Aktif'}
                     </span>
                   </td>
-                  <td className="p-4 text-sm text-text-secondary">
-                    <div>Oluşturan: {contract.CreatedByUserFullName || contract.CreatedByUserName || '-'}</div>
-                    <div>{formatShortDateTime(contract.CreatedAt)}</div>
-                    <div className="mt-1">Güncelleyen: {contract.LastModifiedByUserFullName || contract.LastModifiedByUserName || '-'}</div>
-                    <div>{formatShortDateTime(contract.LastModifiedAt)}</div>
+                  <td className="py-0.5 px-2 align-middle text-text-secondary">
+                    {contract.CreatedByUserFullName || contract.CreatedByUserName || '-'} • {formatShortDateTime(contract.CreatedAt)}
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+          <span>Toplam: {contracts.length} sözleşme</span>
+          <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
         </div>
       </div>
     );
@@ -295,70 +258,46 @@ export default function ContractsPage() {
     }
 
     return (
-      <div className="card">
-        <div className="overflow-x-auto">
-          <table className="w-full table-compact">
-            <thead>
-              <tr className="border-b border-background-border">
-                <th className="text-left p-4 font-semibold" style={{ width: '8%' }}>
-                  ID
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '18%' }}>
-                  Müşteri
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '15%' }}>
-                  Şantiye
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '11%' }}>
-                  Başlangıç
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '11%' }}>
-                  Bitiş
-                </th>
-                <th className="text-right p-4 font-semibold" style={{ width: '13%' }}>
-                  Tutar
-                </th>
-                <th className="text-center p-4 font-semibold" style={{ width: '12%' }}>
-                  Durum
-                </th>
-                <th className="text-left p-4 font-semibold" style={{ width: '12%' }}>
-                  Oluşturma
-                </th>
+      <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+        <div className="overflow-auto max-h-[calc(100vh-260px)] min-h-[280px]">
+          <table className="w-full text-xs border-collapse">
+            <thead className="sticky top-0 z-10 border-b border-background-border">
+              <tr>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">ID</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kod</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Müşteri</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Şantiye</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Başlangıç</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Bitiş</th>
+                <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tutar</th>
+                <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Oluşturma</th>
               </tr>
             </thead>
             <tbody>
-              {quotes.map((quote) => (
+              {quotes.map((quote, index) => (
                 <tr
                   key={quote.QuoteId}
-                  className="border-b border-background-border hover:bg-background-hover cursor-pointer"
+                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
                   onClick={() => handleOpenQuote(quote)}
                 >
-                  <td className="p-4">#{quote.QuoteId}</td>
-                  <td className="p-4">
-                    <div className="font-medium">{quote.CustomerName || quote.Customer?.Name}</div>
-                  </td>
-                  <td className="p-4">
-                    {quote.Site ? (
-                      <div className="font-medium">{quote.Site.SiteName}</div>
-                    ) : (
-                      <span className="text-text-secondary">-</span>
-                    )}
-                  </td>
-                  <td className="p-4">{formatDate(quote.StartDate)}</td>
-                  <td className="p-4">{formatDate(quote.PlannedEndDate)}</td>
-                  <td className="p-4 text-right">
-                    <span className="text-green-500 font-bold">
-                      {formatCurrency(quote.TotalPrice)}
-                    </span>
-                  </td>
-                  <td className="p-4 text-center">{getQuoteStatusBadge(quote.Status)}</td>
-                  <td className="p-4 text-sm text-text-secondary">
-                    {formatDate(quote.CreatedAt)}
-                  </td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">#{quote.QuoteId}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{quote.QuoteCode || <span className="text-text-secondary">-</span>}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 font-medium text-text-primary">{quote.CustomerName || quote.Customer?.Name}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{quote.Site ? quote.Site.SiteName : <span className="text-text-secondary">-</span>}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(quote.StartDate)}</td>
+                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(quote.PlannedEndDate)}</td>
+                  <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-green-500 font-medium">{formatCurrency(quote.TotalPrice)}</td>
+                  <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{getQuoteStatusBadge(quote.Status)}</td>
+                  <td className="py-0.5 px-2 align-middle text-text-secondary">{formatDate(quote.CreatedAt)}</td>
                 </tr>
               ))}
             </tbody>
           </table>
+        </div>
+        <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+          <span>Toplam: {quotes.length} teklif</span>
+          <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
         </div>
       </div>
     );
@@ -366,69 +305,29 @@ export default function ContractsPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Sözleşmeler ve Teklifler</h1>
-          <p className="text-text-secondary">Kiralama sözleşmelerini ve teklifleri yönetin</p>
-        </div>
-        <button onClick={handleAddNew} className="btn-primary">
-          {getAddButtonLabel()}
-        </button>
-      </div>
-
-      {/* Tab Navigation */}
-      <div className="mb-6 border-b border-background-border">
-        <div className="flex gap-1">
-          <button
-            onClick={() => setActiveTab('active')}
-            className={`px-6 py-3 font-medium transition-colors relative ${
-              activeTab === 'active'
-                ? 'text-primary'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Aktif Sözleşmeler
-            {activeTab === 'active' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab('completed')}
-            className={`px-6 py-3 font-medium transition-colors relative ${
-              activeTab === 'completed'
-                ? 'text-primary'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Kapalı Sözleşmeler
-            {activeTab === 'completed' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-            )}
-          </button>
-          <button
-            onClick={() => setActiveTab('quotes')}
-            className={`px-6 py-3 font-medium transition-colors relative ${
-              activeTab === 'quotes'
-                ? 'text-primary'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Teklifler
-            {activeTab === 'quotes' && (
-              <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />
-            )}
-          </button>
+      <div className="mb-3 flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-text-primary">Sözleşmeler ve Teklifler</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
+          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">{getAddButtonLabel()}</button>
         </div>
       </div>
 
-      {/* Refresh Button */}
-      <div className="mb-4">
-        <button onClick={loadData} className="btn-secondary">
-          Yenile
+      <div className="mb-3 border-b border-background-border flex gap-1">
+        <button onClick={() => setActiveTab('active')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'active' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Aktif Sözleşmeler
+          {activeTab === 'active' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('completed')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'completed' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Kapalı Sözleşmeler
+          {activeTab === 'completed' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('quotes')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'quotes' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Teklifler
+          {activeTab === 'quotes' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
         </button>
       </div>
 
-      {/* Content */}
       {loading ? (
         <div className="flex items-center justify-center py-12">
           <div className="text-text-secondary">Yükleniyor...</div>

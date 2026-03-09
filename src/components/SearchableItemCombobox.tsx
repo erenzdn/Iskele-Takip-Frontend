@@ -27,6 +27,15 @@ function getCode(i: ItemRecord): string {
 }
 
 function getCatName(i: ItemRecord): string {
+  const cats = i.Categories ?? i.categories;
+  if (Array.isArray(cats) && cats.length > 0) {
+    return cats
+      .map((c: { CategoryName?: string; categoryName?: string }) =>
+        c.CategoryName ?? c.categoryName ?? ''
+      )
+      .filter(Boolean)
+      .join(', ');
+  }
   const c = i.Category ?? i.category;
   return (
     safeStr(

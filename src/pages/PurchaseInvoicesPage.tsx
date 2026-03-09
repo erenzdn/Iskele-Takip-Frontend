@@ -80,53 +80,34 @@ export default function PurchaseInvoicesPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Alış Faturaları</h1>
-          <p className="text-text-secondary">Tedarikçi alış faturalarını yönetin</p>
+      <div className="mb-3 flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-text-primary">Alış Faturaları</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={loadInvoices} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
+          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Fatura</button>
         </div>
-        <button onClick={handleAddNew} className="btn-primary">
-          + Yeni Fatura
-        </button>
       </div>
 
-      {/* Özet Kartları */}
       {invoices.length > 0 && (
-        <div className="grid grid-cols-4 gap-4 mb-6">
-          <div className="card p-4">
-            <div className="text-text-secondary text-sm mb-1">Toplam Fatura</div>
-            <div className="text-2xl font-bold">{invoices.length}</div>
-          </div>
-          <div className="card p-4">
-            <div className="text-text-secondary text-sm mb-1">Ara Toplam</div>
-            <div className="text-2xl font-bold">{formatCurrency(totalSubtotal)}</div>
-          </div>
-          <div className="card p-4">
-            <div className="text-text-secondary text-sm mb-1">Toplam KDV</div>
-            <div className="text-2xl font-bold">{formatCurrency(totalVat)}</div>
-          </div>
-          <div className="card p-4">
-            <div className="text-text-secondary text-sm mb-1">Genel Toplam</div>
-            <div className="text-2xl font-bold text-accent">{formatCurrency(totalAmount)}</div>
-          </div>
+        <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-4 text-xs">
+          <span className="text-text-secondary">Toplam: <strong className="text-text-primary">{invoices.length}</strong> fatura</span>
+          <span className="text-text-secondary">Ara Toplam: <strong className="text-text-primary">{formatCurrency(totalSubtotal)}</strong></span>
+          <span className="text-text-secondary">KDV: <strong className="text-text-primary">{formatCurrency(totalVat)}</strong></span>
+          <span className="text-text-secondary">Genel Toplam: <strong className="text-accent">{formatCurrency(totalAmount)}</strong></span>
         </div>
       )}
 
-      <div className="mb-6 flex gap-4">
+      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="Tedarikçi adı, açıklama veya fatura no ile ara..."
-          className="input flex-1"
+          placeholder="Tedarikçi, açıklama, evrak no, ürün veya depo..."
+          className="input flex-1 min-w-[200px] py-2 px-3 text-sm"
         />
-        <button onClick={handleSearch} className="btn-secondary">
-          Ara
-        </button>
-        <button onClick={loadInvoices} className="btn-secondary">
-          Yenile
-        </button>
+        <button onClick={handleSearch} className="btn-secondary py-2 px-3 text-sm">Ara</button>
       </div>
 
       {invoices.length === 0 ? (
@@ -136,73 +117,57 @@ export default function PurchaseInvoicesPage() {
           description="Yeni alış faturası eklemek için yukarıdaki butonu kullanın"
         />
       ) : (
-        <div className="card">
-          <div className="overflow-x-auto">
-            <table className="w-full table-compact">
-              <thead>
-                <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '10%' }}>
-                    Fatura No
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '12%' }}>
-                    Fatura Tarihi
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '20%' }}>
-                    Tedarikçi
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '20%' }}>
-                    Açıklama
-                  </th>
-                  <th className="text-right p-4 font-semibold" style={{ width: '12%' }}>
-                    Ara Toplam
-                  </th>
-                  <th className="text-right p-4 font-semibold" style={{ width: '10%' }}>
-                    KDV
-                  </th>
-                  <th className="text-right p-4 font-semibold" style={{ width: '14%' }}>
-                    Toplam
-                  </th>
-                  <th className="text-left p-4 font-semibold" style={{ width: '16%' }}>
-                    Oluşturan / Son Güncelleyen
-                  </th>
+        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+          <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[280px]">
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 border-b border-background-border">
+                <tr>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Fatura No</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Evrak No</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tarih</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tedarikçi</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Depo</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Açıklama</th>
+                  <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ara Toplam</th>
+                  <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">KDV</th>
+                  <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Toplam</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Bilgisi</th>
                 </tr>
               </thead>
               <tbody>
-                {invoices.map((invoice) => (
+                {invoices.map((invoice, index) => (
                   <tr
                     key={invoice.InvoiceId}
-                    className="border-b border-background-border hover:bg-background-hover cursor-pointer"
+                    className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
                     onClick={() => handleOpenDetail(invoice)}
                   >
-                    <td className="p-4">
-                      <span className="badge bg-blue-600 text-white">
-                        #{invoice.InvoiceId}
-                      </span>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className="font-medium text-primary">#{invoice.InvoiceId}</span>
                     </td>
-                    <td className="p-4">{formatDate(invoice.InvoiceDate)}</td>
-                    <td className="p-4">
-                      <div className="font-medium">{invoice.CustomerName || '-'}</div>
-                    </td>
-                    <td className="p-4 opacity-80">
-                      {invoice.Description || '-'}
-                    </td>
-                    <td className="p-4 text-right">{formatCurrency(invoice.Subtotal)}</td>
-                    <td className="p-4 text-right text-text-secondary">
-                      {formatCurrency(invoice.VatAmount)}
-                    </td>
-                    <td className="p-4 text-right font-semibold text-accent">
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary">{invoice.DocumentNo || '-'}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(invoice.InvoiceDate)}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 font-medium text-text-primary">{invoice.CustomerName || '-'}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{invoice.ItemName || '-'}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{invoice.WarehouseName || '-'}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary opacity-90">{invoice.Description || '-'}</td>
+                    <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0">{formatCurrency(invoice.Subtotal)}</td>
+                    <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary">{formatCurrency(invoice.VatAmount)}</td>
+                    <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 font-medium text-accent">
                       {formatCurrency(invoice.TotalAmount)}
+                      {invoice.Currency && invoice.Currency !== 'TL' && (
+                        <span className="ml-1 text-text-secondary text-[10px]">({invoice.Currency})</span>
+                      )}
                     </td>
-                    <td className="p-4 text-sm text-text-secondary">
-                      <div>Oluşturan: {invoice.CreatedByUserFullName || invoice.CreatedByUserName || '-'}</div>
-                      <div>{formatShortDateTime(invoice.CreatedAt)}</div>
-                      <div className="mt-1">Güncelleyen: {invoice.LastModifiedByUserFullName || invoice.LastModifiedByUserName || '-'}</div>
-                      <div>{formatShortDateTime(invoice.LastModifiedAt)}</div>
-                    </td>
+                    <td className="py-0.5 px-2 align-middle text-text-secondary">{invoice.CreatedByUserFullName || invoice.CreatedByUserName || '-'} • {formatShortDateTime(invoice.CreatedAt)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+            <span>Toplam: {invoices.length} fatura</span>
+            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
       )}

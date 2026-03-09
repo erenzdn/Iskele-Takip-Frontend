@@ -100,38 +100,30 @@ export default function PriceTiersPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-6 flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold mb-2">Fiyat Tarifeleri</h1>
-          <p className="text-text-secondary">Süreye göre fiyat çarpanları</p>
+      <div className="mb-3 flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-text-primary">Fiyat Tarifeleri</h1>
+        <div className="flex items-center gap-2">
+          <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
+          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Tarife</button>
         </div>
-        <button onClick={handleAddNew} className="btn-primary">
-          + Yeni Tarife
-        </button>
       </div>
 
-      <div className="mb-6 flex gap-4">
+      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
         <select
           value={selectedInventoryFilter?.ItemId || ''}
           onChange={(e) => {
             const item = inventoryItems.find((i) => i.ItemId === Number(e.target.value));
             setSelectedInventoryFilter(item || null);
           }}
-          className="input"
+          className="input py-2 px-3 text-sm flex-1 min-w-[180px]"
         >
           <option value="">Tüm Malzemeler</option>
           {inventoryItems.map((item) => (
-            <option key={item.ItemId} value={item.ItemId}>
-              {item.ItemName}
-            </option>
+            <option key={item.ItemId} value={item.ItemId}>{item.ItemName}</option>
           ))}
         </select>
-        <button onClick={handleFilterByItem} className="btn-secondary">
-          Filtrele
-        </button>
-        <button onClick={loadData} className="btn-secondary">
-          Yenile
-        </button>
+        <button onClick={handleFilterByItem} className="btn-secondary py-2 px-3 text-sm">Filtrele</button>
       </div>
 
       {priceTiers.length === 0 ? (
@@ -141,49 +133,41 @@ export default function PriceTiersPage() {
           description="Süreye göre fiyat çarpanları tanımlayın"
         />
       ) : (
-        <div className="card">
-          <div className="overflow-x-auto">
-            <table className="w-full table-compact">
-              <thead>
-                <tr className="border-b border-background-border">
-                  <th className="text-left p-4 font-semibold" style={{ width: '40%' }}>
-                    Malzeme
-                  </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '20%' }}>
-                    Min Gün
-                  </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '20%' }}>
-                    Max Gün
-                  </th>
-                  <th className="text-center p-4 font-semibold" style={{ width: '20%' }}>
-                    Çarpan
-                  </th>
+        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+          <div className="overflow-auto max-h-[calc(100vh-200px)] min-h-[280px]">
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 border-b border-background-border">
+                <tr>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
+                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Min Gün</th>
+                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Max Gün</th>
+                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Çarpan</th>
                 </tr>
               </thead>
               <tbody>
-                {priceTiers.map((tier) => (
+                {priceTiers.map((tier, index) => (
                   <tr
                     key={tier.TierId}
-                    className="border-b border-background-border hover:bg-background-hover cursor-pointer"
+                    className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
                     onClick={() => handleOpenDetail(tier)}
                   >
-                    <td className="p-4">
-                      <div className="font-medium">{tier.Item?.ItemName}</div>
-                      <div className="text-sm text-text-secondary">
-                        Günlük: {formatCurrency(tier.Item?.DailyPrice || 0)}
-                      </div>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className="font-medium text-text-primary">{tier.Item?.ItemName}</span>
+                      <span className="text-text-secondary ml-1">Günlük: {formatCurrency(tier.Item?.DailyPrice || 0)}</span>
                     </td>
-                    <td className="p-4 text-center">{tier.MinDays} gün</td>
-                    <td className="p-4 text-center">{tier.MaxDays} gün</td>
-                    <td className="p-4 text-center">
-                      <span className="badge bg-blue-600 text-white">
-                        x{tier.PriceMultiplier.toFixed(2)}
-                      </span>
+                    <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{tier.MinDays} gün</td>
+                    <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{tier.MaxDays} gün</td>
+                    <td className="py-0.5 px-2 text-center align-middle">
+                      <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-600 text-white">x{tier.PriceMultiplier.toFixed(2)}</span>
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+            <span>Toplam: {priceTiers.length} tarife</span>
+            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
       )}

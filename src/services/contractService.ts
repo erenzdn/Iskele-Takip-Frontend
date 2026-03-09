@@ -5,11 +5,11 @@ export interface CreateContractDetailRequest {
   ItemId: number;
   WarehouseId: number;
   RentedQuantity: number;
-  ReturnedQuantity: number;
   DailyPriceAtRent: number;
 }
 
 export interface CreateContractRequest {
+  ContractCode?: string;
   CustomerId: number;
   SiteId?: number; // Şantiye ID (opsiyonel)
   StartDate: string; // ISO 8601
@@ -23,7 +23,13 @@ export interface CreateContractRequest {
   details: CreateContractDetailRequest[];
 }
 
-export interface UpdateContractRequest extends CreateContractRequest {}
+export interface UpdateContractRequest {
+  ContractCode?: string;
+  SiteId?: number;
+  Iskonto?: number;
+  VatRate?: number;
+  IsCompleted?: boolean;
+}
 
 export interface CreateContractResponse {
   ContractId: number;
@@ -51,7 +57,7 @@ export const contractService = {
   },
 
   async updateAsync(id: number, data: UpdateContractRequest): Promise<void> {
-    return apiClient.patch<void>(`/contracts/${id}`, data);
+    return apiClient.patch<void>(`/contracts/${id}`, data as Record<string, unknown>);
   },
 
   async deleteAsync(id: number): Promise<void> {
@@ -124,8 +130,8 @@ export const contractService = {
 
     for (const c of active) {
       const full = await this.getByIdAsync(c.ContractId);
-      const details = (full as { details?: Array<{ ItemId: number; WarehouseId?: number; RentedQuantity: number; ReturnedQuantity: number; Item?: { ItemName?: string; Category?: { CategoryName?: string } }; ItemName?: string }> }).details
-        ?? (full as { ContractDetails?: Array<{ ItemId: number; WarehouseId?: number; RentedQuantity: number; ReturnedQuantity: number; Item?: { ItemName?: string; Category?: { CategoryName?: string } }; ItemName?: string }> }).ContractDetails
+      const details = (full as { details?: Array<{ ItemId: number; WarehouseId?: number; RentedQuantity: number; ReturnedQuantity: number; Item?: { ItemName?: string; Category?: { CategoryName?: string }; Categories?: { CategoryName?: string }[] }; ItemName?: string }> }).details
+        ?? (full as { ContractDetails?: Array<{ ItemId: number; WarehouseId?: number; RentedQuantity: number; ReturnedQuantity: number; Item?: { ItemName?: string; Category?: { CategoryName?: string }; Categories?: { CategoryName?: string }[] }; ItemName?: string }> }).ContractDetails
         ?? [];
       for (const d of details) {
         const whId = d.WarehouseId ?? 0;
@@ -133,7 +139,9 @@ export const contractService = {
         const qty = (d.RentedQuantity ?? 0) - (d.ReturnedQuantity ?? 0);
         if (qty <= 0) continue;
         const name = d.Item?.ItemName ?? (d as { ItemName?: string }).ItemName ?? `Ürün #${d.ItemId}`;
-        const catName = d.Item?.Category?.CategoryName ?? '';
+        const item = d.Item as { Categories?: { CategoryName?: string }[] } | undefined;
+        const catName =
+          item?.Categories?.map((c: { CategoryName?: string }) => c.CategoryName ?? '').filter(Boolean).join(', ') ?? '';
         const existing = byItem.get(d.ItemId);
         if (existing) {
           existing.Quantity += qty;

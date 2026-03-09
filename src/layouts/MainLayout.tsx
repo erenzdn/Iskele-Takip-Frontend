@@ -54,7 +54,7 @@ function NavLink({ item, isActive }: { item: MenuItem; isActive: boolean }) {
           : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
       }`}
     >
-      <span className="flex shrink-0 items-center">{item.icon}</span>
+      <span className="flex h-5 w-5 shrink-0 items-center justify-center [&_svg]:size-5">{item.icon}</span>
       <span className="font-medium">{item.label}</span>
     </Link>
   );

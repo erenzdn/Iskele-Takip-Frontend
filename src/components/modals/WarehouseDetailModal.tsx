@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { CheckIcon, XIcon } from '@phosphor-icons/react';
 import { AuditLog, Warehouse, WarehouseStock, Inventory } from '../../models';
 import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
@@ -442,17 +443,17 @@ export default function WarehouseDetailModal({
                               <button
                                 onClick={() => handleSaveEditStock(item)}
                                 disabled={isBusy}
-                                className="text-green-500 hover:text-green-400 px-2"
+                                className="text-green-500 hover:text-green-400 px-2 inline-flex items-center justify-center"
                                 title="Kaydet"
                               >
-                                ✓
+                                <CheckIcon size={18} weight="bold" aria-hidden />
                               </button>
                               <button
                                 onClick={handleCancelEditStock}
-                                className="text-gray-500 hover:text-gray-400 px-2"
+                                className="text-gray-500 hover:text-gray-400 px-2 inline-flex items-center justify-center"
                                 title="İptal"
                               >
-                                ✕
+                                <XIcon size={18} weight="regular" aria-hidden />
                               </button>
                             </div>
                           ) : (

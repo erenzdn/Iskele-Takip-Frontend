@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { HardHatIcon, MapPinIcon, UserIcon } from '@phosphor-icons/react';
 import { AuditLog, Customer, ConstructionSite } from '../../models';
 import { customerService } from '../../services/customerService';
 import { siteService } from '../../services/siteService';
@@ -550,7 +551,7 @@ export default function CustomerDetailModal({
               <div className="text-center text-text-secondary py-8">Yükleniyor...</div>
             ) : sites.length === 0 ? (
               <div className="text-center py-8">
-                <div className="text-4xl mb-2">🏗️</div>
+                <div className="mb-2 text-text-secondary [&_svg]:size-12"><HardHatIcon size={48} weight="duotone" /></div>
                 <div className="text-text-secondary">Henüz şantiye eklenmemiş</div>
               </div>
             ) : (
@@ -564,13 +565,13 @@ export default function CustomerDetailModal({
                       <div className="flex-1">
                         <div className="font-semibold text-lg">{site.SiteName}</div>
                         {site.SiteAddress && (
-                          <div className="text-sm text-text-secondary mt-1">
-                            📍 {site.SiteAddress}
+                          <div className="text-sm text-text-secondary mt-1 inline-flex items-center gap-1">
+                            <MapPinIcon size={14} weight="regular" className="shrink-0" aria-hidden /> {site.SiteAddress}
                           </div>
                         )}
                         {site.ResponsiblePerson && (
-                          <div className="text-sm text-text-secondary mt-1">
-                            👤 {site.ResponsiblePerson}
+                          <div className="text-sm text-text-secondary mt-1 inline-flex items-center gap-1">
+                            <UserIcon size={14} weight="regular" className="shrink-0" aria-hidden /> {site.ResponsiblePerson}
                             {site.ResponsiblePhone && ` - ${site.ResponsiblePhone}`}
                           </div>
                         )}

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { XIcon } from '@phosphor-icons/react';
 import { AuditLog, Inventory, MaterialCategory, SubCategory, Warehouse } from '../../models';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
@@ -28,13 +29,15 @@ export default function InventoryDetailModal({
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [itemCode, setItemCode] = useState('');
   const [itemName, setItemName] = useState('');
-  const [selectedCategoryId, setSelectedCategoryId] = useState<number | ''>('');
+  const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [totalStock, setTotalStock] = useState<number | ''>(0);
   const [onRent, setOnRent] = useState(0);
   const [dailyPrice, setDailyPrice] = useState(0);
   const [purchasePrice, setPurchasePrice] = useState(0);
   const [monthlyListPrice, setMonthlyListPrice] = useState<number | ''>(0);
   const [unitPrice, setUnitPrice] = useState<number | ''>(0);
+  const [monthlyListPriceEur, setMonthlyListPriceEur] = useState<number | ''>(0);
+  const [unitPriceEur, setUnitPriceEur] = useState<number | ''>(0);
   const [isBusy, setIsBusy] = useState(false);
 
   // Alt kategori seçimi için state'ler
@@ -55,16 +58,29 @@ export default function InventoryDetailModal({
     if (item) {
       setItemCode(item.ItemCode ?? '');
       setItemName(item.ItemName);
-      setSelectedCategoryId(item.CategoryId);
+      setSelectedCategoryIds(item.Categories?.map((c) => c.CategoryId) ?? []);
       setTotalStock(item.TotalStock);
       setOnRent(item.OnRent);
       setDailyPrice(item.DailyPrice);
       setPurchasePrice(item.PurchasePrice);
       setMonthlyListPrice(item.MonthlyListPrice ?? 0);
       setUnitPrice(item.UnitPrice ?? 0);
+      setMonthlyListPriceEur(item.MonthlyListPriceEur ?? 0);
+      setUnitPriceEur(item.UnitPriceEur ?? 0);
       setSelectedSubCategoryIds(
         item.SubCategories?.map((sc) => sc.SubCategoryId) ?? []
       );
+    } else {
+      setItemCode('');
+      setItemName('');
+      setSelectedCategoryIds([]);
+      setTotalStock(0);
+      setOnRent(0);
+      setMonthlyListPrice(0);
+      setUnitPrice(0);
+      setMonthlyListPriceEur(0);
+      setUnitPriceEur(0);
+      setSelectedSubCategoryIds([]);
     }
   }, [item]);
 
@@ -90,6 +106,17 @@ export default function InventoryDetailModal({
     } finally {
       setLoadingSubCategories(false);
     }
+  };
+
+  const handleCategoryToggle = (categoryId: number) => {
+    if (isReadOnly) return;
+    setSelectedCategoryIds((prev) => {
+      if (prev.includes(categoryId)) {
+        return prev.filter((id) => id !== categoryId);
+      } else {
+        return [...prev, categoryId];
+      }
+    });
   };
 
   const handleSubCategoryToggle = (subCategoryId: number) => {
@@ -175,8 +202,8 @@ export default function InventoryDetailModal({
   }, [warehouseStocks, isNew]);
 
   const handleSave = async () => {
-    if (!itemName.trim() || !selectedCategoryId) {
-      alert('Malzeme adı ve kategori zorunludur');
+    if (!itemName.trim() || selectedCategoryIds.length === 0) {
+      alert('Malzeme adı ve en az bir kategori zorunludur');
       return;
     }
 
@@ -195,12 +222,14 @@ export default function InventoryDetailModal({
         // 1. Önce malzemeyi oluştur
         const result = await inventoryService.createAsync({
           ItemCode: itemCode.trim() || undefined,
-          CategoryId: Number(selectedCategoryId),
+          CategoryIds: selectedCategoryIds,
           ItemName: itemName,
           TotalStock: Number(totalStock),
           OnRent: 0,
           MonthlyListPrice: Number(monthlyListPrice),
           UnitPrice: Number(unitPrice),
+          MonthlyListPriceEur: Number(monthlyListPriceEur) || undefined,
+          UnitPriceEur: Number(unitPriceEur) || undefined,
           SubCategoryIds: selectedSubCategoryIds.length > 0 ? selectedSubCategoryIds : undefined,
         });
 
@@ -215,12 +244,14 @@ export default function InventoryDetailModal({
       } else if (item) {
         await inventoryService.updateAsync(item.ItemId, {
           ItemCode: itemCode.trim() || undefined,
-          CategoryId: Number(selectedCategoryId),
+          CategoryIds: selectedCategoryIds,
           ItemName: itemName,
           TotalStock: Number(totalStock),
           OnRent: onRent,
           MonthlyListPrice: Number(monthlyListPrice),
           UnitPrice: Number(unitPrice),
+          MonthlyListPriceEur: Number(monthlyListPriceEur) || undefined,
+          UnitPriceEur: Number(unitPriceEur) || undefined,
           SubCategoryIds: selectedSubCategoryIds,
         });
       }
@@ -361,22 +392,38 @@ export default function InventoryDetailModal({
             </div>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium mb-2">Kategori *</label>
-            <select
-              value={selectedCategoryId}
-              onChange={(e) => setSelectedCategoryId(Number(e.target.value) || '')}
-              disabled={isReadOnly}
-              className="input w-full"
-              required
-            >
-              <option value="">Kategori seçin</option>
-              {categories.map((cat) => (
-                <option key={cat.CategoryId} value={cat.CategoryId}>
-                  {cat.CategoryName}
-                </option>
-              ))}
-            </select>
+          <div className="border border-background-border rounded-lg p-4">
+            <label className="block text-sm font-medium mb-3">Kategoriler *</label>
+            {categories.length === 0 ? (
+              <div className="text-text-secondary text-sm">
+                Henüz kategori tanımlanmamış. Envanter sayfasındaki kategori yönetiminden ekleyebilirsiniz.
+              </div>
+            ) : (
+              <div className="grid grid-cols-2 gap-1">
+                {categories.map((cat) => (
+                  <label
+                    key={cat.CategoryId}
+                    className={`flex items-center gap-2 text-sm py-1 ${
+                      isReadOnly ? 'cursor-default' : 'cursor-pointer'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedCategoryIds.includes(cat.CategoryId)}
+                      onChange={() => handleCategoryToggle(cat.CategoryId)}
+                      disabled={isReadOnly}
+                      className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800"
+                    />
+                    <span className="text-text-secondary">{cat.CategoryName}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+            {selectedCategoryIds.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-background-border text-sm text-text-secondary">
+                Seçili: <span className="font-medium text-white">{selectedCategoryIds.length}</span> kategori
+              </div>
+            )}
           </div>
 
           {/* Yeni malzeme için depo seçimi */}
@@ -446,10 +493,10 @@ export default function InventoryDetailModal({
                           <button
                             type="button"
                             onClick={() => handleRemoveWarehouseStock(index)}
-                            className="text-red-500 hover:text-red-400 p-2"
+                            className="text-red-500 hover:text-red-400 p-2 inline-flex items-center justify-center"
                             title="Kaldır"
                           >
-                            ✕
+                            <XIcon size={18} weight="regular" aria-hidden />
                           </button>
                         )}
                       </div>
@@ -512,64 +559,107 @@ export default function InventoryDetailModal({
             </>
           )}
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Aylık Liste Fiyatı *</label>
-              <input
-                type="number"
-                value={monthlyListPrice}
-                onChange={(e) => setMonthlyListPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                disabled={isReadOnly}
-                min="0"
-                step="0.01"
-                className="input w-full"
-              />
+          <div className="border border-background-border rounded-lg p-4">
+            <label className="block text-sm font-medium mb-3">Fiyatlandırma (TL)</label>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı *</label>
+                <input
+                  type="number"
+                  value={monthlyListPrice}
+                  onChange={(e) => setMonthlyListPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                  disabled={isReadOnly}
+                  min="0"
+                  step="0.01"
+                  className="input w-full"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Birim Fiyat</label>
+                <input
+                  type="number"
+                  value={unitPrice}
+                  onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                  disabled={isReadOnly}
+                  min="0"
+                  step="0.01"
+                  className="input w-full"
+                />
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Birim Fiyat</label>
-              <input
-                type="number"
-                value={unitPrice}
-                onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                disabled={isReadOnly}
-                min="0"
-                step="0.01"
-                className="input w-full"
-              />
+            <div className="grid grid-cols-2 gap-4 mt-3">
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">
+                  Günlük Kira
+                  <span className="text-xs text-text-secondary ml-1">(Otomatik: Aylık/30)</span>
+                </label>
+                <input
+                  type="number"
+                  value={Number(monthlyListPrice) > 0 ? Number((Number(monthlyListPrice) / 30).toFixed(2)) : dailyPrice}
+                  disabled={true}
+                  min="0"
+                  step="0.01"
+                  className="input w-full bg-background-secondary cursor-not-allowed"
+                  title="Aylık Liste Fiyatı / 30 olarak otomatik hesaplanır"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">
+                  Alış Fiyatı
+                  <span className="text-xs text-text-secondary ml-1">(Salt okunur)</span>
+                </label>
+                <input
+                  type="number"
+                  value={purchasePrice}
+                  disabled={true}
+                  min="0"
+                  step="0.01"
+                  className="input w-full bg-background-secondary cursor-not-allowed"
+                  title="Bu alan artık salt okunurdur. Birim Fiyat alanını kullanın."
+                />
+              </div>
             </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Günlük Kira
-                <span className="text-xs text-text-secondary ml-1">(Otomatik: Aylık/30)</span>
-              </label>
-              <input
-                type="number"
-                value={Number(monthlyListPrice) > 0 ? Number((Number(monthlyListPrice) / 30).toFixed(2)) : dailyPrice}
-                disabled={true}
-                min="0"
-                step="0.01"
-                className="input w-full bg-background-secondary cursor-not-allowed"
-                title="Aylık Liste Fiyatı / 30 olarak otomatik hesaplanır"
-              />
+          <div className="border border-background-border rounded-lg p-4">
+            <label className="block text-sm font-medium mb-3">Fiyatlandırma (EUR)</label>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı (EUR)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={monthlyListPriceEur}
+                    onChange={(e) => setMonthlyListPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
+                    disabled={isReadOnly}
+                    min="0"
+                    step="0.01"
+                    className="input w-full pr-8"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (EUR)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    value={unitPriceEur}
+                    onChange={(e) => setUnitPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
+                    disabled={isReadOnly}
+                    min="0"
+                    step="0.01"
+                    className="input w-full pr-8"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
+                </div>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">
-                Alış Fiyatı
-                <span className="text-xs text-text-secondary ml-1">(Salt okunur)</span>
-              </label>
-              <input
-                type="number"
-                value={purchasePrice}
-                disabled={true}
-                min="0"
-                step="0.01"
-                className="input w-full bg-background-secondary cursor-not-allowed"
-                title="Bu alan artık salt okunurdur. Birim Fiyat alanını kullanın."
-              />
-            </div>
+            {Number(monthlyListPriceEur) > 0 && (
+              <div className="mt-3 pt-3 border-t border-background-border text-sm text-text-secondary">
+                Günlük Kira (EUR): <span className="font-medium text-white">€{(Number(monthlyListPriceEur) / 30).toFixed(2)}</span>
+              </div>
+            )}
           </div>
 
           {/* Alt Kategori Seçimi */}
