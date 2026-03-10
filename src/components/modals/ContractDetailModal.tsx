@@ -8,6 +8,7 @@ import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
 import { contractTemplateService } from '../../services/contractTemplateService';
 import ContractTemplateEditorModal from './ContractTemplateEditorModal';
+import PdfPreviewModal from './PdfPreviewModal';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
@@ -81,6 +82,8 @@ export default function ContractDetailModal({
   const [lastAddedKeys, setLastAddedKeys] = useState<string[]>([]);
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
 
   useEffect(() => {
@@ -726,6 +729,11 @@ export default function ContractDetailModal({
         format
       );
 
+      if (blob.size === 0) {
+        alert('Belge oluşturulamadı (sunucu boş yanıt döndü).');
+        return;
+      }
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -737,6 +745,58 @@ export default function ContractDetailModal({
       alert(getApiErrorMessage(error) || 'Döküman oluşturma hatası');
     } finally {
       setIsBusy(false);
+    }
+  };
+
+  const handlePreviewDocument = async () => {
+    if (!contract || !selectedTemplateId) {
+      alert('Önizleme için bir şablon seçmelisiniz');
+      return;
+    }
+
+    try {
+      setIsBusy(true);
+      const blob = await contractService.previewDocumentAsync(
+        contract.ContractId,
+        Number(selectedTemplateId)
+      );
+      // Backend tanı: gelen yanıtın tipi ve boyutu (konsolda kontrol edin)
+      console.log('[PDF Önizleme] Blob:', { size: blob.size, type: blob.type });
+
+      if (blob.size === 0) {
+        alert('Sunucu boş yanıt döndürdü (boyut: 0). Backend preview-document endpoint\'ini kontrol edin.');
+        return;
+      }
+      const isPdf = blob.type === 'application/pdf' || blob.type === '';
+      if (!isPdf && blob.size < 10000) {
+        const text = await blob.text();
+        try {
+          const j = JSON.parse(text);
+          alert('Önizleme hatası (sunucu PDF değil): ' + (j.message || text.slice(0, 200)));
+        } catch {
+          alert('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)') + '. Backend\'i kontrol edin.');
+        }
+        return;
+      }
+      if (!isPdf) {
+        console.warn('[PDF Önizleme] Content-Type PDF değil:', blob.type, '- yine de açmayı deniyoruz.');
+      }
+      const url = window.URL.createObjectURL(blob);
+      setPdfPreviewUrl(url);
+      setShowPdfPreview(true);
+    } catch (error) {
+      console.error('Preview document error:', error);
+      alert(getApiErrorMessage(error) || 'Önizleme hatası');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const closePdfPreview = () => {
+    setShowPdfPreview(false);
+    if (pdfPreviewUrl) {
+      window.URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(null);
     }
   };
 
@@ -1073,12 +1133,17 @@ export default function ContractDetailModal({
                     {selectedTemplateId && (
                       <button
                         type="button"
-                        onClick={() => {
+                        onClick={async () => {
                           const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
-                          if (template) {
-                            setEditingTemplate(template);
+                          if (!template) return;
+                          try {
+                            const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
+                            setEditingTemplate(fullTemplate);
                             setIsNewTemplate(false);
                             setIsTemplateEditorOpen(true);
+                          } catch (error) {
+                            console.error('Şablon yükleme hatası:', error);
+                            alert(getApiErrorMessage(error));
                           }
                         }}
                         className="btn-secondary text-sm shrink-0"
@@ -1238,19 +1303,27 @@ export default function ContractDetailModal({
                       try {
                         const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
                         if (!template) return;
-                        const content = template.Content || { type: 'doc', content: [] };
+                        const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
+                        const content = JSON.parse(JSON.stringify(fullTemplate.Content || { type: 'doc', content: [] }));
+                        if (!content.content) content.content = [];
+
+                        const hasPlaceholder = JSON.stringify(content).includes('{{malzemeTablosu}}');
+                        if (hasPlaceholder) {
+                          alert('Bu şablonda zaten malzeme tablosu placeholder\'ı mevcut.');
+                          return;
+                        }
+
                         const placeholderNode = {
                           type: 'paragraph',
                           content: [{ type: 'text', text: '{{malzemeTablosu}}' }],
                         };
-                        if (!content.content) content.content = [];
                         content.content.push(placeholderNode);
                         await contractTemplateService.updateAsync(template.TemplateId, { Content: content });
                         await loadTemplates();
                         alert('Malzeme tablosu şablona eklendi!');
                       } catch (error) {
                         console.error('Add material table error:', error);
-                        alert('Malzeme tablosu ekleme hatası');
+                        alert(getApiErrorMessage(error));
                       }
                     }}
                     className="btn-secondary text-sm"
@@ -1270,6 +1343,9 @@ export default function ContractDetailModal({
                 )}
                 {!isNew && contract && selectedTemplateId && (
                   <>
+                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className="btn-primary text-sm">
+                      {isBusy ? 'Yükleniyor...' : 'Önizle'}
+                    </button>
                     <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className="btn-secondary text-sm">PDF İndir</button>
                     <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className="btn-secondary text-sm">Word İndir</button>
                   </>
@@ -1556,6 +1632,13 @@ export default function ContractDetailModal({
         items={availableItems}
         onItemSelect={addItemFromPicker}
         displayMode="contract"
+      />
+      <PdfPreviewModal
+        open={showPdfPreview}
+        pdfUrl={pdfPreviewUrl}
+        title={`Sözleşme #${contract?.ContractId ?? ''} Önizleme`}
+        downloadFileName={`sozlesme_${contract?.ContractId ?? ''}.pdf`}
+        onClose={closePdfPreview}
       />
       </div>
     </div>
