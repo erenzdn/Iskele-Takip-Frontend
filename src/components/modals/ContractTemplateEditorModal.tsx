@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { ClipboardIcon } from '@phosphor-icons/react';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
@@ -11,7 +12,9 @@ import ImageResize from 'tiptap-extension-resize-image';
 import { ContractTemplate, TemplateImage } from '../../models';
 import { contractTemplateService } from '../../services/contractTemplateService';
 import { templateImageService } from '../../services/templateImageService';
+import { getApiErrorMessage } from '../../utils/apiError';
 import { CustomImage } from './CustomImageExtension';
+import PdfPreviewModal from './PdfPreviewModal';
 
 interface ContractTemplateEditorModalProps {
   template: ContractTemplate | null;
@@ -41,6 +44,15 @@ const PLACEHOLDERS = {
     { key: 'hesaplananTutar', label: 'Hesaplanan Tutar' },
     { key: 'bugunTarihi', label: 'Bugünün Tarihi' },
   ],
+  cek: [
+    { key: 'Check.BankName', label: 'Çek Banka Adı' },
+    { key: 'Check.CheckNumber', label: 'Çek Numarası' },
+    { key: 'Check.AmountFormatted', label: 'Çek Tutarı (formatlı)' },
+    { key: 'Check.IssueDateFormatted', label: 'Keside Tarihi (formatlı)' },
+    { key: 'Check.DueDateFormatted', label: 'Vade Tarihi (formatlı)' },
+    { key: 'Check.StatusLabel', label: 'Çek Durumu' },
+    { key: 'Check.CustomerName', label: 'Müşteri Adı' },
+  ],
 };
 
 export default function ContractTemplateEditorModal({
@@ -54,6 +66,8 @@ export default function ContractTemplateEditorModal({
   const [images, setImages] = useState<TemplateImage[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
   const [selectedImageId, setSelectedImageId] = useState<number | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
@@ -91,6 +105,7 @@ export default function ContractTemplateEditorModal({
       setImages(imageList);
     } catch (error) {
       console.error('Load images error:', error);
+      setImages([]);
     }
   };
 
@@ -119,7 +134,6 @@ export default function ContractTemplateEditorModal({
       
       // Editöre ekle
       if (editor) {
-        const imageUrl = `${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'}/template-images/${response.ImageId}`;
         editor.chain().focus().setImage({ src: `image:${response.ImageId}` }).run();
       }
 
@@ -128,7 +142,7 @@ export default function ContractTemplateEditorModal({
         fileInputRef.current.value = '';
       }
     } catch (error: any) {
-      alert(error.message || 'Görsel yükleme hatası');
+      alert(getApiErrorMessage(error));
     } finally {
       setUploadingImage(false);
     }
@@ -173,7 +187,7 @@ export default function ContractTemplateEditorModal({
       onClose();
     } catch (error) {
       console.error('Save template error:', error);
-      alert('Kaydetme hatası');
+      alert(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -186,18 +200,39 @@ export default function ContractTemplateEditorModal({
       setIsBusy(true);
       const content = editor.getJSON();
       const blob = await contractTemplateService.previewContentAsync(content);
-      
+
+      if (blob.size === 0) {
+        alert('PDF önizlemesi oluşturulamadı (sunucu boş yanıt döndü).');
+        return;
+      }
+      const isPdf = blob.type === 'application/pdf' || blob.type === '';
+      if (!isPdf && blob.size < 10000) {
+        const text = await blob.text();
+        try {
+          const j = JSON.parse(text);
+          alert('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
+        } catch {
+          alert('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
+        }
+        return;
+      }
+
       const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sozlesme_onizleme.pdf`;
-      a.click();
-      window.URL.revokeObjectURL(url);
+      setPdfPreviewUrl(url);
+      setShowPdfPreview(true);
     } catch (error) {
       console.error('Preview error:', error);
-      alert('Önizleme hatası');
+      alert(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
+    }
+  };
+
+  const closePdfPreview = () => {
+    setShowPdfPreview(false);
+    if (pdfPreviewUrl) {
+      window.URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(null);
     }
   };
 
@@ -355,6 +390,22 @@ export default function ContractTemplateEditorModal({
                 }}
                 className="input text-sm px-2 py-1"
               >
+                <option value="">Çek Bilgileri</option>
+                {PLACEHOLDERS.cek.map((p) => (
+                  <option key={p.key} value={p.key}>
+                    {p.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                onChange={(e) => {
+                  if (e.target.value) {
+                    insertPlaceholder(e.target.value);
+                    e.target.value = '';
+                  }
+                }}
+                className="input text-sm px-2 py-1"
+              >
                 <option value="">Şantiye Bilgileri</option>
                 {PLACEHOLDERS.santiye.map((p) => (
                   <option key={p.key} value={p.key}>
@@ -382,7 +433,8 @@ export default function ContractTemplateEditorModal({
                 onClick={insertMaterialTable}
                 className="btn-secondary text-sm px-3 py-1"
               >
-                📋 Malzeme Tablosu
+                <ClipboardIcon size={18} weight="regular" className="inline-block align-middle mr-1.5" aria-hidden />
+                Malzeme Tablosu
               </button>
             </div>
           </div>
@@ -402,7 +454,7 @@ export default function ContractTemplateEditorModal({
               disabled={isBusy}
               className="btn-secondary flex-1"
             >
-              {isBusy ? 'Önizleniyor...' : 'PDF Önizleme'}
+              {isBusy ? 'Önizleniyor...' : 'Önizle'}
             </button>
             <button
               onClick={handleSave}
@@ -414,6 +466,13 @@ export default function ContractTemplateEditorModal({
           </div>
         </div>
       </div>
+      <PdfPreviewModal
+        open={showPdfPreview}
+        pdfUrl={pdfPreviewUrl}
+        title="Şablon Önizleme"
+        downloadFileName="sablon_onizleme.pdf"
+        onClose={closePdfPreview}
+      />
     </div>
   );
 }

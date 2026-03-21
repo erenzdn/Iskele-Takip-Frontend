@@ -1,5 +1,5 @@
 import { apiClient } from './apiClient';
-import { AuditLog, Warehouse, WarehouseStock, WarehouseStockResponse } from '../models';
+import { AuditLog, Warehouse, WarehouseStockResponse } from '../models';
 
 export interface CreateWarehouseRequest {
   WarehouseName: string;

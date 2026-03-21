@@ -1,7 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Warehouse, WarehouseStock, WarehouseStockResponse } from '../models';
+import { MagnifyingGlassIcon } from '@phosphor-icons/react';
+import {
+  Warehouse,
+  WarehouseStock,
+  WarehouseStockResponse,
+  Inventory,
+  MaterialCategory,
+  SubCategory,
+} from '../models';
 import { warehouseService } from '../services/warehouseService';
+import { contractService } from '../services/contractService';
+import { inventoryService } from '../services/inventoryService';
+import { subcategoryService } from '../services/subcategoryService';
 
 export default function WarehouseDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -14,8 +25,19 @@ export default function WarehouseDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | 'all'>('all');
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState<number | 'all'>('all');
   const [minQuantity, setMinQuantity] = useState<number | ''>('');
   const [maxQuantity, setMaxQuantity] = useState<number | ''>('');
+  const [activeTab, setActiveTab] = useState<'stock' | 'rented'>('stock');
+  const [rentedItems, setRentedItems] = useState<{ ItemId: number; ItemName: string; CategoryName: string; Quantity: number }[]>([]);
+  const [loadingRented, setLoadingRented] = useState(false);
+  const [rentedSearchText, setRentedSearchText] = useState('');
+  const [rentedCategoryName, setRentedCategoryName] = useState<string>('all');
+  const [rentedMinQty, setRentedMinQty] = useState<number | ''>('');
+  const [rentedMaxQty, setRentedMaxQty] = useState<number | ''>('');
+  const [allInventory, setAllInventory] = useState<Inventory[]>([]);
+  const [allCategories, setAllCategories] = useState<MaterialCategory[]>([]);
+  const [allSubCategories, setAllSubCategories] = useState<SubCategory[]>([]);
 
   useEffect(() => {
     const warehouseId = Number(id);
@@ -28,9 +50,17 @@ export default function WarehouseDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const response: WarehouseStockResponse = await warehouseService.getStockAsync(warehouseId);
+        const [response, inventory, categories, subCategories] = await Promise.all([
+          warehouseService.getStockAsync(warehouseId),
+          inventoryService.getAllAsync(),
+          inventoryService.getAllCategoriesAsync(),
+          subcategoryService.getAllAsync(),
+        ]);
         setWarehouse(response.warehouse);
         setStock(response.stock);
+        setAllInventory(inventory);
+        setAllCategories(categories);
+        setAllSubCategories(subCategories);
       } catch (err) {
         console.error('Warehouse detail load error:', err);
         setError('Depo bilgileri yüklenirken bir hata oluştu.');
@@ -41,6 +71,24 @@ export default function WarehouseDetailPage() {
 
     loadData();
   }, [id, navigate]);
+
+  useEffect(() => {
+    const warehouseId = Number(id);
+    if (!warehouseId || Number.isNaN(warehouseId) || activeTab !== 'rented') return;
+    const load = async () => {
+      try {
+        setLoadingRented(true);
+        const data = await contractService.getRentedItemsByWarehouseAsync(warehouseId);
+        setRentedItems(data);
+      } catch (err) {
+        console.error('Load rented items error:', err);
+        setRentedItems([]);
+      } finally {
+        setLoadingRented(false);
+      }
+    };
+    load();
+  }, [id, activeTab]);
 
   const handleRefresh = async () => {
     if (!warehouse?.WarehouseId) return;
@@ -67,26 +115,59 @@ export default function WarehouseDetailPage() {
       const matchesCategory =
         selectedCategoryId === 'all' || s.CategoryId === selectedCategoryId;
 
+      const inv = allInventory.find((i) => i.ItemId === s.ItemId);
+      const subCats = inv?.SubCategories ?? [];
+      const matchesSubCategory =
+        selectedSubCategoryId === 'all' ||
+        subCats.some((sc) => sc.SubCategoryId === selectedSubCategoryId);
+
       const quantity = s.Quantity ?? 0;
       const matchesMin = minQuantity === '' || quantity >= minQuantity;
       const matchesMax = maxQuantity === '' || quantity <= maxQuantity;
 
-      return matchesText && matchesCategory && matchesMin && matchesMax;
+      return matchesText && matchesCategory && matchesSubCategory && matchesMin && matchesMax;
     });
-  }, [stock, searchText, selectedCategoryId, minQuantity, maxQuantity]);
+  }, [stock, searchText, selectedCategoryId, selectedSubCategoryId, minQuantity, maxQuantity, allInventory]);
 
   const categoryOptions = useMemo(() => {
-    const map = new Map<number, string | undefined>();
-    stock.forEach((s) => {
-      if (!map.has(s.CategoryId)) {
-        map.set(s.CategoryId, s.CategoryName);
-      }
-    });
-    return Array.from(map.entries()).map(([id, name]) => ({
-      id,
-      name: name || `Kategori #${id}`,
+    return allCategories.map((cat) => ({
+      id: cat.CategoryId,
+      name: cat.CategoryName,
     }));
-  }, [stock]);
+  }, [allCategories]);
+
+  const subCategoryOptions = useMemo(() => {
+    const filtered =
+      selectedCategoryId === 'all'
+        ? allSubCategories
+        : allSubCategories.filter((sc) => sc.CategoryId === selectedCategoryId);
+    return filtered.map((sc) => ({
+      id: sc.SubCategoryId,
+      name: sc.SubCategoryName,
+    }));
+  }, [allSubCategories, selectedCategoryId]);
+
+  const filteredRentedItems = useMemo(() => {
+    const text = rentedSearchText.trim().toLowerCase();
+    return rentedItems.filter((r) => {
+      const name = r.ItemName?.toLowerCase() ?? '';
+      const cat = r.CategoryName?.toLowerCase() ?? '';
+      const okText = !text || name.includes(text) || cat.includes(text);
+      const okCat = rentedCategoryName === 'all' || (r.CategoryName || '') === rentedCategoryName;
+      const okMin = rentedMinQty === '' || r.Quantity >= rentedMinQty;
+      const okMax = rentedMaxQty === '' || r.Quantity <= rentedMaxQty;
+      return okText && okCat && okMin && okMax;
+    });
+  }, [rentedItems, rentedSearchText, rentedCategoryName, rentedMinQty, rentedMaxQty]);
+
+  const rentedCategoryOptions = useMemo(() => {
+    const set = new Set<string>();
+    rentedItems.forEach((r) => {
+      const n = r.CategoryName?.trim() || '';
+      if (n) set.add(n);
+    });
+    return Array.from(set).sort();
+  }, [rentedItems]);
 
   if (loading) {
     return (
@@ -165,6 +246,157 @@ export default function WarehouseDetailPage() {
       )}
 
       <div className="card p-4 space-y-4">
+        <div className="flex gap-2 border-b border-background-border mb-4">
+          <button
+            type="button"
+            onClick={() => setActiveTab('stock')}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === 'stock'
+                ? 'text-accent border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Depodaki Malzemeler
+          </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('rented')}
+            className={`px-4 py-2 font-medium transition-colors ${
+              activeTab === 'rented'
+                ? 'text-accent border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Kiradaki Ürünler
+          </button>
+        </div>
+
+        {activeTab === 'rented' && (
+          <>
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+              <div>
+                <h2 className="text-xl font-semibold">Kiradaki Ürünler</h2>
+                <p className="text-sm text-text-secondary">
+                  Bu depodan kiraya verilmiş ve henüz iade edilmemiş ürünler. Arama ve filtreleri kullanarak daraltabilirsiniz.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setRentedSearchText('');
+                  setRentedCategoryName('all');
+                  setRentedMinQty('');
+                  setRentedMaxQty('');
+                }}
+                className="btn-secondary"
+              >
+                Filtreleri Sıfırla
+              </button>
+            </div>
+
+            {loadingRented ? (
+              <div className="text-text-secondary py-6">Yükleniyor...</div>
+            ) : rentedItems.length === 0 ? (
+              <div className="text-text-secondary text-center py-6">
+                Bu depodan kirada ürün bulunmuyor.
+              </div>
+            ) : (
+              <>
+                <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
+                  <div className="flex-1">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Ara</label>
+                    <div className="flex gap-2">
+                      <div className="relative flex-1">
+                        <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-secondary">
+                          <MagnifyingGlassIcon size={18} weight="regular" color="currentColor" aria-hidden />
+                        </span>
+                        <input
+                          type="text"
+                          className="input w-full pl-8"
+                          placeholder="Malzeme veya kategori adı..."
+                          value={rentedSearchText}
+                          onChange={(e) => setRentedSearchText(e.target.value)}
+                        />
+                      </div>
+                      {rentedSearchText && (
+                        <button type="button" onClick={() => setRentedSearchText('')} className="btn-secondary whitespace-nowrap">
+                          Temizle
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <div className="w-full lg:w-48">
+                    <label className="block text-xs font-medium text-text-secondary mb-1">Kategori</label>
+                    <select
+                      className="input w-full"
+                      value={rentedCategoryName}
+                      onChange={(e) => setRentedCategoryName(e.target.value)}
+                    >
+                      <option value="all">Tüm kategoriler</option>
+                      {rentedCategoryOptions.map((name) => (
+                        <option key={name} value={name}>{name}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="w-full lg:w-56 flex gap-2">
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-text-secondary mb-1">Kirada (min)</label>
+                      <input
+                        type="number"
+                        className="input w-full"
+                        min={0}
+                        value={rentedMinQty === '' ? '' : rentedMinQty}
+                        onChange={(e) => setRentedMinQty(e.target.value === '' ? '' : Number(e.target.value))}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="block text-xs font-medium text-text-secondary mb-1">Kirada (max)</label>
+                      <input
+                        type="number"
+                        className="input w-full"
+                        min={0}
+                        value={rentedMaxQty === '' ? '' : rentedMaxQty}
+                        onChange={(e) => setRentedMaxQty(e.target.value === '' ? '' : Number(e.target.value))}
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+                  <div className="overflow-auto max-h-[320px]">
+                    <table className="w-full text-xs border-collapse">
+                      <thead className="sticky top-0 z-10 border-b border-background-border">
+                        <tr>
+                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
+                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kategori</th>
+                          <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kirada (Miktar)</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredRentedItems.map((r, idx) => (
+                          <tr key={r.ItemId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}>
+                            <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">{r.ItemName}</td>
+                            <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">{r.CategoryName || '-'}</td>
+                            <td className="py-0.5 px-2 text-center align-middle"><span className="font-medium text-orange-400">{r.Quantity.toLocaleString('tr-TR')}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary shrink-0">
+                    Toplam: {filteredRentedItems.length} çeşit kirada
+                  </div>
+                  {filteredRentedItems.length === 0 && (
+                    <div className="text-text-secondary text-center py-4 text-sm">Arama kriterlerine uygun kirada ürün yok.</div>
+                  )}
+                </div>
+              </>
+            )}
+          </>
+        )}
+
+        {activeTab === 'stock' && (
+        <>
         <div className="flex flex-col gap-4">
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
             <div>
@@ -173,18 +405,19 @@ export default function WarehouseDetailPage() {
                 Aşağıdaki arama ve filtreleri kullanarak malzemeleri hızlıca daraltabilirsiniz.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setSearchText('');
-                setSelectedCategoryId('all');
-                setMinQuantity('');
-                setMaxQuantity('');
-              }}
-              className="btn-secondary"
-            >
-              Filtreleri Sıfırla
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchText('');
+                  setSelectedCategoryId('all');
+                  setSelectedSubCategoryId('all');
+                  setMinQuantity('');
+                  setMaxQuantity('');
+                }}
+                className="btn-secondary"
+              >
+                Filtreleri Sıfırla
+              </button>
           </div>
 
           <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
@@ -195,8 +428,8 @@ export default function WarehouseDetailPage() {
               </label>
               <div className="flex gap-2">
                 <div className="relative flex-1">
-                  <span className="absolute inset-y-0 left-3 flex items-center text-text-secondary text-sm">
-                    🔍
+                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-secondary">
+                    <MagnifyingGlassIcon size={18} weight="regular" color="currentColor" aria-hidden />
                   </span>
                   <input
                     type="text"
@@ -218,26 +451,49 @@ export default function WarehouseDetailPage() {
               </div>
             </div>
 
-            {/* Category filter */}
-            <div className="w-full lg:w-64">
-              <label className="block text-xs font-medium text-text-secondary mb-1">
-                Kategori
-              </label>
-              <select
-                className="input w-full"
-                value={selectedCategoryId === 'all' ? 'all' : String(selectedCategoryId)}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setSelectedCategoryId(value === 'all' ? 'all' : Number(value));
-                }}
-              >
-                <option value="all">Tüm kategoriler</option>
-                {categoryOptions.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
+            {/* Category & Subcategory filters */}
+            <div className="w-full lg:w-64 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">
+                  Kategori
+                </label>
+                <select
+                  className="input w-full"
+                  value={selectedCategoryId === 'all' ? 'all' : String(selectedCategoryId)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSelectedCategoryId(value === 'all' ? 'all' : Number(value));
+                  }}
+                >
+                  <option value="all">Tüm kategoriler</option>
+                  {categoryOptions.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">
+                  Alt Kategori
+                </label>
+                <select
+                  className="input w-full"
+                  value={selectedSubCategoryId === 'all' ? 'all' : String(selectedSubCategoryId)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSelectedSubCategoryId(value === 'all' ? 'all' : Number(value));
+                  }}
+                >
+                  <option value="all">Tüm alt kategoriler</option>
+                  {subCategoryOptions.map((sc) => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Quantity filter */}
@@ -276,41 +532,87 @@ export default function WarehouseDetailPage() {
           </div>
         </div>
 
-        {loadingStock && (
+        {activeTab === 'stock' && loadingStock && (
           <div className="text-text-secondary text-sm">Depo stokları güncelleniyor...</div>
         )}
 
-        {filteredStock.length === 0 ? (
+        {activeTab === 'stock' && (filteredStock.length === 0 ? (
           <div className="text-text-secondary text-center py-6">
             {stock.length === 0
               ? 'Bu depoda henüz malzeme bulunmuyor.'
               : 'Arama kriterlerinize uygun malzeme bulunamadı.'}
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-background-border">
-                  <th className="text-left p-3 font-medium text-text-secondary">Malzeme</th>
-                  <th className="text-left p-3 font-medium text-text-secondary">Kategori</th>
-                  <th className="text-center p-3 font-medium text-text-secondary">Miktar</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredStock.map((s) => (
-                  <tr key={s.StockId} className="border-b border-background-border/50 hover:bg-background-hover">
-                    <td className="p-3 font-medium">{s.ItemName}</td>
-                    <td className="p-3 text-text-secondary">{s.CategoryName || '-'}</td>
-                    <td className="p-3 text-center">
-                      <span className="font-bold text-green-500">
-                        {s.Quantity.toLocaleString('tr-TR')}
-                      </span>
-                    </td>
+          <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+            <div className="overflow-auto max-h-[calc(100vh-380px)] min-h-[240px]">
+              <table className="w-full text-xs border-collapse">
+                <thead className="sticky top-0 z-10 border-b border-background-border">
+                  <tr>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                      Malzeme
+                    </th>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                      Kategori
+                    </th>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                      Alt Kategoriler
+                    </th>
+                    <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">
+                      Miktar
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {filteredStock.map((s, idx) => {
+                    const inv = allInventory.find((i) => i.ItemId === s.ItemId);
+                    const subCats = inv?.SubCategories ?? [];
+                    return (
+                      <tr
+                        key={s.StockId}
+                        className={`border-b border-background-border hover:bg-background-hover ${
+                          idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
+                        }`}
+                      >
+                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">
+                          {s.ItemName}
+                        </td>
+                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">
+                          {s.CategoryName || '-'}
+                        </td>
+                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60">
+                          {subCats.length === 0 ? (
+                            <span className="text-text-secondary">-</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {subCats.map((sc) => (
+                                <span
+                                  key={sc.SubCategoryId}
+                                  className="inline-flex items-center rounded-full bg-purple-600/20 text-purple-200 px-2 py-0.5 text-[10px]"
+                                >
+                                  {sc.SubCategoryName}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-0.5 px-2 text-center align-middle">
+                          <span className="font-medium text-green-500">
+                            {s.Quantity.toLocaleString('tr-TR')}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+              <span>Toplam: {filteredStock.length} çeşit malzeme</span>
+              <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür</span>
+            </div>
           </div>
+        ))}
+        </>
         )}
       </div>
     </div>

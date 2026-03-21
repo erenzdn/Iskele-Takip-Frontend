@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { authService } from '../services/authService';
+import { getUserFacingErrorMessage } from '../utils/apiError';
+import { firstValidationError, normalizeText, validateRequired } from '../utils/validation';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -18,14 +20,12 @@ export default function LoginPage() {
     setIsBusy(true);
 
     // Validation
-    if (!username || !username.trim()) {
-      setErrorMessage('Kullanıcı adı boş olamaz');
-      setIsBusy(false);
-      return;
-    }
-    
-    if (!password || !password.trim()) {
-      setErrorMessage('Şifre boş olamaz');
+    const validationError = firstValidationError([
+      validateRequired(username, 'Kullanıcı adı'),
+      validateRequired(password, 'Şifre'),
+    ]);
+    if (validationError) {
+      setErrorMessage(validationError);
       setIsBusy(false);
       return;
     }
@@ -33,8 +33,8 @@ export default function LoginPage() {
     try {
       console.log('[LOGIN] Giriş denemesi:', { username, password: '***' });
       const response = await authService.loginAsync({ 
-        username: username.trim(), 
-        password: password.trim() 
+        username: normalizeText(username),
+        password: normalizeText(password)
       });
       console.log('[LOGIN] Başarılı, response:', response);
       
@@ -55,23 +55,13 @@ export default function LoginPage() {
         } else if (error.message.includes('404')) {
           errorMsg = 'API endpoint bulunamadı. Backend\'in çalıştığından emin olun.';
         } else if (error.message.includes('Network Error') || error.message.includes('Failed to fetch')) {
-          errorMsg = 'Backend API\'ye bağlanılamıyor. Backend\'in http://localhost:3000 adresinde çalıştığından emin olun.';
+          errorMsg = `Backend API'ye bağlanılamıyor. Backend'in ${import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'} adresinde çalıştığından emin olun.`;
         } else {
           errorMsg = error.message;
         }
       }
       
-      // Backend'den gelen detaylı hata mesajını göster
-      if ((error as any)?.responseText) {
-        try {
-          const errorData = JSON.parse((error as any).responseText);
-          if (errorData.message) {
-            errorMsg = errorData.message;
-          }
-        } catch {
-          // JSON parse edilemezse olduğu gibi göster
-        }
-      }
+      errorMsg = getUserFacingErrorMessage(error, errorMsg);
       
       setErrorMessage(errorMsg);
     } finally {

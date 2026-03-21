@@ -1,8 +1,21 @@
 import { useState, useEffect } from 'react';
+import { HardHatIcon, MapPinIcon, UserIcon } from '@phosphor-icons/react';
 import { AuditLog, Customer, ConstructionSite } from '../../models';
 import { customerService } from '../../services/customerService';
 import { siteService } from '../../services/siteService';
+import { getUserFacingErrorMessage } from '../../utils/apiError';
+import {
+  firstValidationError,
+  normalizeNumericText,
+  normalizeText,
+  validateEmail,
+  validateName,
+  validatePhone,
+  validateRequired,
+  validateTaxNumber,
+} from '../../utils/validation';
 import AuditLogTimeline from '../AuditLogTimeline';
+import ConfirmModal from './ConfirmModal';
 
 interface CustomerDetailModalProps {
   customer: Customer | null;
@@ -51,6 +64,9 @@ export default function CustomerDetailModal({
   const [siteAddress, setSiteAddress] = useState('');
   const [responsiblePerson, setResponsiblePerson] = useState('');
   const [responsiblePhone, setResponsiblePhone] = useState('');
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteSiteConfirm, setShowDeleteSiteConfirm] = useState(false);
+  const [siteToDelete, setSiteToDelete] = useState<ConstructionSite | null>(null);
 
   useEffect(() => {
     if (customer) {
@@ -106,26 +122,31 @@ export default function CustomerDetailModal({
   }, [customer?.CustomerId, isNew]);
 
   const handleSave = async () => {
-    if (!name.trim()) {
-      alert('Müşteri adı zorunludur');
-      return;
-    }
-    if (!taxOffice.trim()) {
-      alert('Vergi dairesi zorunludur');
+    const validationError = firstValidationError([
+      validateName(name, 'Müşteri Adı', true),
+      validateRequired(taxOffice, 'Vergi dairesi'),
+      validateTaxNumber(taxId, 'Vergi numarası'),
+      validatePhone(phoneNumber, 'Telefon numarası'),
+      validateEmail(email, 'E-posta adresi'),
+      validateName(centerAuthorizedPerson, 'Merkez yetkili kişi'),
+      validatePhone(centerAuthorizedPhone, 'Merkez yetkili telefon'),
+    ]);
+    if (validationError) {
+      alert(validationError);
       return;
     }
 
     try {
       setIsBusy(true);
       const payload = {
-        Name: name,
-        TaxId: taxId || undefined,
-        TaxOffice: taxOffice || undefined,
-        PhoneNumber: phoneNumber || undefined,
-        Email: email || undefined,
-        Address: address || undefined,
-        CenterAuthorizedPerson: centerAuthorizedPerson || undefined,
-        CenterAuthorizedPhone: centerAuthorizedPhone || undefined,
+        Name: normalizeText(name),
+        TaxId: normalizeNumericText(taxId) || undefined,
+        TaxOffice: normalizeText(taxOffice) || undefined,
+        PhoneNumber: normalizeNumericText(phoneNumber) || undefined,
+        Email: normalizeText(email) || undefined,
+        Address: normalizeText(address) || undefined,
+        CenterAuthorizedPerson: normalizeText(centerAuthorizedPerson) || undefined,
+        CenterAuthorizedPhone: normalizeNumericText(centerAuthorizedPhone) || undefined,
       };
       if (isNew) {
         await customerService.createAsync(payload);
@@ -138,21 +159,24 @@ export default function CustomerDetailModal({
       if (error?.status === 409) {
         alert('Bu bilgilerle kayıtlı başka bir müşteri zaten mevcut. Lütfen benzersiz değerler girin (Ad, Vergi No, Telefon veya Merkez Yetkili Telefon).');
       } else {
-        alert('Kaydetme hatası');
+        alert(getUserFacingErrorMessage(error, 'Kaydetme hatası'));
       }
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handleDelete = async () => {
-    if (!customer || !confirm('Bu müşteriyi silmek istediğinizden emin misiniz?')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!customer) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!customer) return;
     try {
       setIsBusy(true);
       await customerService.deleteAsync(customer.CustomerId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete customer error:', error);
@@ -221,14 +245,18 @@ export default function CustomerDetailModal({
     }
   };
 
-  const handleDeleteSite = async (site: ConstructionSite) => {
-    if (!confirm(`"${site.SiteName}" şantiyesini silmek istediğinizden emin misiniz?`)) {
-      return;
-    }
+  const handleDeleteSiteClick = (site: ConstructionSite) => {
+    setSiteToDelete(site);
+    setShowDeleteSiteConfirm(true);
+  };
 
+  const handleDeleteSiteConfirm = async () => {
+    if (!siteToDelete) return;
     try {
       setIsBusy(true);
-      await siteService.deleteAsync(site.SiteId);
+      await siteService.deleteAsync(siteToDelete.SiteId);
+      setShowDeleteSiteConfirm(false);
+      setSiteToDelete(null);
       loadSites();
     } catch (error) {
       console.error('Delete site error:', error);
@@ -416,7 +444,7 @@ export default function CustomerDetailModal({
                 <>
                   {!isNew && customer && (
                     <button
-                      onClick={handleDelete}
+                      onClick={handleDeleteClick}
                       disabled={isBusy}
                       className="btn-danger flex-1"
                     >
@@ -539,7 +567,7 @@ export default function CustomerDetailModal({
               <div className="text-center text-text-secondary py-8">Yükleniyor...</div>
             ) : sites.length === 0 ? (
               <div className="text-center py-8">
-                <div className="text-4xl mb-2">🏗️</div>
+                <div className="mb-2 text-text-secondary [&_svg]:size-12"><HardHatIcon size={48} weight="duotone" /></div>
                 <div className="text-text-secondary">Henüz şantiye eklenmemiş</div>
               </div>
             ) : (
@@ -553,13 +581,13 @@ export default function CustomerDetailModal({
                       <div className="flex-1">
                         <div className="font-semibold text-lg">{site.SiteName}</div>
                         {site.SiteAddress && (
-                          <div className="text-sm text-text-secondary mt-1">
-                            📍 {site.SiteAddress}
+                          <div className="text-sm text-text-secondary mt-1 inline-flex items-center gap-1">
+                            <MapPinIcon size={14} weight="regular" className="shrink-0" aria-hidden /> {site.SiteAddress}
                           </div>
                         )}
                         {site.ResponsiblePerson && (
-                          <div className="text-sm text-text-secondary mt-1">
-                            👤 {site.ResponsiblePerson}
+                          <div className="text-sm text-text-secondary mt-1 inline-flex items-center gap-1">
+                            <UserIcon size={14} weight="regular" className="shrink-0" aria-hidden /> {site.ResponsiblePerson}
                             {site.ResponsiblePhone && ` - ${site.ResponsiblePhone}`}
                           </div>
                         )}
@@ -572,7 +600,7 @@ export default function CustomerDetailModal({
                           Düzenle
                         </button>
                         <button
-                          onClick={() => handleDeleteSite(site)}
+                          onClick={() => handleDeleteSiteClick(site)}
                           className="btn-danger text-sm px-3 py-1"
                         >
                           Sil
@@ -592,6 +620,24 @@ export default function CustomerDetailModal({
           </div>
         )}
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu müşteriyi silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+      <ConfirmModal
+        open={showDeleteSiteConfirm}
+        title="Onaylıyor musunuz?"
+        message={siteToDelete ? `"${siteToDelete.SiteName}" şantiyesini silmek istediğinizden emin misiniz?` : ''}
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteSiteConfirm}
+        onCancel={() => { setShowDeleteSiteConfirm(false); setSiteToDelete(null); }}
+      />
     </div>
   );
 }

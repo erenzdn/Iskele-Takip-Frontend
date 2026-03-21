@@ -3,6 +3,7 @@ import { User, PermissionCategory } from '../../models';
 import { userService } from '../../services/userService';
 import { permissionService } from '../../services/permissionService';
 import { useAuthStore } from '../../store/authStore';
+import ConfirmModal from './ConfirmModal';
 
 interface UserDetailModalProps {
   user: User | null;
@@ -27,6 +28,7 @@ export default function UserDetailModal({
   const [permissionCategories, setPermissionCategories] = useState<PermissionCategory[]>([]);
   const [permissionsLoading, setPermissionsLoading] = useState(true);
   const [permissionsError, setPermissionsError] = useState<string | null>(null);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     loadPermissions();
@@ -173,22 +175,21 @@ export default function UserDetailModal({
     }
   };
 
-  const handleDelete = async () => {
+  const handleDeleteClick = () => {
     if (!user) return;
-
-    // Kendi hesabını silme kontrolü
     if (currentUser && currentUser.UserId === user.UserId) {
       alert('Kendi hesabınızı silemezsiniz');
       return;
     }
+    setShowDeleteConfirm(true);
+  };
 
-    if (!confirm('Bu kullanıcıyı silmek istediğinizden emin misiniz?')) {
-      return;
-    }
-
+  const handleDeleteConfirm = async () => {
+    if (!user) return;
     try {
       setIsBusy(true);
       await userService.deleteAsync(user.UserId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete user error:', error);
@@ -434,7 +435,7 @@ export default function UserDetailModal({
             <>
               {!isNew && user && (
                 <button
-                  onClick={handleDelete}
+                  onClick={handleDeleteClick}
                   disabled={isBusy}
                   className="btn-danger flex-1"
                 >
@@ -460,6 +461,15 @@ export default function UserDetailModal({
           )}
         </div>
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu kullanıcıyı silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

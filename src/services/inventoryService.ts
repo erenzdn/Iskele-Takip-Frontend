@@ -14,23 +14,27 @@ export interface CreateCategoryResponse {
 
 export interface CreateInventoryRequest {
   ItemCode?: string;
-  CategoryId: number;
+  CategoryIds?: number[];
   ItemName: string;
   TotalStock: number;
   OnRent: number;
   MonthlyListPrice?: number;
   UnitPrice?: number;
+  MonthlyListPriceEur?: number;
+  UnitPriceEur?: number;
   SubCategoryIds?: number[];
 }
 
 export interface UpdateInventoryRequest {
   ItemCode?: string;
-  CategoryId?: number;
+  CategoryIds?: number[];
   ItemName?: string;
   TotalStock?: number;
   OnRent?: number;
   MonthlyListPrice?: number;
   UnitPrice?: number;
+  MonthlyListPriceEur?: number;
+  UnitPriceEur?: number;
   SubCategoryIds?: number[];
 }
 
@@ -72,7 +76,9 @@ export const inventoryService = {
   async getByCategoryAsync(categoryId: number): Promise<Inventory[]> {
     // API'de by-category endpoint yok, tüm envanteri alıp filtreliyoruz
     const allInventory = await apiClient.get<Inventory[]>('/inventory');
-    return allInventory.filter((item) => item.CategoryId === categoryId);
+    return allInventory.filter((item) =>
+      item.Categories?.some((c) => c.CategoryId === categoryId)
+    );
   },
 
   async createAsync(data: CreateInventoryRequest): Promise<CreateInventoryResponse> {

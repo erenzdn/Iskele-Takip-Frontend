@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { ScrollIcon } from '@phosphor-icons/react';
 import { auditLogService, AuditLogsParams } from '../services/auditLogService';
 import { userService } from '../services/userService';
 import { AuditLog, AuditAction, User } from '../models';
@@ -158,12 +159,12 @@ export default function AuditLogsPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-6">
-        <h1 className="text-3xl font-bold mb-2">Audit Logları</h1>
-        <p className="text-text-secondary">Sistemdeki kullanıcı işlemlerini inceleyin</p>
+      <div className="mb-3 flex items-center justify-between">
+        <h1 className="text-xl font-semibold text-text-primary">Audit Logları</h1>
+        <button onClick={loadLogs} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
       </div>
 
-      <div className="card p-4 mb-6">
+      <div className="card p-4 mb-3">
         <h2 className="font-semibold mb-3">Filtreler</h2>
 
         <div className="mb-4">
@@ -278,66 +279,53 @@ export default function AuditLogsPage() {
         </div>
       ) : logs.length === 0 ? (
         <EmptyState
-          icon="📋"
+          icon={<ScrollIcon size={48} weight="duotone" />}
           title="Kayıt bulunamadı"
           description="Seçilen filtrelere uygun audit log kaydı yok"
         />
       ) : (
-        <div className="card overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-background-border bg-background-hover">
-                  <th className="text-left p-4 font-semibold">Tarih</th>
-                  <th className="text-left p-4 font-semibold">Kullanıcı</th>
-                  <th className="text-left p-4 font-semibold">Tablo</th>
-                  <th className="text-left p-4 font-semibold">Kayıt ID</th>
-                  <th className="text-left p-4 font-semibold">İşlem</th>
-                  <th className="text-left p-4 font-semibold">Özet</th>
+        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+          <div className="overflow-auto max-h-[calc(100vh-420px)] min-h-[280px]">
+            <table className="w-full text-xs border-collapse">
+              <thead className="sticky top-0 z-10 border-b border-background-border">
+                <tr>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tarih</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kullanıcı</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tablo</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kayıt ID</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">İşlem</th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Özet</th>
                 </tr>
               </thead>
               <tbody>
-                {logs.map((log) => (
+                {logs.map((log, index) => (
                   <tr
                     key={log.LogId}
-                    className="border-b border-background-border hover:bg-background-hover"
+                    className={`border-b border-background-border hover:bg-background-hover ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
                   >
-                    <td className="p-4 text-sm text-text-secondary whitespace-nowrap">
-                      {formatDateTime(log.Timestamp)}
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary whitespace-nowrap">{formatDateTime(log.Timestamp)}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className="font-medium text-text-primary">{log.UserFullName || log.UserName || `#${log.UserId}`}</span>
+                      {log.UserName && log.UserFullName && <span className="text-text-secondary ml-1">({log.UserName})</span>}
                     </td>
-                    <td className="p-4">
-                      <div className="font-medium">
-                        {log.UserFullName || log.UserName || `#${log.UserId}`}
-                      </div>
-                      {log.UserName && log.UserFullName && (
-                        <div className="text-sm text-text-secondary">{log.UserName}</div>
-                      )}
-                    </td>
-                    <td className="p-4">{log.TableName}</td>
-                    <td className="p-4">{log.RecordId}</td>
-                    <td className="p-4">
-                      <span
-                        className={`badge ${
-                          log.Action === AuditAction.Create
-                            ? 'bg-green-600 text-white'
-                            : log.Action === AuditAction.Update
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-red-600 text-white'
-                        }`}
-                      >
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{log.TableName}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{log.RecordId}</td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${log.Action === AuditAction.Create ? 'bg-green-600 text-white' : log.Action === AuditAction.Update ? 'bg-blue-600 text-white' : 'bg-red-600 text-white'}`}>
                         {ACTION_LABELS[log.Action as AuditAction] ?? log.Action}
                       </span>
                     </td>
-                    <td
-                      className="p-4 text-sm text-text-secondary max-w-xs truncate"
-                      title={log.ChangedColumns ?? undefined}
-                    >
+                    <td className="py-0.5 px-2 align-middle text-text-secondary max-w-xs truncate" title={log.ChangedColumns ?? undefined}>
                       {buildAuditLogSummary(log.ChangedColumns, log.Action)}
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          </div>
+          <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
+            <span>Toplam: {logs.length} kayıt</span>
+            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
       )}

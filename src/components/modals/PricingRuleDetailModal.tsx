@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { PricingRule, PricingRuleType } from '../../models';
 import { pricingRulesService } from '../../services/pricingRulesService';
+import ConfirmModal from './ConfirmModal';
 
 interface PricingRuleTypeItem {
   Type: PricingRuleType;
@@ -56,6 +57,7 @@ export default function PricingRuleDetailModal({
   const [description, setDescription] = useState('');
   const [isActive, setIsActive] = useState(true);
   const [isBusy, setIsBusy] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
     if (rule) {
@@ -136,14 +138,17 @@ export default function PricingRuleDetailModal({
     }
   };
 
-  const handleDelete = async () => {
-    if (!rule || !confirm('Bu kuralı silmek istediğinizden emin misiniz?')) {
-      return;
-    }
+  const handleDeleteClick = () => {
+    if (!rule) return;
+    setShowDeleteConfirm(true);
+  };
 
+  const handleDeleteConfirm = async () => {
+    if (!rule) return;
     try {
       setIsBusy(true);
       await pricingRulesService.deleteAsync(rule.RuleId);
+      setShowDeleteConfirm(false);
       onClose();
     } catch (error) {
       console.error('Delete pricing rule error:', error);
@@ -281,7 +286,7 @@ export default function PricingRuleDetailModal({
         <div className="flex gap-3 mt-6">
           {!isNew && rule && (
             <button
-              onClick={handleDelete}
+              onClick={handleDeleteClick}
               disabled={isBusy}
               className="btn-danger flex-1"
             >
@@ -300,6 +305,15 @@ export default function PricingRuleDetailModal({
           </button>
         </div>
       </div>
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Onaylıyor musunuz?"
+        message="Bu kuralı silmek istediğinizden emin misiniz?"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
     </div>
   );
 }

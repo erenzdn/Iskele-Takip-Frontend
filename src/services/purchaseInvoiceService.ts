@@ -9,6 +9,14 @@ export interface CreatePurchaseInvoiceRequest {
   Subtotal: number;
   VatAmount: number;
   TotalAmount: number;
+  Iskonto?: number;
+  VatRate?: number;
+  DocumentNo?: string;
+  ItemId?: number;
+  WarehouseId?: number;
+  Quantity?: number;
+  Currency?: string;
+  ExchangeRate?: number;
 }
 
 export interface UpdatePurchaseInvoiceRequest {
@@ -19,6 +27,14 @@ export interface UpdatePurchaseInvoiceRequest {
   Subtotal?: number;
   VatAmount?: number;
   TotalAmount?: number;
+  Iskonto?: number;
+  VatRate?: number;
+  DocumentNo?: string;
+  ItemId?: number;
+  WarehouseId?: number;
+  Quantity?: number;
+  Currency?: string;
+  ExchangeRate?: number;
 }
 
 export interface CreatePurchaseInvoiceResponse {
@@ -42,6 +58,9 @@ export const purchaseInvoiceService = {
       (inv) =>
         (inv.CustomerName?.toLowerCase().includes(search) ?? false) ||
         (inv.Description?.toLowerCase().includes(search) ?? false) ||
+        (inv.DocumentNo?.toLowerCase().includes(search) ?? false) ||
+        (inv.ItemName?.toLowerCase().includes(search) ?? false) ||
+        (inv.WarehouseName?.toLowerCase().includes(search) ?? false) ||
         inv.InvoiceId.toString().includes(search)
     );
   },
