@@ -13,7 +13,8 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: 5175,
+    strictPort: true,
   },
   base: './',
   optimizeDeps: {

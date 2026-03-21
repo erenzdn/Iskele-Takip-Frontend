@@ -21,6 +21,7 @@ export default function InventoryPage() {
   const [searchText, setSearchText] = useState('');
   const [minAvailable, setMinAvailable] = useState<number | ''>('');
   const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
+  const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
 
   useEffect(() => {
     loadData();
@@ -86,6 +87,8 @@ export default function InventoryPage() {
     return `€${amount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
+  const letters = 'ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ'.split('');
+
   const filteredInventory = allInventory.filter((item) => {
     const text = searchText.trim().toLowerCase();
     const name = item.ItemName?.toLowerCase() ?? '';
@@ -96,6 +99,10 @@ export default function InventoryPage() {
     const matchesText =
       !text || name.includes(text) || categoryNames.includes(text) || itemCode.includes(text);
 
+    const matchesLetter =
+      !selectedLetter ||
+      item.ItemName?.toLocaleUpperCase('tr-TR').startsWith(selectedLetter.toLocaleUpperCase('tr-TR'));
+
     const matchesCategory =
       !selectedCategory ||
       item.Categories?.some((c) => c.CategoryId === selectedCategory.CategoryId);
@@ -104,7 +111,7 @@ export default function InventoryPage() {
     const matchesMin = minAvailable === '' || availableStock >= minAvailable;
     const matchesMax = maxAvailable === '' || availableStock <= maxAvailable;
 
-    return matchesText && matchesCategory && matchesMin && matchesMax;
+    return matchesText && matchesCategory && matchesMin && matchesMax && matchesLetter;
   });
 
   if (loading) {
@@ -129,6 +136,66 @@ export default function InventoryPage() {
           <button onClick={handleAddNewItem} className="btn-primary py-2 px-3 text-sm">
             + Yeni Malzeme
           </button>
+        </div>
+      </div>
+
+      <div className="mb-3 rounded-panel border border-background-border bg-gradient-to-r from-[#111827] via-[#020617] to-[#111827] px-3 py-2 shadow-sm">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.16em] text-text-secondary/70">
+              Harfe göre filtrele
+            </div>
+            <div className="text-[11px] text-text-secondary/60">
+              Malzeme adının ilk harfine göre hızlı seçim
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedLetter(null)}
+              className={`px-2.5 py-1.5 text-[11px] rounded-full border transition-all duration-150 shadow-sm ${
+                selectedLetter == null
+                  ? 'bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(0,0,0,0.6)]'
+                  : 'bg-transparent text-text-secondary border-background-border hover:border-accent/70 hover:text-text-primary'
+              }`}
+            >
+              Tümü
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedLetter(null);
+                setSearchText('');
+                setSelectedCategory(null);
+                setMinAvailable('');
+                setMaxAvailable('');
+                loadData();
+              }}
+              className="px-2.5 py-1.5 text-[11px] rounded-full border border-background-border/80 text-text-secondary/80 hover:border-accent/70 hover:text-text-primary hover:bg-background-hover/40 transition-all duration-150"
+            >
+              Filtreleri Temizle
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {letters.map((letter) => {
+            const isActive = selectedLetter === letter;
+            return (
+              <button
+                key={letter}
+                type="button"
+                onClick={() => setSelectedLetter(letter)}
+                className={`w-7 h-7 flex items-center justify-center text-[11px] rounded-full border transition-all duration-150 ${
+                  isActive
+                    ? 'bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(0,0,0,0.7)] scale-105'
+                    : 'bg-[#020617] text-text-secondary/80 border-background-border hover:border-accent/60 hover:text-text-primary hover:bg-background-hover/40'
+                }`}
+              >
+                {letter}
+              </button>
+            );
+          })}
         </div>
       </div>
 
@@ -253,7 +320,7 @@ export default function InventoryPage() {
                       </td>
                       <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
                         <span className="font-medium text-text-primary">{item.ItemName}</span>
-                        <span className="text-text-secondary ml-1">Birim: {item.UnitPrice ? formatCurrency(item.UnitPrice) : formatCurrency(item.PurchasePrice)}</span>
+                        <span className="text-text-secondary ml-1">Birim: {item.UnitPrice != null ? formatCurrency(item.UnitPrice) : formatCurrency(item.PurchasePrice ?? 0)}</span>
                       </td>
                       <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
                         {item.Categories?.length ? (
@@ -271,17 +338,17 @@ export default function InventoryPage() {
                       <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
                         <span className={availableStock > 0 ? 'text-green-500 font-medium' : 'text-red-500 font-medium'}>{availableStock}</span>
                       </td>
-                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-green-500">
-                        {item.MonthlyListPrice ? formatCurrency(item.MonthlyListPrice) : '-'}
+                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-green-500 tabular-nums">
+                        {item.MonthlyListPrice != null ? formatCurrency(item.MonthlyListPrice) : '-'}
                       </td>
-                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary">
-                        {item.MonthlyListPrice ? formatCurrency(item.MonthlyListPrice / 30) : item.DailyPrice ? formatCurrency(item.DailyPrice) : '-'}
+                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary tabular-nums">
+                        {item.MonthlyListPrice != null ? formatCurrency(item.MonthlyListPrice / 30) : item.DailyPrice != null ? formatCurrency(item.DailyPrice) : '-'}
                       </td>
-                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-blue-300">
-                        {item.MonthlyListPriceEur ? formatEur(item.MonthlyListPriceEur) : '-'}
+                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-blue-300 tabular-nums">
+                        {item.MonthlyListPriceEur != null ? formatEur(item.MonthlyListPriceEur) : '-'}
                       </td>
-                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-blue-300">
-                        {item.UnitPriceEur ? formatEur(item.UnitPriceEur) : '-'}
+                      <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-blue-300 tabular-nums">
+                        {item.UnitPriceEur != null ? formatEur(item.UnitPriceEur) : '-'}
                       </td>
                       <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
                         {item.SubCategories?.length ? item.SubCategories.map((sc) => (
@@ -289,7 +356,7 @@ export default function InventoryPage() {
                         )) : <span className="text-text-secondary">-</span>}
                       </td>
                       <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{statusBadge}</td>
-                      <td className="py-0.5 px-2 align-middle text-text-secondary">
+                      <td className="py-0.5 px-2 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">
                         {item.CreatedByUserFullName || item.CreatedByUserName || '-'} • {formatShortDateTime(item.CreatedAt)}
                       </td>
                     </tr>

@@ -38,3 +38,23 @@ export function getApiErrorMessage(error: unknown): string {
 
   return msg || 'Beklenmeyen hata';
 }
+
+export function getUserFacingErrorMessage(error: unknown, fallback: string): string {
+  const raw = getApiErrorMessage(error);
+  if (!raw) return fallback;
+
+  if (raw.includes('Failed to fetch') || raw.includes('Network Error')) {
+    return 'Sunucuya bağlanılamadı. İnternet bağlantınızı ve API servisinin çalıştığını kontrol edin.';
+  }
+  if (raw.includes('401') || raw.includes('Unauthorized')) {
+    return 'Yetkilendirme hatası. Lütfen tekrar giriş yapın.';
+  }
+  if (raw.includes('403')) {
+    return 'Bu işlem için yetkiniz bulunmuyor.';
+  }
+  if (raw.includes('404')) {
+    return 'İlgili kayıt veya servis bulunamadı.';
+  }
+
+  return raw;
+}

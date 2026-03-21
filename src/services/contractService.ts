@@ -18,6 +18,7 @@ export interface CreateContractRequest {
   IsCompleted: boolean;
   Iskonto?: number;  // yüzde
   VatRate?: number;  // yüzde
+  Currency?: 'TRY' | 'EUR';
   /** Opsiyonel. Bir kalemde WarehouseId yoksa bu depo kullanılır; depo stoğu düşümü için her detayda WarehouseId veya bu alan gerekir. */
   defaultWarehouseId?: number;
   details: CreateContractDetailRequest[];
@@ -28,6 +29,7 @@ export interface UpdateContractRequest {
   SiteId?: number;
   Iskonto?: number;
   VatRate?: number;
+  Currency?: 'TRY' | 'EUR';
   IsCompleted?: boolean;
 }
 
@@ -109,6 +111,10 @@ export const contractService = {
       templateId,
       format,
     });
+  },
+
+  async previewDocumentAsync(contractId: number, templateId: number): Promise<Blob> {
+    return apiClient.postBlob(`/contracts/${contractId}/preview-document`, { templateId });
   },
 
   async getAuditLogsByContractAsync(contractId: number): Promise<AuditLog[]> {

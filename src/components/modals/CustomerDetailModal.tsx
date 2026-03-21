@@ -3,6 +3,17 @@ import { HardHatIcon, MapPinIcon, UserIcon } from '@phosphor-icons/react';
 import { AuditLog, Customer, ConstructionSite } from '../../models';
 import { customerService } from '../../services/customerService';
 import { siteService } from '../../services/siteService';
+import { getUserFacingErrorMessage } from '../../utils/apiError';
+import {
+  firstValidationError,
+  normalizeNumericText,
+  normalizeText,
+  validateEmail,
+  validateName,
+  validatePhone,
+  validateRequired,
+  validateTaxNumber,
+} from '../../utils/validation';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 
@@ -111,26 +122,31 @@ export default function CustomerDetailModal({
   }, [customer?.CustomerId, isNew]);
 
   const handleSave = async () => {
-    if (!name.trim()) {
-      alert('Müşteri adı zorunludur');
-      return;
-    }
-    if (!taxOffice.trim()) {
-      alert('Vergi dairesi zorunludur');
+    const validationError = firstValidationError([
+      validateName(name, 'Müşteri Adı', true),
+      validateRequired(taxOffice, 'Vergi dairesi'),
+      validateTaxNumber(taxId, 'Vergi numarası'),
+      validatePhone(phoneNumber, 'Telefon numarası'),
+      validateEmail(email, 'E-posta adresi'),
+      validateName(centerAuthorizedPerson, 'Merkez yetkili kişi'),
+      validatePhone(centerAuthorizedPhone, 'Merkez yetkili telefon'),
+    ]);
+    if (validationError) {
+      alert(validationError);
       return;
     }
 
     try {
       setIsBusy(true);
       const payload = {
-        Name: name,
-        TaxId: taxId || undefined,
-        TaxOffice: taxOffice || undefined,
-        PhoneNumber: phoneNumber || undefined,
-        Email: email || undefined,
-        Address: address || undefined,
-        CenterAuthorizedPerson: centerAuthorizedPerson || undefined,
-        CenterAuthorizedPhone: centerAuthorizedPhone || undefined,
+        Name: normalizeText(name),
+        TaxId: normalizeNumericText(taxId) || undefined,
+        TaxOffice: normalizeText(taxOffice) || undefined,
+        PhoneNumber: normalizeNumericText(phoneNumber) || undefined,
+        Email: normalizeText(email) || undefined,
+        Address: normalizeText(address) || undefined,
+        CenterAuthorizedPerson: normalizeText(centerAuthorizedPerson) || undefined,
+        CenterAuthorizedPhone: normalizeNumericText(centerAuthorizedPhone) || undefined,
       };
       if (isNew) {
         await customerService.createAsync(payload);
@@ -143,7 +159,7 @@ export default function CustomerDetailModal({
       if (error?.status === 409) {
         alert('Bu bilgilerle kayıtlı başka bir müşteri zaten mevcut. Lütfen benzersiz değerler girin (Ad, Vergi No, Telefon veya Merkez Yetkili Telefon).');
       } else {
-        alert('Kaydetme hatası');
+        alert(getUserFacingErrorMessage(error, 'Kaydetme hatası'));
       }
     } finally {
       setIsBusy(false);

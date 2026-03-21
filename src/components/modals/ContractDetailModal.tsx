@@ -1,6 +1,6 @@
 import { useState, useEffect, Fragment } from 'react';
 import { CheckIcon, ClipboardIcon, ClockIcon, XIcon } from '@phosphor-icons/react';
-import { AuditLog, Contract, Customer, Inventory, ContractDetailItem, ConstructionSite, ReturnItemResponse, ContractReturn, ContractPriceCalculation, ContractTemplate, Warehouse } from '../../models';
+import { AuditLog, Contract, Customer, Inventory, ContractLineItem, ConstructionSite, ReturnItemResponse, ContractReturn, ContractPriceCalculation, ContractTemplate, Warehouse } from '../../models';
 import { contractService } from '../../services/contractService';
 import { customerService } from '../../services/customerService';
 import { inventoryService } from '../../services/inventoryService';
@@ -13,7 +13,9 @@ import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage } from '../../utils/apiError';
+import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { useAuthStore } from '../../store/authStore';
+import ManualLineItemModal from './ManualLineItemModal';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -40,7 +42,7 @@ export default function ContractDetailModal({
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   );
   const [actualEndDate, setActualEndDate] = useState<string>('');
-  const [contractItems, setContractItems] = useState<ContractDetailItem[]>([]);
+  const [contractItems, setContractItems] = useState<ContractLineItem[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | ''>('');
   const [isBusy, setIsBusy] = useState(false);
@@ -78,12 +80,16 @@ export default function ContractDetailModal({
   const [itemIskonto, setItemIskonto] = useState<Record<string, number>>({});
   const [vatRate, setVatRate] = useState<number>(20);
   const [contractCode, setContractCode] = useState<string>('');
+  const [currency, setCurrency] = useState<'TRY' | 'EUR'>('TRY');
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
   const [lastAddedKeys, setLastAddedKeys] = useState<string[]>([]);
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [isAddingMaterialTable, setIsAddingMaterialTable] = useState(false);
+  const [showManualLineModal, setShowManualLineModal] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
 
   useEffect(() => {
@@ -185,12 +191,26 @@ export default function ContractDetailModal({
       setIskonto((source as { Iskonto?: number }).Iskonto ?? 0);
       setVatRate((source as { VatRate?: number }).VatRate ?? 20);
       setContractCode((source as { ContractCode?: string }).ContractCode ?? '');
+      setCurrency((source as { Currency?: string }).Currency === 'EUR' ? 'EUR' : 'TRY');
       // Backend GET /contracts/:id "details" döndürür, ContractDetails değil
       const details = (source as any).details ?? source.ContractDetails ?? [];
       if (details.length > 0) {
-        const items: ContractDetailItem[] = details.map((detail: any) => {
+        const items: ContractLineItem[] = details.map((detail: any) => {
+          const isManual = detail.IsManual === true || detail.is_manual === true || detail.IsManual === 1 || detail.is_manual === 1;
+          if (isManual) {
+            return {
+              kind: 'manual',
+              ClientId: `manual-${detail.DetailId ?? crypto.randomUUID()}`,
+              DetailId: detail.DetailId,
+              IsManual: true,
+              Description: String(detail.Description ?? detail.description ?? '').trim() || 'Manuel Kalem',
+              RentedQuantity: Number(detail.RentedQuantity ?? 1) || 1,
+              DailyPriceAtRent: Number(detail.DailyPriceAtRent ?? 0) || 0,
+            };
+          }
           const wh = warehouses.find((w) => w.WarehouseId === detail.WarehouseId);
           return {
+            kind: 'inventory',
             DetailId: detail.DetailId,
             ItemId: detail.ItemId,
             WarehouseId: detail.WarehouseId ?? 0,
@@ -206,7 +226,9 @@ export default function ContractDetailModal({
         const globalIsk = (source as { Iskonto?: number }).Iskonto ?? 0;
         setItemIskonto((prev) => {
           const next = { ...prev };
-          items.forEach((i) => (next[`${i.ItemId}-${i.WarehouseId}`] = globalIsk));
+          items.forEach((i) => {
+            if (i.kind === 'inventory') next[`${i.ItemId}-${i.WarehouseId}`] = globalIsk;
+          });
           return next;
         });
       } else {
@@ -257,6 +279,7 @@ export default function ContractDetailModal({
     setContractItems((prev) => {
       let changed = false;
       const next = prev.map((item) => {
+        if (item.kind === 'manual') return item;
         // Boş veya önceki denemeden "Bilinmiyor" kalanları doldur.
         if (item.ItemName && item.ItemName !== 'Bilinmiyor') return item;
         const inv = inventoryMap.get(item.ItemId);
@@ -299,10 +322,12 @@ export default function ContractDetailModal({
       )
     : 0;
 
-  const initialTotalPrice = contractItems.reduce(
-    (sum, item) => sum + item.DailyPriceAtRent * item.RentedQuantity * plannedDays,
-    0
-  );
+  const getLineTotal = (item: ContractLineItem) => {
+    if (item.kind === 'manual') return item.DailyPriceAtRent * item.RentedQuantity;
+    return item.DailyPriceAtRent * item.RentedQuantity * plannedDays;
+  };
+
+  const initialTotalPrice = contractItems.reduce((sum, item) => sum + getLineTotal(item), 0);
 
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getItemIskonto = (itemId: number, warehouseId: number) =>
@@ -311,8 +336,8 @@ export default function ContractDetailModal({
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = initialTotalPrice;
   const discountAmount = contractItems.reduce((sum, item) => {
-    const lineTotal = item.DailyPriceAtRent * item.RentedQuantity * plannedDays;
-    const pct = getItemIskonto(item.ItemId, item.WarehouseId);
+    const lineTotal = getLineTotal(item);
+    const pct = item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto;
     return sum + lineTotal * (pct / 100);
   }, 0);
   const discountedTotal = subtotal - discountAmount;
@@ -340,7 +365,7 @@ export default function ContractDetailModal({
     }
 
     const existingDetail = contractItems.find(
-      (i) => i.ItemId === itemId && i.WarehouseId === whId
+      (i) => i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === whId
     );
     const alreadyInContract = existingDetail?.RentedQuantity ?? 0;
     const effectiveAvailable = warehouseStock + (isNew ? 0 : alreadyInContract);
@@ -358,22 +383,27 @@ export default function ContractDetailModal({
     if (existingDetail) {
       setContractItems(
         contractItems.map((i) =>
-          i.ItemId === itemId && i.WarehouseId === whId
+          i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === whId
             ? { ...i, RentedQuantity: i.RentedQuantity + qty }
             : i
         )
       );
     } else {
+      const dailyPriceAtRent =
+        currency === 'EUR'
+          ? (item.MonthlyListPriceEur ?? 0) / 30
+          : (item.MonthlyListPrice || 0) / 30;
       setContractItems([
         ...contractItems,
         {
+          kind: 'inventory',
           DetailId: 0,
           ItemId: itemId,
           WarehouseId: whId,
           WarehouseName: wh?.WarehouseName ?? '',
           RentedQuantity: qty,
           ReturnedQuantity: 0,
-          DailyPriceAtRent: (item.MonthlyListPrice || 0) / 30,
+          DailyPriceAtRent: dailyPriceAtRent,
           Item: item,
           ItemName: item.ItemName,
         },
@@ -394,6 +424,7 @@ export default function ContractDetailModal({
     if (!isNew || contractItems.length === 0) return;
     const loadMissingStocks = async () => {
       for (const item of contractItems) {
+        if (item.kind !== 'inventory') continue;
         const cacheKey = `${item.ItemId}-${item.WarehouseId}`;
         if (warehouseStockCache[cacheKey] === undefined && item.WarehouseId) {
           try {
@@ -409,8 +440,12 @@ export default function ContractDetailModal({
 
   const handleRemoveItem = (itemId: number, warehouseId: number) => {
     setContractItems(
-      contractItems.filter((i) => !(i.ItemId === itemId && i.WarehouseId === warehouseId))
+      contractItems.filter((i) => !(i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId))
     );
+  };
+
+  const handleRemoveManualItem = (clientId: string) => {
+    setContractItems(contractItems.filter((i) => !(i.kind === 'manual' && i.ClientId === clientId)));
   };
 
   const fetchWarehouseStock = async (itemId: number, warehouseId: number): Promise<number> => {
@@ -444,7 +479,7 @@ export default function ContractDetailModal({
 
     setContractItems((prev) =>
       prev.map((i) =>
-        i.ItemId === itemId && i.WarehouseId === warehouseId
+        i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
           ? { ...i, RentedQuantity: qty }
           : i
       )
@@ -461,14 +496,27 @@ export default function ContractDetailModal({
     setIskonto(value);
     setItemIskonto((prev) => {
       const next = { ...prev };
-      contractItems.forEach((i) => (next[`${i.ItemId}-${i.WarehouseId}`] = value));
+      contractItems.forEach((i) => {
+        if (i.kind === 'inventory') next[`${i.ItemId}-${i.WarehouseId}`] = value;
+      });
       return next;
     });
   };
 
   const handleSave = async () => {
-    if (!selectedCustomerId || contractItems.length === 0) {
-      alert('Müşteri seçimi ve en az bir malzeme gereklidir');
+    const validationError = firstValidationError([
+      validateRequired(String(selectedCustomerId || ''), 'Müşteri'),
+      validateDate(startDate, 'Başlangıç tarihi', true),
+      validateDate(plannedEndDate, 'Planlanan bitiş tarihi', true),
+      validateNumber(iskonto, 'İskonto', { min: 0, max: 100 }),
+      validateNumber(vatRate, 'KDV', { min: 0, max: 100 }),
+    ]);
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+    if (contractItems.length === 0) {
+      alert('En az bir malzeme veya manuel kalem eklemelisiniz.');
       return;
     }
 
@@ -478,12 +526,13 @@ export default function ContractDetailModal({
       return;
     }
 
-    // Yeni sözleşmede her kalemde depo zorunlu; depo stoğu ancak böyle düşer
+    // Depo zorunluluğu yalnızca envanter kalemleri için geçerli (manuel kalemler stok etkilemez)
     if (isNew) {
-      const withoutWarehouse = contractItems.filter((i) => !i.WarehouseId || i.WarehouseId === 0);
+      const invItems = contractItems.filter((i) => i.kind === 'inventory');
+      const withoutWarehouse = invItems.filter((i) => !i.WarehouseId || i.WarehouseId === 0);
       if (withoutWarehouse.length > 0) {
         alert(
-          'Depo stoğundan düşüm için her malzemede depo seçilmesi zorunludur. Lütfen tüm kalemlere depo atayın veya ilgili kalemleri silip depo seçerek tekrar ekleyin.'
+          'Depo stoğundan düşüm için envanter kalemlerinde depo seçilmesi zorunludur. Lütfen tüm envanter kalemlerine depo atayın.'
         );
         return;
       }
@@ -493,12 +542,22 @@ export default function ContractDetailModal({
       setIsBusy(true);
 
       if (isNew) {
-        const details = contractItems.map((item) => ({
-          ItemId: item.ItemId,
-          WarehouseId: item.WarehouseId,
-          RentedQuantity: item.RentedQuantity,
-          DailyPriceAtRent: item.DailyPriceAtRent,
-        }));
+        const details = contractItems.map((item) => {
+          if (item.kind === 'manual') {
+            return {
+              IsManual: true,
+              Description: item.Description,
+              RentedQuantity: item.RentedQuantity,
+              DailyPriceAtRent: item.DailyPriceAtRent,
+            };
+          }
+          return {
+            ItemId: item.ItemId,
+            WarehouseId: item.WarehouseId,
+            RentedQuantity: item.RentedQuantity,
+            DailyPriceAtRent: item.DailyPriceAtRent,
+          };
+        });
 
         const requestBody: Record<string, unknown> = {
           CustomerId: Number(selectedCustomerId),
@@ -508,19 +567,21 @@ export default function ContractDetailModal({
           IsCompleted: false,
           Iskonto: iskonto,
           VatRate: vatRate,
+          Currency: currency,
           details,
         };
 
         if (selectedSiteId) {
           requestBody.SiteId = Number(selectedSiteId);
         }
-        if (contractCode.trim()) {
-          requestBody.ContractCode = contractCode.trim();
+        if (normalizeText(contractCode)) {
+          requestBody.ContractCode = normalizeText(contractCode);
         }
 
         if (contractItems.length > 0) {
-          const firstWh = contractItems[0].WarehouseId;
-          if (firstWh && contractItems.every((i) => i.WarehouseId === firstWh)) {
+          const inv = contractItems.filter((i) => i.kind === 'inventory');
+          const firstWh = inv[0]?.WarehouseId;
+          if (firstWh && inv.length > 0 && inv.every((i) => i.WarehouseId === firstWh)) {
             requestBody.defaultWarehouseId = firstWh;
           }
         }
@@ -531,12 +592,13 @@ export default function ContractDetailModal({
         const updateBody: Record<string, unknown> = {
           Iskonto: iskonto,
           VatRate: vatRate,
+          Currency: currency,
         };
         if (selectedSiteId) {
           updateBody.SiteId = Number(selectedSiteId);
         }
-        if (contractCode.trim()) {
-          updateBody.ContractCode = contractCode.trim();
+        if (normalizeText(contractCode)) {
+          updateBody.ContractCode = normalizeText(contractCode);
         }
 
         await contractService.updateAsync(contract.ContractId, updateBody as any);
@@ -601,7 +663,8 @@ export default function ContractDetailModal({
     const itemId = Number(itemIdStr);
     const warehouseId = Number(warehouseIdStr);
     const item = contractItems.find(
-      (i) => i.ItemId === itemId && i.WarehouseId === warehouseId
+      (i): i is Extract<ContractLineItem, { kind: 'inventory' }> =>
+        i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
     );
     if (!item) return;
     const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
@@ -622,7 +685,8 @@ export default function ContractDetailModal({
     const warehouseId = Number(warehouseIdStr);
 
     const item = contractItems.find(
-      (i) => i.ItemId === itemId && i.WarehouseId === warehouseId
+      (i): i is Extract<ContractLineItem, { kind: 'inventory' }> =>
+        i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
     );
     if (!item) return;
 
@@ -650,7 +714,7 @@ export default function ContractDetailModal({
       // Başarılı iade sonrası contract items güncelle
       setContractItems((prevItems) =>
         prevItems.map((i) =>
-          i.ItemId === itemId && i.WarehouseId === warehouseId
+          i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
             ? { ...i, ReturnedQuantity: result.ReturnedQuantity }
             : i
         )
@@ -690,7 +754,7 @@ export default function ContractDetailModal({
     }
   };
 
-  const openReturnForm = (item: ContractDetailItem) => {
+  const openReturnForm = (item: Extract<ContractLineItem, { kind: 'inventory' }>) => {
     const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
     if (remainingOnRent > 0) {
       setReturnDetailKey(`${item.ItemId}-${item.WarehouseId}`);
@@ -712,7 +776,8 @@ export default function ContractDetailModal({
   };
 
   const formatCurrency = (amount: number) => {
-    return `₺${amount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const formatted = amount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return currency === 'EUR' ? `€${formatted}` : `₺${formatted}`;
   };
 
   const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
@@ -841,9 +906,9 @@ export default function ContractDetailModal({
                 }`}
               >
                 İade Al
-                {contractItems.some(i => (i.RentedQuantity - i.ReturnedQuantity) > 0) && (
+                {contractItems.some(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0) && (
                   <span className="ml-1.5 bg-green-600/30 text-green-400 text-xs px-1.5 py-0.5 rounded-full">
-                    {contractItems.filter(i => (i.RentedQuantity - i.ReturnedQuantity) > 0).length}
+                    {contractItems.filter(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0).length}
                   </span>
                 )}
               </button>
@@ -888,7 +953,7 @@ export default function ContractDetailModal({
               </div>
             ) : (
               <div className="space-y-3">
-                {contractItems.map((item) => {
+                {contractItems.filter((i) => i.kind === 'inventory').map((item) => {
                   const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
                   const itemKey = `${item.ItemId}-${item.WarehouseId}`;
                   const isReturnFormOpen = returnDetailKey === itemKey;
@@ -1137,6 +1202,7 @@ export default function ContractDetailModal({
                           const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
                           if (!template) return;
                           try {
+                            setLoadingTemplate(true);
                             const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
                             setEditingTemplate(fullTemplate);
                             setIsNewTemplate(false);
@@ -1144,11 +1210,14 @@ export default function ContractDetailModal({
                           } catch (error) {
                             console.error('Şablon yükleme hatası:', error);
                             alert(getApiErrorMessage(error));
+                          } finally {
+                            setLoadingTemplate(false);
                           }
                         }}
+                        disabled={loadingTemplate}
                         className="btn-secondary text-sm shrink-0"
                       >
-                        Düzenle
+                        {loadingTemplate ? 'Yükleniyor...' : 'Düzenle'}
                       </button>
                     )}
                     <button
@@ -1256,6 +1325,18 @@ export default function ContractDetailModal({
                   placeholder="20"
                 />
               </div>
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Para Birimi</label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TRY">TRY (TL)</option>
+                  <option value="EUR">EUR (€)</option>
+                </select>
+              </div>
               {!isReadOnly && (
                 <div className="space-y-0.5">
                   <label className="block text-xs font-medium text-text-primary">Varsayılan depo *</label>
@@ -1296,11 +1377,21 @@ export default function ContractDetailModal({
                     Ürün Ekle
                   </button>
                 )}
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setShowManualLineModal(true)}
+                    className="btn-secondary"
+                  >
+                    Manuel Kalem Ekle
+                  </button>
+                )}
                 {!isReadOnly && selectedTemplateId && contractItems.length > 0 && (
                   <button
                     type="button"
                     onClick={async () => {
                       try {
+                        setIsAddingMaterialTable(true);
                         const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
                         if (!template) return;
                         const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
@@ -1324,12 +1415,15 @@ export default function ContractDetailModal({
                       } catch (error) {
                         console.error('Add material table error:', error);
                         alert(getApiErrorMessage(error));
+                      } finally {
+                        setIsAddingMaterialTable(false);
                       }
                     }}
+                    disabled={isAddingMaterialTable}
                     className="btn-secondary text-sm"
                   >
                     <ClipboardIcon size={16} weight="regular" className="inline mr-1" aria-hidden />
-                    Tabloyu Şablona Ekle
+                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Tabloyu Şablona Ekle'}
                   </button>
                 )}
                 {!isNew && isReadOnly && (
@@ -1394,11 +1488,11 @@ export default function ContractDetailModal({
                       </tr>
                     ) : (
                     contractItems.map((item) => {
-                      const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
-                      const itemKey = `${item.ItemId}-${item.WarehouseId}`;
-                      const isReturnFormOpen = returnDetailKey === itemKey;
-                      const itemCode = availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ?? '—';
-                      const justAdded = lastAddedKeys.includes(itemKey);
+                      const remainingOnRent = item.kind === 'inventory' ? item.RentedQuantity - item.ReturnedQuantity : 0;
+                      const itemKey = item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : item.ClientId;
+                      const isReturnFormOpen = item.kind === 'inventory' ? returnDetailKey === itemKey : false;
+                      const itemCode = item.kind === 'inventory' ? (availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ?? '—') : '—';
+                      const justAdded = item.kind === 'inventory' ? lastAddedKeys.includes(itemKey) : false;
                       return (
                         <Fragment key={itemKey}>
                           <tr
@@ -1408,25 +1502,29 @@ export default function ContractDetailModal({
                           >
                             <td className="px-3 py-2 text-text-secondary">{itemCode}</td>
                             <td className="px-3 py-2">
-                              <div className="font-medium">{item.ItemName}</div>
-                              {item.ReturnedQuantity > 0 && (
+                              <div className="font-medium">{item.kind === 'inventory' ? item.ItemName : item.Description}</div>
+                              {item.kind === 'inventory' && item.ReturnedQuantity > 0 && (
                                 <div className="text-xs text-text-secondary mt-0.5 flex gap-2">
                                   <span className="text-green-400"><CheckIcon size={10} weight="bold" className="inline" aria-hidden /> İade: {item.ReturnedQuantity}</span>
                                   <span className="text-orange-400"><ClockIcon size={10} weight="regular" className="inline" aria-hidden /> Kirada: {remainingOnRent}</span>
                                 </div>
                               )}
                             </td>
-                            <td className="px-3 py-2 text-text-secondary">{item.WarehouseName ?? '—'}</td>
-                            {isNew && (() => {
-                              const cacheKey = `${item.ItemId}-${item.WarehouseId}`;
-                              const stock = warehouseStockCache[cacheKey];
-                              const isOverStock = stock !== undefined && item.RentedQuantity > stock;
-                              return (
-                                <td className={`px-3 py-2 text-right text-sm ${isOverStock ? 'text-red-400 font-semibold' : 'text-text-secondary'}`}>
-                                  {stock !== undefined ? stock : '—'}
-                                </td>
-                              );
-                            })()}
+                            <td className="px-3 py-2 text-text-secondary">{item.kind === 'inventory' ? (item.WarehouseName ?? '—') : '—'}</td>
+                            {isNew && (
+                              item.kind === 'inventory' ? (() => {
+                                const cacheKey = `${item.ItemId}-${item.WarehouseId}`;
+                                const stock = warehouseStockCache[cacheKey];
+                                const isOverStock = stock !== undefined && item.RentedQuantity > stock;
+                                return (
+                                  <td className={`px-3 py-2 text-right text-sm ${isOverStock ? 'text-red-400 font-semibold' : 'text-text-secondary'}`}>
+                                    {stock !== undefined ? stock : '—'}
+                                  </td>
+                                );
+                              })() : (
+                                <td className="px-3 py-2 text-right text-sm text-text-secondary">—</td>
+                              )
+                            )}
                             <td className="px-3 py-2 text-right">
                               {isReadOnly ? (
                                 item.RentedQuantity
@@ -1435,7 +1533,20 @@ export default function ContractDetailModal({
                                   type="number"
                                   min={1}
                                   value={item.RentedQuantity}
-                                  onChange={(e) => updateItemQuantity(item.ItemId, item.WarehouseId, Number(e.target.value) || 1)}
+                                  onChange={(e) => {
+                                    const v = Number(e.target.value) || 1;
+                                    if (item.kind === 'inventory') {
+                                      updateItemQuantity(item.ItemId, item.WarehouseId, v);
+                                    } else {
+                                      setContractItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'manual' && x.ClientId === item.ClientId
+                                            ? { ...x, RentedQuantity: Math.max(1, Math.floor(v)) }
+                                            : x
+                                        )
+                                      );
+                                    }
+                                  }}
                                   className="input w-16 text-right py-1 text-sm"
                                   aria-label="Miktar"
                                 />
@@ -1444,40 +1555,49 @@ export default function ContractDetailModal({
                             <td className="px-3 py-2 text-right text-text-secondary">{formatCurrency(item.DailyPriceAtRent)}/gün</td>
                             <td className="px-3 py-2 text-right">
                               {isReadOnly ? (
-                                Number(getItemIskonto(item.ItemId, item.WarehouseId)) || 0
+                                Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0
                               ) : (
                                 <input
                                   type="number"
                                   min={0}
                                   max={100}
                                   step={0.01}
-                                  value={Number(getItemIskonto(item.ItemId, item.WarehouseId)) || 0}
+                                  value={Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0}
                                   onChange={(e) => {
                                     const v = parseFloat(e.target.value);
-                                    updateContractItemIskonto(
-                                      item.ItemId,
-                                      item.WarehouseId,
-                                      Number.isFinite(v) ? v : 0
-                                    );
+                                    if (item.kind === 'inventory') {
+                                      updateContractItemIskonto(
+                                        item.ItemId,
+                                        item.WarehouseId,
+                                        Number.isFinite(v) ? v : 0
+                                      );
+                                    } else {
+                                      setIskonto(Number.isFinite(v) ? v : 0);
+                                    }
                                   }}
                                   className="input w-16 text-right py-1 text-sm"
                                   aria-label="İskonto %"
                                 />
                               )}
                             </td>
-                            <td className="px-3 py-2 text-right font-medium text-green-500">{formatCurrency(item.DailyPriceAtRent * item.RentedQuantity * plannedDays)}</td>
+                            <td className="px-3 py-2 text-right font-medium text-green-500">{formatCurrency(getLineTotal(item))}</td>
                             <td className="px-2 py-2 text-center">
-                              {!isNew && (fullContract ?? contract) && !(fullContract ?? contract)!.IsCompleted && remainingOnRent > 0 && isReadOnly && (
+                              {!isNew && item.kind === 'inventory' && (fullContract ?? contract) && !(fullContract ?? contract)!.IsCompleted && remainingOnRent > 0 && isReadOnly && (
                                 <button type="button" onClick={() => openReturnForm(item)} className="btn-secondary text-xs px-2 py-1" disabled={isReturning}>İade Et</button>
                               )}
                               {!isReadOnly && (
-                                <button type="button" onClick={() => handleRemoveItem(item.ItemId, item.WarehouseId)} className="text-error hover:text-red-700 inline-flex p-1" aria-label="Kaldır">
+                                <button
+                                  type="button"
+                                  onClick={() => (item.kind === 'inventory' ? handleRemoveItem(item.ItemId, item.WarehouseId) : handleRemoveManualItem(item.ClientId))}
+                                  className="text-error hover:text-red-700 inline-flex p-1"
+                                  aria-label="Kaldır"
+                                >
                                   <XIcon size={18} weight="regular" />
                                 </button>
                               )}
                             </td>
                           </tr>
-                          {isReturnFormOpen && (
+                          {item.kind === 'inventory' && isReturnFormOpen && (
                             <tr className="bg-background-secondary/50">
                               <td colSpan={isNew ? 9 : 8} className="px-3 py-3 border-b border-background-border">
                                 <div className="flex flex-wrap items-center gap-3">
@@ -1600,7 +1720,10 @@ export default function ContractDetailModal({
           const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
           const itemId = Number(itemIdStr);
           const warehouseId = Number(warehouseIdStr);
-          const item = contractItems.find((i) => i.ItemId === itemId && i.WarehouseId === warehouseId);
+          const item = contractItems.find(
+            (i): i is Extract<ContractLineItem, { kind: 'inventory' }> =>
+              i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
+          );
           const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
           return item ? `Bu iadeyi onaylıyor musunuz? (${qty} adet, ${item.ItemName})` : 'Bu iadeyi onaylıyor musunuz?';
         })() : 'Bu iadeyi onaylıyor musunuz?'}
@@ -1632,6 +1755,26 @@ export default function ContractDetailModal({
         items={availableItems}
         onItemSelect={addItemFromPicker}
         displayMode="contract"
+        currency={currency}
+      />
+      <ManualLineItemModal
+        open={showManualLineModal}
+        mode="contract"
+        currency={currency}
+        onClose={() => setShowManualLineModal(false)}
+        onAdd={(data) => {
+          setContractItems((prev) => [
+            ...prev,
+            {
+              kind: 'manual',
+              ClientId: `manual-${crypto.randomUUID()}`,
+              IsManual: true,
+              Description: data.Description,
+              RentedQuantity: data.Quantity,
+              DailyPriceAtRent: data.DailyPrice,
+            },
+          ]);
+        }}
       />
       <PdfPreviewModal
         open={showPdfPreview}

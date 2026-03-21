@@ -4,7 +4,9 @@ import { Quote, QuoteStatus } from '../models';
 export interface CreateQuoteDetailRequest {
   ItemId: number;
   Quantity: number;
-  DailyPrice: number;
+  DailyPrice?: number;
+  is_manual?: boolean;
+  Description?: string;
 }
 
 export interface CreateQuoteRequest {
@@ -13,26 +15,21 @@ export interface CreateQuoteRequest {
   SiteId?: number;
   StartDate: string; // ISO 8601
   PlannedEndDate: string; // ISO 8601
-  TotalPrice: number;
   Status?: QuoteStatus;
   Notes?: string;
   Iskonto?: number;
   VatRate?: number;
+  Currency?: 'TRY' | 'EUR';
   details: CreateQuoteDetailRequest[];
 }
 
 export interface UpdateQuoteRequest {
   QuoteCode?: string;
-  CustomerId?: number;
   SiteId?: number;
-  StartDate?: string;
-  PlannedEndDate?: string;
-  TotalPrice?: number;
   Status?: QuoteStatus;
-  Notes?: string;
   Iskonto?: number;
   VatRate?: number;
-  details?: CreateQuoteDetailRequest[];
+  Currency?: 'TRY' | 'EUR';
 }
 
 export interface CreateQuoteResponse {
@@ -44,6 +41,24 @@ export interface ConvertQuoteResponse {
   ContractId: number;
 }
 
+export interface CloneQuoteResponse {
+  QuoteId: number;
+  message: string;
+}
+
+export interface CreateQuoteFromPackageRequest {
+  CustomerId: number;
+  SiteId?: number;
+  StartDate: string;
+  PlannedEndDate: string;
+  Currency?: 'TRY' | 'EUR';
+}
+
+export interface CreateQuoteFromPackageResponse {
+  QuoteId: number;
+  message: string;
+}
+
 export interface WarehouseAssignment {
   ItemId: number;
   WarehouseId: number;
@@ -53,7 +68,41 @@ export interface WarehouseAssignment {
 export const quoteService = {
   async getAllAsync(status?: QuoteStatus): Promise<Quote[]> {
     const url = status ? `/quotes?status=${status}` : '/quotes';
-    return apiClient.get<Quote[]>(url);
+    try {
+      return await apiClient.get<Quote[]>(url);
+    } catch (error) {
+      // Bazı backend sürümlerinde /quotes (status'suz) 500 dönebilir.
+      // Bu durumda statü bazlı ayrı isteklerle listeyi toparla.
+      if (status) throw error;
+      const failures: unknown[] = [];
+      const [pending, accepted, rejected] = await Promise.all([
+        apiClient
+          .get<Quote[]>('/quotes?status=pending')
+          .catch((e) => {
+            failures.push(e);
+            return [];
+          }),
+        apiClient
+          .get<Quote[]>('/quotes?status=accepted')
+          .catch((e) => {
+            failures.push(e);
+            return [];
+          }),
+        apiClient
+          .get<Quote[]>('/quotes?status=rejected')
+          .catch((e) => {
+            failures.push(e);
+            return [];
+          }),
+      ]);
+      const map = new Map<number, Quote>();
+      [...pending, ...accepted, ...rejected].forEach((q) => map.set(q.QuoteId, q));
+      const merged = Array.from(map.values()).sort((a, b) => b.QuoteId - a.QuoteId);
+      if (merged.length === 0 && failures.length >= 3) {
+        throw (failures[0] ?? error);
+      }
+      return merged;
+    }
   },
 
   async getByIdAsync(id: number): Promise<Quote> {
@@ -105,5 +154,35 @@ export const quoteService = {
 
   async rejectQuoteAsync(id: number): Promise<Quote> {
     return apiClient.patch<Quote>(`/quotes/${id}`, { Status: 'rejected' });
+  },
+
+  async cloneQuoteAsync(id: number): Promise<CloneQuoteResponse> {
+    return apiClient.post<CloneQuoteResponse>(`/quotes/${id}/clone`, {});
+  },
+
+  async createFromPackageAsync(
+    packageId: string | number,
+    data: CreateQuoteFromPackageRequest
+  ): Promise<CreateQuoteFromPackageResponse> {
+    const normalizedId = String(packageId).trim();
+    return apiClient.post<CreateQuoteFromPackageResponse>(
+      `/quotes/from-package/${encodeURIComponent(normalizedId)}`,
+      data
+    );
+  },
+
+  async generateDocumentAsync(
+    quoteId: number,
+    templateId: number,
+    format: 'pdf' | 'docx' = 'pdf'
+  ): Promise<Blob> {
+    return apiClient.postBlob(`/quotes/${quoteId}/generate-document`, {
+      templateId,
+      format,
+    });
+  },
+
+  async previewDocumentAsync(quoteId: number, templateId: number): Promise<Blob> {
+    return apiClient.postBlob(`/quotes/${quoteId}/preview-document`, { templateId });
   },
 };

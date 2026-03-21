@@ -11,6 +11,12 @@ import PriceTiersPage from './pages/PriceTiersPage';
 import PricingRulesPage from './pages/PricingRulesPage';
 import UsersPage from './pages/UsersPage';
 import AuditLogsPage from './pages/AuditLogsPage';
+import RentalMovementReportPage from './pages/RentalMovementReportPage';
+import StockReceiptsPage from './pages/StockReceiptsPage';
+import ChecksPage from './pages/ChecksPage';
+import CashPage from './pages/CashPage';
+import CashAccountDetailPage from './pages/CashAccountDetailPage';
+import SystemSettingsPage from './pages/SystemSettingsPage';
 import MainLayout from './layouts/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 
@@ -90,6 +96,56 @@ function App() {
           }
         />
         <Route
+          path="/stock-receipts"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <StockReceiptsPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/checks"
+          element={
+            <ProtectedRoute requiredPermission="checks_view">
+              <MainLayout>
+                <ChecksPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/cash/accounts/:accountId"
+          element={
+            <ProtectedRoute requiredPermission="cash_view">
+              <MainLayout>
+                <CashAccountDetailPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/cash"
+          element={
+            <ProtectedRoute requiredPermission="cash_view">
+              <MainLayout>
+                <CashPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/system-settings"
+          element={
+            <ProtectedRoute adminOnly>
+              <MainLayout>
+                <SystemSettingsPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
           path="/price-tiers"
           element={
             <ProtectedRoute>
@@ -125,6 +181,16 @@ function App() {
             <ProtectedRoute>
               <MainLayout>
                 <AuditLogsPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/reports/rental-movement"
+          element={
+            <ProtectedRoute>
+              <MainLayout>
+                <RentalMovementReportPage />
               </MainLayout>
             </ProtectedRoute>
           }

@@ -26,6 +26,7 @@ export default function WarehousesPage() {
   const [loadingRented, setLoadingRented] = useState(false);
   const [rentedSearchText, setRentedSearchText] = useState('');
   const [rentedCategoryId, setRentedCategoryId] = useState<number | 'all'>('all');
+  const [rentedSubCategoryId, setRentedSubCategoryId] = useState<number | 'all'>('all');
   const [rentedMinQty, setRentedMinQty] = useState<number | ''>('');
   const [rentedMaxQty, setRentedMaxQty] = useState<number | ''>('');
 
@@ -107,12 +108,15 @@ export default function WarehousesPage() {
       const okCat =
         rentedCategoryId === 'all' ||
         i.Categories?.some((c) => c.CategoryId === rentedCategoryId);
+      const okSubCat =
+        rentedSubCategoryId === 'all' ||
+        i.SubCategories?.some((sc) => sc.SubCategoryId === rentedSubCategoryId);
       const qty = i.OnRent ?? 0;
       const okMin = rentedMinQty === '' || qty >= rentedMinQty;
       const okMax = rentedMaxQty === '' || qty <= rentedMaxQty;
-      return okText && okCat && okMin && okMax;
+      return okText && okCat && okSubCat && okMin && okMax;
     });
-  }, [rentedItems, rentedSearchText, rentedCategoryId, rentedMinQty, rentedMaxQty]);
+  }, [rentedItems, rentedSearchText, rentedCategoryId, rentedSubCategoryId, rentedMinQty, rentedMaxQty]);
 
   const rentedCategoryOptions = useMemo(() => {
     const map = new Map<number, string>();
@@ -120,6 +124,18 @@ export default function WarehousesPage() {
       i.Categories?.forEach((c) => {
         if (!map.has(c.CategoryId)) {
           map.set(c.CategoryId, c.CategoryName ?? `Kategori #${c.CategoryId}`);
+        }
+      });
+    });
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [rentedItems]);
+
+  const rentedSubCategoryOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    rentedItems.forEach((i) => {
+      i.SubCategories?.forEach((sc) => {
+        if (!map.has(sc.SubCategoryId)) {
+          map.set(sc.SubCategoryId, sc.SubCategoryName);
         }
       });
     });
@@ -183,6 +199,8 @@ export default function WarehousesPage() {
           onChange={(e) => {
             const v = e.target.value;
             setRentedCategoryId(v === 'all' ? 'all' : Number(v));
+            // kategori değişince alt kategori filtresini de sıfırla
+            setRentedSubCategoryId('all');
           }}
         >
           <option value="all">Tüm kategoriler</option>
@@ -190,9 +208,34 @@ export default function WarehousesPage() {
             <option key={c.id} value={c.id}>{c.name}</option>
           ))}
         </select>
+        <select
+          className="input py-2 px-3 text-sm w-44"
+          value={rentedSubCategoryId === 'all' ? 'all' : String(rentedSubCategoryId)}
+          onChange={(e) => {
+            const v = e.target.value;
+            setRentedSubCategoryId(v === 'all' ? 'all' : Number(v));
+          }}
+        >
+          <option value="all">Tüm alt kategoriler</option>
+          {rentedSubCategoryOptions.map((sc) => (
+            <option key={sc.id} value={sc.id}>{sc.name}</option>
+          ))}
+        </select>
         <input type="number" className="input py-2 px-3 text-sm w-20" min={0} placeholder="Min" value={rentedMinQty === '' ? '' : rentedMinQty} onChange={(e) => setRentedMinQty(e.target.value === '' ? '' : Number(e.target.value))} />
         <input type="number" className="input py-2 px-3 text-sm w-20" min={0} placeholder="Max" value={rentedMaxQty === '' ? '' : rentedMaxQty} onChange={(e) => setRentedMaxQty(e.target.value === '' ? '' : Number(e.target.value))} />
-        <button type="button" onClick={() => { setRentedSearchText(''); setRentedCategoryId('all'); setRentedMinQty(''); setRentedMaxQty(''); }} className="btn-secondary py-2 px-3 text-sm">Filtreleri Sıfırla</button>
+        <button
+          type="button"
+          onClick={() => {
+            setRentedSearchText('');
+            setRentedCategoryId('all');
+            setRentedSubCategoryId('all');
+            setRentedMinQty('');
+            setRentedMaxQty('');
+          }}
+          className="btn-secondary py-2 px-3 text-sm"
+        >
+          Filtreleri Sıfırla
+        </button>
       </div>
 
       {loadingRented ? (

@@ -329,8 +329,8 @@ export default function DashboardPage() {
             <ChartBar size={20} weight="regular" className="text-primary" />
             <h2 className="text-lg font-semibold">Aylık Gelir Trendi</h2>
           </div>
-          <div className="h-[260px]">
-            <ResponsiveContainer width="100%" height="100%">
+          <div className="h-[260px] w-full min-w-0">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart data={monthlyRevenueData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" vertical={false} />
                 <XAxis

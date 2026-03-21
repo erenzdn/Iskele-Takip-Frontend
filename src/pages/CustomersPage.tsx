@@ -13,6 +13,7 @@ export default function CustomersPage() {
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isNewCustomer, setIsNewCustomer] = useState(false);
+  const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
 
   useEffect(() => {
     loadCustomers();
@@ -65,6 +66,17 @@ export default function CustomersPage() {
     loadCustomers();
   };
 
+  const letters = 'ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ'.split('');
+
+  const displayedCustomers =
+    selectedLetter == null
+      ? customers
+      : customers.filter((customer) =>
+          customer.Name
+            ?.toLocaleUpperCase('tr-TR')
+            .startsWith(selectedLetter.toLocaleUpperCase('tr-TR'))
+        );
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -87,6 +99,63 @@ export default function CustomersPage() {
         </div>
       </div>
 
+      <div className="mb-3 rounded-panel border border-background-border bg-gradient-to-r from-[#111827] via-[#020617] to-[#111827] px-3 py-2 shadow-sm">
+        <div className="flex items-center justify-between gap-2 mb-2">
+          <div>
+            <div className="text-[11px] uppercase tracking-[0.16em] text-text-secondary/70">
+              Harfe göre filtrele
+            </div>
+            <div className="text-[11px] text-text-secondary/60">
+              Müşteri adının ilk harfine göre hızlı seçim
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setSelectedLetter(null)}
+              className={`px-2.5 py-1.5 text-[11px] rounded-full border transition-all duration-150 shadow-sm ${
+                selectedLetter == null
+                  ? 'bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(0,0,0,0.6)]'
+                  : 'bg-transparent text-text-secondary border-background-border hover:border-accent/70 hover:text-text-primary'
+              }`}
+            >
+              Tümü
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                setSelectedLetter(null);
+                setSearchText('');
+                loadCustomers();
+              }}
+              className="px-2.5 py-1.5 text-[11px] rounded-full border border-background-border/80 text-text-secondary/80 hover:border-accent/70 hover:text-text-primary hover:bg-background-hover/40 transition-all duration-150"
+            >
+              Filtreleri Temizle
+            </button>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-1.5">
+          {letters.map((letter) => {
+            const isActive = selectedLetter === letter;
+            return (
+              <button
+                key={letter}
+                type="button"
+                onClick={() => setSelectedLetter(letter)}
+                className={`w-7 h-7 flex items-center justify-center text-[11px] rounded-full border transition-all duration-150 ${
+                  isActive
+                    ? 'bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(0,0,0,0.7)] scale-105'
+                    : 'bg-[#020617] text-text-secondary/80 border-background-border hover:border-accent/60 hover:text-text-primary hover:bg-background-hover/40'
+                }`}
+              >
+                {letter}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
       <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
         <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
         <input
@@ -102,7 +171,7 @@ export default function CustomersPage() {
         </button>
       </div>
 
-      {customers.length === 0 ? (
+      {displayedCustomers.length === 0 ? (
         <EmptyState
           icon={<UsersIcon size={48} weight="duotone" />}
           title="Henüz müşteri bulunmuyor"
@@ -136,7 +205,7 @@ export default function CustomersPage() {
                 </tr>
               </thead>
               <tbody>
-                {customers.map((customer, index) => (
+                {displayedCustomers.map((customer, index) => (
                   <tr
                     key={customer.CustomerId}
                     className={`border-b border-background-border cursor-pointer hover:bg-background-hover ${
@@ -178,7 +247,7 @@ export default function CustomersPage() {
             </table>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
-            <span>Toplam: {customers.length} müşteri</span>
+            <span>Toplam: {displayedCustomers.length} müşteri</span>
             <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>

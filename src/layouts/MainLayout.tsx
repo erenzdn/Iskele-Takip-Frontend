@@ -1,22 +1,46 @@
-import { useEffect } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
+  CaretDownIcon,
+  ChartBarIcon,
   ChartLineIcon,
   ClipboardIcon,
   CurrencyCircleDollarIcon,
   GearIcon,
+  ListIcon,
+  MagnifyingGlassIcon,
   PackageIcon,
   ReceiptIcon,
+  SignOutIcon,
   ScrollIcon,
+  ShieldCheckIcon,
   UserIcon,
   UsersIcon,
+  VaultIcon,
   WarehouseIcon,
 } from '@phosphor-icons/react';
 import { useAuthStore } from '../store/authStore';
+import { isAdminUser } from '../utils/authHelpers';
+import { normalizeText } from '../utils/validation';
 
 interface MainLayoutProps {
   children: React.ReactNode;
 }
+
+const SIDEBAR_COLLAPSED_STORAGE_KEY = 'layout_sidebar_collapsed';
+const MENU_SECTIONS_STORAGE_KEY = 'layout_menu_sections';
+
+type SectionState = {
+  main: boolean;
+  reports: boolean;
+  admin: boolean;
+};
+
+const defaultSectionState: SectionState = {
+  main: true,
+  reports: true,
+  admin: true,
+};
 
 const iconProps = { size: 20, weight: 'regular' as const, color: 'currentColor' };
 
@@ -29,13 +53,21 @@ const mainMenuItems: MenuItem[] = [
   { path: '/warehouses', label: 'Depolar', icon: <WarehouseIcon {...iconProps} />, requiredPermission: 'warehouses_view' },
   { path: '/contracts', label: 'Sözleşmeler', icon: <ClipboardIcon {...iconProps} />, requiredPermission: 'contracts_view' },
   { path: '/purchase-invoices', label: 'Alış Faturaları', icon: <ReceiptIcon {...iconProps} />, requiredPermission: 'purchaseInvoices_view' },
+  { path: '/stock-receipts', label: 'Stok Fişleri', icon: <ReceiptIcon {...iconProps} /> },
+  { path: '/checks', label: 'Çekler', icon: <ReceiptIcon {...iconProps} />, requiredPermission: 'checks_view' },
+  { path: '/cash', label: 'Kasa & Banka', icon: <VaultIcon {...iconProps} />, requiredPermission: 'cash_view' },
 ];
 
-const managementMenuItems: MenuItem[] = [
+const reportingMenuItems: MenuItem[] = [
+  { path: '/reports/rental-movement', label: 'Kiralama Hareket Raporu', icon: <ChartBarIcon {...iconProps} />, requiredPermission: 'reports_view' },
+];
+
+const administrationMenuItems: MenuItem[] = [
   { path: '/price-tiers', label: 'Fiyat Tarifeleri', icon: <CurrencyCircleDollarIcon {...iconProps} />, requiredPermission: 'priceTiers_view' },
   { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: <GearIcon {...iconProps} />, requiredPermission: 'pricingRules_view' },
   { path: '/users', label: 'Kullanıcılar', icon: <UserIcon {...iconProps} />, requiredPermission: 'users_view' },
   { path: '/audit-logs', label: 'Audit Logları', icon: <ScrollIcon {...iconProps} />, requiredPermission: 'auditLogs_view' },
+  { path: '/system-settings', label: 'Sistem Ayarları', icon: <ShieldCheckIcon {...iconProps} /> },
 ];
 
 function filterByPermission(items: MenuItem[], permissions: string[]) {
@@ -44,29 +76,167 @@ function filterByPermission(items: MenuItem[], permissions: string[]) {
   );
 }
 
-function NavLink({ item, isActive }: { item: MenuItem; isActive: boolean }) {
+function isPathActive(currentPath: string, targetPath: string) {
+  if (targetPath === '/') return currentPath === '/';
+  return currentPath === targetPath || currentPath.startsWith(`${targetPath}/`);
+}
+
+function MenuSection({
+  title,
+  items,
+  locationPath,
+  collapsed,
+  isOpen,
+  onToggle,
+}: {
+  title: string;
+  items: MenuItem[];
+  locationPath: string;
+  collapsed: boolean;
+  isOpen: boolean;
+  onToggle: () => void;
+}) {
+  if (items.length === 0) return null;
+
+  return (
+    <div className="pt-3 mt-3 border-t border-background-border">
+      {!collapsed && (
+        <button
+          type="button"
+          onClick={onToggle}
+          className="w-full px-3 mb-2 flex items-center justify-between text-[11px] font-semibold text-text-secondary uppercase tracking-wider hover:text-text-primary"
+        >
+          <span>{title}</span>
+          <CaretDownIcon
+            size={12}
+            className={`transition-transform ${isOpen ? 'rotate-0' : '-rotate-90'}`}
+          />
+        </button>
+      )}
+      {(collapsed || isOpen) &&
+        items.map((item) => (
+          <NavLink
+            key={item.path}
+            item={item}
+            isActive={isPathActive(locationPath, item.path)}
+            collapsed={collapsed}
+          />
+        ))}
+    </div>
+  );
+}
+
+function NavLink({
+  item,
+  isActive,
+  collapsed,
+}: {
+  item: MenuItem;
+  isActive: boolean;
+  collapsed: boolean;
+}) {
   return (
     <Link
       to={item.path}
-      className={`flex items-center gap-3 px-4 py-3 rounded-lg mb-2 transition-colors ${
+      title={collapsed ? item.label : undefined}
+      className={`group flex items-center gap-3 rounded-xl mb-1.5 transition-all ${
         isActive
-          ? 'bg-primary text-white'
+          ? 'bg-primary text-white shadow-sm'
           : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
       }`}
     >
-      <span className="flex h-5 w-5 shrink-0 items-center justify-center [&_svg]:size-5">{item.icon}</span>
-      <span className="font-medium">{item.label}</span>
+      <span className={`flex h-11 items-center ${collapsed ? 'w-full justify-center' : 'w-11 justify-center'}`}>
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/5 group-hover:bg-white/10 [&_svg]:size-5">
+          {item.icon}
+        </span>
+      </span>
+      {!collapsed && <span className="font-medium truncate pr-2">{item.label}</span>}
     </Link>
   );
 }
 
 export default function MainLayout({ children }: MainLayoutProps) {
   const location = useLocation();
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
+    const raw = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
+    return raw === 'true';
+  });
+  const [menuQuery, setMenuQuery] = useState('');
+  const [openSections, setOpenSections] = useState<SectionState>(() => {
+    const raw = localStorage.getItem(MENU_SECTIONS_STORAGE_KEY);
+    if (!raw) return defaultSectionState;
+    try {
+      const parsed = JSON.parse(raw) as Partial<SectionState>;
+      return {
+        main: typeof parsed.main === 'boolean' ? parsed.main : defaultSectionState.main,
+        reports: typeof parsed.reports === 'boolean' ? parsed.reports : defaultSectionState.reports,
+        admin: typeof parsed.admin === 'boolean' ? parsed.admin : defaultSectionState.admin,
+      };
+    } catch {
+      return defaultSectionState;
+    }
+  });
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const permissions = user?.Permissions ?? [];
-  const visibleMain = filterByPermission(mainMenuItems, permissions);
-  const visibleManagement = filterByPermission(managementMenuItems, permissions);
+  const visibleMainBase = filterByPermission(mainMenuItems, permissions);
+  const visibleReportingBase = filterByPermission(reportingMenuItems, permissions);
+  const visibleAdministrationBase = filterByPermission(administrationMenuItems, permissions).filter((item) => {
+    if (item.path === '/system-settings') return isAdminUser(user);
+    return true;
+  });
+  const normalizedQuery = menuQuery.trim().toLocaleLowerCase('tr-TR');
+  const visibleMain = useMemo(() => {
+    if (!normalizedQuery) return visibleMainBase;
+    return visibleMainBase.filter((item) => item.label.toLocaleLowerCase('tr-TR').includes(normalizedQuery));
+  }, [normalizedQuery, visibleMainBase]);
+  const visibleReporting = useMemo(() => {
+    if (!normalizedQuery) return visibleReportingBase;
+    return visibleReportingBase.filter((item) => item.label.toLocaleLowerCase('tr-TR').includes(normalizedQuery));
+  }, [normalizedQuery, visibleReportingBase]);
+  const visibleAdministration = useMemo(() => {
+    if (!normalizedQuery) return visibleAdministrationBase;
+    return visibleAdministrationBase.filter((item) => item.label.toLocaleLowerCase('tr-TR').includes(normalizedQuery));
+  }, [normalizedQuery, visibleAdministrationBase]);
+
+  const pageTitle = useMemo(() => {
+    const allItems = [...mainMenuItems, ...reportingMenuItems, ...administrationMenuItems];
+    return allItems.find((item) => isPathActive(location.pathname, item.path))?.label ?? 'Panel';
+  }, [location.pathname]);
+  const pageDescription = useMemo(() => {
+    const descriptionMap: Record<string, string> = {
+      '/': 'Genel durum ve hızlı özet metrikler',
+      '/customers': 'Müşteri kayıtları, iletişim ve ilişki yönetimi',
+      '/inventory': 'Ürün kartları, stok durumu ve fiyat bilgileri',
+      '/warehouses': 'Depo listesi ve stok dağılımı yönetimi',
+      '/contracts': 'Aktif ve tamamlanan kiralama sözleşmeleri',
+      '/purchase-invoices': 'Alış faturaları ve mali kayıt süreçleri',
+      '/stock-receipts': 'Stok giriş, çıkış ve transfer fişleri',
+      '/checks': 'Çek portföyü, tahsilat ve iade takibi',
+      '/cash': 'Kasa, banka hesapları ve nakit hareketleri',
+      '/price-tiers': 'Ürün bazlı fiyat katmanları yönetimi',
+      '/pricing-rules': 'Fiyatlama kuralları ve koşul tanımları',
+      '/users': 'Kullanıcı hesapları ve yetki yönetimi',
+      '/audit-logs': 'Sistem işlem geçmişi ve denetim kayıtları',
+      '/reports/rental-movement': 'Kiralama hareket raporları ve analiz ekranı',
+      '/system-settings': 'Genel sistem ayarları ve yönetim tercihleri',
+    };
+    const allPaths = Object.keys(descriptionMap);
+    const matchedPath = allPaths.find((path) => isPathActive(location.pathname, path));
+    return matchedPath ? descriptionMap[matchedPath] : 'İş akışınızı sade ve hızlı şekilde yönetin';
+  }, [location.pathname]);
+
+  const breadcrumb = useMemo(() => {
+    const root = { label: 'Panel', path: '/' };
+    const inMain = mainMenuItems.find((item) => isPathActive(location.pathname, item.path));
+    if (inMain) return [root, { label: 'Operasyon', path: inMain.path }, { label: inMain.label, path: inMain.path }];
+    const inReports = reportingMenuItems.find((item) => isPathActive(location.pathname, item.path));
+    if (inReports) return [root, { label: 'Raporlar', path: inReports.path }, { label: inReports.label, path: inReports.path }];
+    const inAdmin = administrationMenuItems.find((item) => isPathActive(location.pathname, item.path));
+    if (inAdmin) return [root, { label: 'Yönetim', path: inAdmin.path }, { label: inAdmin.label, path: inAdmin.path }];
+    return [root, { label: pageTitle, path: location.pathname }];
+  }, [location.pathname, pageTitle]);
+  const displayName = user?.FullName?.trim() || user?.Username || 'Kullanıcı';
 
   useEffect(() => {
     // Mouse scroll ile number input degerinin degismesini engelle
@@ -98,41 +268,130 @@ export default function MainLayout({ children }: MainLayoutProps) {
     };
   }, []);
 
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_COLLAPSED_STORAGE_KEY, String(isSidebarCollapsed));
+  }, [isSidebarCollapsed]);
+
+  useEffect(() => {
+    localStorage.setItem(MENU_SECTIONS_STORAGE_KEY, JSON.stringify(openSections));
+  }, [openSections]);
+
   return (
-    <div className="flex h-screen bg-background-main">
+    <div className="flex h-screen bg-background-main text-text-primary">
       {/* Sidebar */}
-      <aside className="w-64 bg-background-sidebar border-r border-background-border flex flex-col">
-        <div className="p-6 border-b border-background-border">
-          <h1 className="text-xl font-bold text-text-primary">İskeleTakip</h1>
-        </div>
-        <nav className="flex-1 p-4 overflow-y-auto">
-          {visibleMain.map((item) => (
-            <NavLink key={item.path} item={item} isActive={location.pathname === item.path} />
-          ))}
-          {visibleManagement.length > 0 && (
-            <div className="pt-4 mt-4 border-t border-background-border">
-              <div className="px-4 mb-2 text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                Yönetim
-              </div>
-              {visibleManagement.map((item) => (
-                <NavLink key={item.path} item={item} isActive={location.pathname === item.path} />
-              ))}
+      <aside
+        className={`relative bg-background-sidebar/95 border-r border-background-border flex flex-col transition-all duration-300 ${
+          isSidebarCollapsed ? 'w-24' : 'w-72'
+        }`}
+      >
+        <div className="p-4 border-b border-background-border">
+          <div className="flex items-center justify-between gap-2">
+            <div className="flex items-center gap-3 min-w-0">
+            <div className="h-10 w-10 rounded-xl bg-primary/20 border border-primary/30 text-primary flex items-center justify-center font-bold">
+              I
             </div>
-          )}
+            {!isSidebarCollapsed && (
+              <div className="min-w-0">
+                <h1 className="text-base font-semibold text-text-primary truncate">İskeleTakip</h1>
+                <p className="text-xs text-text-secondary truncate">Operasyon Yönetimi</p>
+              </div>
+            )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsSidebarCollapsed((prev) => !prev)}
+              className={`h-8 w-8 shrink-0 rounded-lg border border-background-border bg-background-panel text-text-secondary hover:text-text-primary hover:bg-background-hover flex items-center justify-center ${
+                isSidebarCollapsed ? 'mx-auto' : ''
+              }`}
+              title={isSidebarCollapsed ? 'Menüyü genişlet' : 'Menüyü daralt'}
+            >
+              <ListIcon size={18} />
+            </button>
+          </div>
+        </div>
+
+        {!isSidebarCollapsed && (
+          <div className="p-3 border-b border-background-border">
+            <label className="relative block">
+              <MagnifyingGlassIcon
+                size={16}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary"
+              />
+              <input
+                value={menuQuery}
+                onChange={(e) => setMenuQuery(normalizeText(e.target.value))}
+                placeholder="Menüde ara..."
+                className="w-full bg-background-panel rounded-lg border border-background-border pl-9 pr-3 py-2 text-sm text-text-primary placeholder:text-text-secondary focus:outline-none focus:ring-2 focus:ring-primary/70"
+              />
+            </label>
+          </div>
+        )}
+
+        <nav className="flex-1 px-3 py-3 overflow-y-auto">
+          <MenuSection
+            title="Operasyon"
+            items={visibleMain}
+            locationPath={location.pathname}
+            collapsed={isSidebarCollapsed}
+            isOpen={openSections.main}
+            onToggle={() => setOpenSections((prev) => ({ ...prev, main: !prev.main }))}
+          />
+          <MenuSection
+            title="Raporlar"
+            items={visibleReporting}
+            locationPath={location.pathname}
+            collapsed={isSidebarCollapsed}
+            isOpen={openSections.reports}
+            onToggle={() => setOpenSections((prev) => ({ ...prev, reports: !prev.reports }))}
+          />
+          <MenuSection
+            title="Yönetim"
+            items={visibleAdministration}
+            locationPath={location.pathname}
+            collapsed={isSidebarCollapsed}
+            isOpen={openSections.admin}
+            onToggle={() => setOpenSections((prev) => ({ ...prev, admin: !prev.admin }))}
+          />
         </nav>
-        <div className="p-4 border-t border-background-border">
+
+        <div className="p-3 border-t border-background-border">
           <button
             onClick={logout}
-            className="w-full btn-secondary text-left"
+            className={`w-full rounded-lg border border-background-border bg-background-panel hover:bg-background-hover text-text-primary transition-colors ${
+              isSidebarCollapsed ? 'h-11 flex items-center justify-center' : 'py-3 px-4 flex items-center gap-2'
+            }`}
+            title="Çıkış Yap"
           >
-            Çıkış Yap
+            <SignOutIcon size={18} />
+            {!isSidebarCollapsed && 'Çıkış Yap'}
           </button>
         </div>
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto bg-background-main">
-        {children}
+      <main className="flex-1 overflow-hidden bg-background-main">
+        <header className="h-16 border-b border-background-border bg-background-main/95 backdrop-blur px-6 flex items-center justify-between">
+          <div>
+            <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-text-secondary">
+              {breadcrumb.map((item, index) => (
+                <span key={`${item.path}-${index}`} className="flex items-center gap-2">
+                  {index > 0 && <span>/</span>}
+                  <span className={index === breadcrumb.length - 1 ? 'text-text-primary' : ''}>{item.label}</span>
+                </span>
+              ))}
+            </div>
+            <h2 className="text-lg font-semibold leading-tight">{pageTitle}</h2>
+            <p className="text-xs text-text-secondary">{pageDescription}</p>
+          </div>
+          <div className="text-right">
+            <div className="text-sm font-medium text-text-primary truncate max-w-[240px]">{displayName}</div>
+            <div className="text-xs text-text-secondary truncate max-w-[240px]">{user?.RoleName || 'Kullanıcı'}</div>
+          </div>
+        </header>
+
+        <div className="h-[calc(100vh-4rem)] overflow-auto p-6">
+          {children}
+        </div>
       </main>
     </div>
   );

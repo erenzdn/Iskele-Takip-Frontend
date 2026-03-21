@@ -9,15 +9,15 @@ import { TableHeader } from '@tiptap/extension-table-header';
 import { TextAlign } from '@tiptap/extension-text-align';
 import { Underline } from '@tiptap/extension-underline';
 import ImageResize from 'tiptap-extension-resize-image';
-import { ContractTemplate, TemplateImage } from '../../models';
-import { contractTemplateService } from '../../services/contractTemplateService';
+import { QuoteTemplate, TemplateImage } from '../../models';
+import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { templateImageService } from '../../services/templateImageService';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { CustomImage } from './CustomImageExtension';
 import PdfPreviewModal from './PdfPreviewModal';
 
-interface ContractTemplateEditorModalProps {
-  template: ContractTemplate | null;
+interface QuoteTemplateEditorModalProps {
+  template: QuoteTemplate | null;
   isNew: boolean;
   onClose: () => void;
   onSave?: (templateId: number) => void;
@@ -35,13 +35,17 @@ const PLACEHOLDERS = {
     { key: 'santiyeAdi', label: 'Şantiye Adı' },
     { key: 'santiyeAdres', label: 'Şantiye Adres' },
   ],
-  sozlesme: [
-    { key: 'sozlesmeNo', label: 'Sözleşme No' },
+  teklif: [
+    { key: 'teklifNo', label: 'Teklif No' },
+    { key: 'teklifKodu', label: 'Teklif Kodu' },
     { key: 'baslangicTarihi', label: 'Başlangıç Tarihi' },
     { key: 'bitisTarihi', label: 'Bitiş Tarihi' },
-    { key: 'gercekBitisTarihi', label: 'Gerçek Bitiş Tarihi' },
     { key: 'toplamTutar', label: 'Toplam Tutar' },
-    { key: 'hesaplananTutar', label: 'Hesaplanan Tutar' },
+    { key: 'iskonto', label: 'İskonto' },
+    { key: 'kdvOrani', label: 'KDV Oranı' },
+    { key: 'kdvTutari', label: 'KDV Tutarı' },
+    { key: 'iskontoSonrasiTutar', label: 'İskonto Sonrası Tutar' },
+    { key: 'kdvDahilTutar', label: 'KDV Dahil Tutar' },
     { key: 'bugunTarihi', label: 'Bugünün Tarihi' },
   ],
   cek: [
@@ -55,12 +59,12 @@ const PLACEHOLDERS = {
   ],
 };
 
-export default function ContractTemplateEditorModal({
+export default function QuoteTemplateEditorModal({
   template,
   isNew,
   onClose,
   onSave,
-}: ContractTemplateEditorModalProps) {
+}: QuoteTemplateEditorModalProps) {
   const [templateName, setTemplateName] = useState('');
   const [isBusy, setIsBusy] = useState(false);
   const [images, setImages] = useState<TemplateImage[]>([]);
@@ -90,6 +94,7 @@ export default function ContractTemplateEditorModal({
       type: 'doc',
       content: [],
     },
+    editable: true,
   });
 
   useEffect(() => {
@@ -128,20 +133,17 @@ export default function ContractTemplateEditorModal({
     try {
       setUploadingImage(true);
       const response = await templateImageService.uploadAsync(file);
-      
-      // Görseli listeye ekle
+
       await loadImages();
-      
-      // Editöre ekle
+
       if (editor) {
         editor.chain().focus().setImage({ src: `image:${response.ImageId}` }).run();
       }
 
-      // File input'u temizle
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       alert(getApiErrorMessage(error));
     } finally {
       setUploadingImage(false);
@@ -167,7 +169,7 @@ export default function ContractTemplateEditorModal({
       const content = editor.getJSON();
 
       if (isNew) {
-        const response = await contractTemplateService.createAsync({
+        const response = await quoteTemplateService.createAsync({
           TemplateName: templateName,
           Content: content,
           IsDefault: false,
@@ -175,13 +177,13 @@ export default function ContractTemplateEditorModal({
         if (onSave) {
           onSave(response.TemplateId);
         }
-        alert('Şablon başarıyla oluşturuldu!');
+        alert('Teklif şablonu başarıyla oluşturuldu!');
       } else if (template) {
-        await contractTemplateService.updateAsync(template.TemplateId, {
+        await quoteTemplateService.updateAsync(template.TemplateId, {
           TemplateName: templateName,
           Content: content,
         });
-        alert('Şablon başarıyla güncellendi!');
+        alert('Teklif şablonu başarıyla güncellendi!');
       }
 
       onClose();
@@ -199,7 +201,7 @@ export default function ContractTemplateEditorModal({
     try {
       setIsBusy(true);
       const content = editor.getJSON();
-      const blob = await contractTemplateService.previewContentAsync(content);
+      const blob = await quoteTemplateService.previewContentAsync(content);
 
       if (blob.size === 0) {
         alert('PDF önizlemesi oluşturulamadı (sunucu boş yanıt döndü).');
@@ -241,14 +243,13 @@ export default function ContractTemplateEditorModal({
   }
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
       <div className="bg-background-panel rounded-panel w-full max-w-6xl p-6 max-h-[95vh] overflow-y-auto">
         <h2 className="text-2xl font-bold mb-6">
-          {isNew ? 'Yeni Şablon Oluştur' : 'Şablon Düzenle'}
+          {isNew ? 'Yeni Teklif Şablonu Oluştur' : 'Teklif Şablonu Düzenle'}
         </h2>
 
         <div className="space-y-4">
-          {/* Şablon Adı */}
           <div>
             <label className="block text-sm font-medium mb-2">Şablon Adı *</label>
             <input
@@ -256,13 +257,11 @@ export default function ContractTemplateEditorModal({
               value={templateName}
               onChange={(e) => setTemplateName(e.target.value)}
               className="input w-full"
-              placeholder="Örn: Standart Kiralama Sözleşmesi"
+              placeholder="Örn: Standart Teklif Şablonu"
             />
           </div>
 
-          {/* Toolbar */}
           <div className="card p-3 flex flex-wrap gap-2">
-            {/* Metin Formatlama */}
             <button
               onClick={() => editor.chain().focus().toggleBold().run()}
               disabled={!editor.can().chain().focus().toggleBold().run()}
@@ -322,8 +321,7 @@ export default function ContractTemplateEditorModal({
               →
             </button>
             <div className="w-px bg-background-border mx-1" />
-            
-            {/* Görsel Yükleme */}
+
             <input
               ref={fileInputRef}
               type="file"
@@ -339,7 +337,6 @@ export default function ContractTemplateEditorModal({
               {uploadingImage ? 'Yükleniyor...' : '📷 Görsel Yükle'}
             </button>
 
-            {/* Görsel Seç */}
             {images.length > 0 && (
               <>
                 <select
@@ -362,8 +359,7 @@ export default function ContractTemplateEditorModal({
             )}
 
             <div className="w-px bg-background-border mx-1" />
-            
-            {/* Placeholder Butonları */}
+
             <div className="flex gap-1">
               <select
                 onChange={(e) => {
@@ -422,8 +418,8 @@ export default function ContractTemplateEditorModal({
                 }}
                 className="input text-sm px-2 py-1"
               >
-                <option value="">Sözleşme Bilgileri</option>
-                {PLACEHOLDERS.sozlesme.map((p) => (
+                <option value="">Teklif Bilgileri</option>
+                {PLACEHOLDERS.teklif.map((p) => (
                   <option key={p.key} value={p.key}>
                     {p.label}
                   </option>
@@ -439,12 +435,10 @@ export default function ContractTemplateEditorModal({
             </div>
           </div>
 
-          {/* Editör */}
           <div className="card p-4 min-h-[400px]">
             <EditorContent editor={editor} />
           </div>
 
-          {/* Butonlar */}
           <div className="flex gap-3">
             <button onClick={onClose} className="btn-secondary flex-1">
               İptal
@@ -469,8 +463,8 @@ export default function ContractTemplateEditorModal({
       <PdfPreviewModal
         open={showPdfPreview}
         pdfUrl={pdfPreviewUrl}
-        title="Şablon Önizleme"
-        downloadFileName="sablon_onizleme.pdf"
+        title="Teklif Şablonu Önizleme"
+        downloadFileName="teklif_sablon_onizleme.pdf"
         onClose={closePdfPreview}
       />
     </div>

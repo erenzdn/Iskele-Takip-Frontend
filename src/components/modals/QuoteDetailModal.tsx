@@ -1,23 +1,32 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { CheckIcon, XIcon } from '@phosphor-icons/react';
+import { CheckIcon, ClipboardIcon, XIcon } from '@phosphor-icons/react';
 import {
   Quote,
+  QuoteTemplate,
+  QuotePackage,
   Customer,
   Inventory,
-  QuoteDetailItem,
+  QuoteLineItem,
   ConstructionSite,
   QuoteStatus,
   Warehouse,
 } from '../../models';
 import { quoteService, WarehouseAssignment } from '../../services/quoteService';
+import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
 import { getApiErrorMessage } from '../../utils/apiError';
+import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
+import { packageService } from '../../services/packageService';
 import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
+import QuoteTemplateEditorModal from './QuoteTemplateEditorModal';
+import PdfPreviewModal from './PdfPreviewModal';
+import ManualLineItemModal from './ManualLineItemModal';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -37,7 +46,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   const [plannedEndDate, setPlannedEndDate] = useState(
     new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
   );
-  const [quoteItems, setQuoteItems] = useState<QuoteDetailItem[]>([]);
+  const [quoteItems, setQuoteItems] = useState<QuoteLineItem[]>([]);
   const [status, setStatus] = useState<QuoteStatus>(QuoteStatus.Pending);
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
@@ -59,46 +68,127 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   const [itemIskonto, setItemIskonto] = useState<Record<number, number>>({});
   const [vatRate, setVatRate] = useState<number>(20);
   const [quoteCode, setQuoteCode] = useState<string>('');
+  const [currency, setCurrency] = useState<'TRY' | 'EUR'>('TRY');
+
+  // Teklif şablonu yönetimi
+  const [templates, setTemplates] = useState<QuoteTemplate[]>([]);
+  const [selectedTemplateId, setSelectedTemplateId] = useState<number | ''>('');
+  const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
+  const [editingTemplate, setEditingTemplate] = useState<QuoteTemplate | null>(null);
+  const [isNewTemplate, setIsNewTemplate] = useState(false);
+  const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [isAddingMaterialTable, setIsAddingMaterialTable] = useState(false);
+  const [showManualLineModal, setShowManualLineModal] = useState(false);
+  const [packages, setPackages] = useState<QuotePackage[]>([]);
+  const [selectedPackageId, setSelectedPackageId] = useState<string>('');
+  const [showCreatePackageModal, setShowCreatePackageModal] = useState(false);
+  const [newPackageName, setNewPackageName] = useState('');
+  const [newPackageDescription, setNewPackageDescription] = useState('');
+  const [newPackageDiscount, setNewPackageDiscount] = useState<number>(0);
+  const [isCreatingPackage, setIsCreatingPackage] = useState(false);
+  const [packagesLoadError, setPackagesLoadError] = useState<string | null>(null);
+  const [fullQuote, setFullQuote] = useState<Quote | null>(null);
 
   useEffect(() => {
     loadData();
+    loadTemplates();
+    loadPackages();
   }, []);
 
   useEffect(() => {
-    if (quote) {
-      setSelectedCustomerId(quote.CustomerId);
-      setSelectedSiteId(quote.SiteId || '');
-      setStartDate(quote.StartDate.split('T')[0]);
-      setPlannedEndDate(quote.PlannedEndDate.split('T')[0]);
-      setStatus(quote.Status);
-      setNotes(quote.Notes || '');
-      setIskonto(quote.Iskonto ?? 0);
-      setVatRate(quote.VatRate ?? 20);
-      setQuoteCode(quote.QuoteCode ?? '');
+    if (!quote?.QuoteId || isNew) {
+      setFullQuote(null);
+      return;
+    }
+    let cancelled = false;
+    const loadFullQuote = async () => {
+      try {
+        const detail = await quoteService.getByIdAsync(quote.QuoteId);
+        if (!cancelled) setFullQuote(detail);
+      } catch (error) {
+        console.error('Load full quote error:', error);
+        if (!cancelled) setFullQuote(quote);
+      }
+    };
+    loadFullQuote();
+    return () => {
+      cancelled = true;
+    };
+  }, [quote?.QuoteId, isNew]);
 
-      if (quote.QuoteDetails) {
-        const items: QuoteDetailItem[] = quote.QuoteDetails.map((detail) => ({
-          QuoteDetailId: detail.QuoteDetailId,
-          ItemId: detail.ItemId,
-          Quantity: detail.Quantity,
-          DailyPrice: detail.DailyPrice,
-          Item: undefined,
-          ItemName: detail.ItemName || '',
-        }));
+  useEffect(() => {
+    const source = fullQuote ?? quote;
+    if (source) {
+      const parsedIskonto = Number(
+        (source as any).Iskonto ??
+          (source as any).iskonto ??
+          (source as any).Discount ??
+          (source as any).discount ??
+          0
+      );
+      const parsedVatRate = Number(
+        (source as any).VatRate ??
+          (source as any).vatRate ??
+          (source as any).Kdv ??
+          (source as any).kdv ??
+          20
+      );
+      setSelectedCustomerId(source.CustomerId);
+      setSelectedSiteId(source.SiteId || '');
+      setStartDate(source.StartDate.split('T')[0]);
+      setPlannedEndDate(source.PlannedEndDate.split('T')[0]);
+      setStatus(source.Status);
+      setNotes(source.Notes || '');
+      setIskonto(Number.isFinite(parsedIskonto) ? parsedIskonto : 0);
+      setVatRate(Number.isFinite(parsedVatRate) ? parsedVatRate : 20);
+      setQuoteCode(source.QuoteCode ?? '');
+      setCurrency(source.Currency === 'EUR' ? 'EUR' : 'TRY');
+
+      const details = (source as any).details ?? source.QuoteDetails ?? [];
+      if (details.length > 0) {
+        const items: QuoteLineItem[] = (details as any[]).map((detail: any) => {
+          const isManual = detail.is_manual === true || detail.IsManual === true || detail.IsManual === 1;
+          if (isManual) {
+            return {
+              kind: 'manual',
+              ClientId: `manual-${detail.QuoteDetailId ?? crypto.randomUUID()}`,
+              QuoteDetailId: detail.QuoteDetailId,
+              is_manual: true,
+              Description: String(detail.Description ?? detail.description ?? '').trim() || 'Manuel Kalem',
+              Quantity: Number(detail.Quantity ?? 1) || 1,
+              DailyPrice: Number(detail.DailyPrice ?? 0) || 0,
+            };
+          }
+          return {
+            kind: 'inventory',
+            QuoteDetailId: detail.QuoteDetailId,
+            ItemId: detail.ItemId,
+            Quantity: detail.Quantity,
+            DailyPrice: detail.DailyPrice,
+            Item: undefined,
+            ItemName: detail.ItemName || '',
+          };
+        });
         setQuoteItems(items);
-        const globalIsk = quote.Iskonto ?? 0;
+        const globalIsk = Number.isFinite(parsedIskonto) ? parsedIskonto : 0;
         setItemIskonto((prev) => {
           const next = { ...prev };
-          items.forEach((i) => (next[i.ItemId] = globalIsk));
+          items.forEach((i) => {
+            if (i.kind === 'inventory') next[i.ItemId] = globalIsk;
+          });
           return next;
         });
+      } else {
+        setQuoteItems([]);
       }
 
-      if (quote.CustomerId) {
-        loadSites(quote.CustomerId);
+      if (source.CustomerId) {
+        loadSites(source.CustomerId);
       }
     }
-  }, [quote]);
+  }, [quote, fullQuote]);
 
   // Müşteri değiştiğinde şantiyeleri yükle
   useEffect(() => {
@@ -129,6 +219,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     const loadItemNames = async () => {
       const itemsWithNames = await Promise.all(
         quoteItems.map(async (item) => {
+          if (item.kind === 'manual') return item;
           if (item.ItemName) return item;
           try {
             const inventoryItem = await inventoryService.getByIdAsync(item.ItemId);
@@ -145,7 +236,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       setQuoteItems(itemsWithNames);
     };
 
-    if (quoteItems.length > 0 && quoteItems.some((i) => !i.ItemName)) {
+    if (quoteItems.length > 0 && quoteItems.some((i) => i.kind === 'inventory' && !i.ItemName)) {
       loadItemNames();
     }
   }, [quoteItems.length]);
@@ -165,15 +256,39 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     }
   };
 
+  const loadTemplates = async () => {
+    try {
+      const templateList = await quoteTemplateService.getAllAsync();
+      setTemplates(templateList);
+    } catch (error) {
+      console.error('Load templates error:', error);
+      setTemplates([]);
+    }
+  };
+
+  const loadPackages = async () => {
+    try {
+      const packageList = await packageService.getAllAsync();
+      setPackages(packageList);
+      setPackagesLoadError(null);
+    } catch (error) {
+      console.error('Load packages error:', error);
+      setPackages([]);
+      setPackagesLoadError(getApiErrorMessage(error));
+    }
+  };
+
   const plannedDays = Math.ceil(
     (new Date(plannedEndDate).getTime() - new Date(startDate).getTime()) /
       (1000 * 60 * 60 * 24)
   );
 
-  const totalPrice = quoteItems.reduce(
-    (sum, item) => sum + item.DailyPrice * item.Quantity * plannedDays,
-    0
-  );
+  const getLineTotal = (item: QuoteLineItem) => {
+    if (item.kind === 'manual') return item.DailyPrice * item.Quantity;
+    return item.DailyPrice * item.Quantity * plannedDays;
+  };
+
+  const totalPrice = quoteItems.reduce((sum, item) => sum + getLineTotal(item), 0);
 
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getItemIskonto = (itemId: number) => itemIskonto[itemId] ?? iskonto;
@@ -181,8 +296,8 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = totalPrice;
   const discountAmount = quoteItems.reduce((sum, item) => {
-    const lineTotal = item.DailyPrice * item.Quantity * plannedDays;
-    const pct = getItemIskonto(item.ItemId);
+    const lineTotal = getLineTotal(item);
+    const pct = item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto;
     return sum + lineTotal * (pct / 100);
   }, 0);
   const discountedTotal = subtotal - discountAmount;
@@ -192,22 +307,27 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   /** Panelden ürün + miktar ile listeye ekler. */
   const addItemFromPicker = (item: Inventory, quantity: number) => {
     const qty = Math.max(1, quantity);
-    const existingItem = quoteItems.find((i) => i.ItemId === item.ItemId);
+    const existingItem = quoteItems.find((i) => i.kind === 'inventory' && i.ItemId === item.ItemId);
 
     if (existingItem) {
       setQuoteItems(
         quoteItems.map((i) =>
-          i.ItemId === item.ItemId ? { ...i, Quantity: i.Quantity + qty } : i
+          i.kind === 'inventory' && i.ItemId === item.ItemId ? { ...i, Quantity: i.Quantity + qty } : i
         )
       );
     } else {
+      const dailyPrice =
+        currency === 'EUR'
+          ? (item.MonthlyListPriceEur ?? 0) / 30
+          : (item.MonthlyListPrice || 0) / 30;
       setQuoteItems([
         ...quoteItems,
         {
+          kind: 'inventory',
           QuoteDetailId: 0,
           ItemId: item.ItemId,
           Quantity: qty,
-          DailyPrice: (item.MonthlyListPrice || 0) / 30,
+          DailyPrice: dailyPrice,
           Item: item,
           ItemName: item.ItemName,
         },
@@ -224,13 +344,17 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   }, [lastAddedItemIds]);
 
   const handleRemoveItem = (itemId: number) => {
-    setQuoteItems(quoteItems.filter((i) => i.ItemId !== itemId));
+    setQuoteItems(quoteItems.filter((i) => !(i.kind === 'inventory' && i.ItemId === itemId)));
+  };
+
+  const handleRemoveManualItem = (clientId: string) => {
+    setQuoteItems(quoteItems.filter((i) => !(i.kind === 'manual' && i.ClientId === clientId)));
   };
 
   const updateQuoteItemQuantity = (itemId: number, newQty: number) => {
     const qty = Math.max(1, Math.floor(newQty));
     setQuoteItems((prev) =>
-      prev.map((i) => (i.ItemId === itemId ? { ...i, Quantity: qty } : i))
+      prev.map((i) => (i.kind === 'inventory' && i.ItemId === itemId ? { ...i, Quantity: qty } : i))
     );
   };
 
@@ -244,7 +368,9 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     setIskonto(value);
     setItemIskonto((prev) => {
       const next = { ...prev };
-      quoteItems.forEach((i) => (next[i.ItemId] = value));
+      quoteItems.forEach((i) => {
+        if (i.kind === 'inventory') next[i.ItemId] = value;
+      });
       return next;
     });
   };
@@ -252,8 +378,19 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   const currentUser = useAuthStore((s) => s.user);
 
   const handleSave = async () => {
-    if (!selectedCustomerId || quoteItems.length === 0) {
-      alert('Müşteri seçimi ve en az bir malzeme gereklidir');
+    const validationError = firstValidationError([
+      validateRequired(String(selectedCustomerId || ''), 'Müşteri'),
+      validateDate(startDate, 'Başlangıç tarihi', true),
+      validateDate(plannedEndDate, 'Planlanan bitiş tarihi', true),
+      validateNumber(iskonto, 'İskonto', { min: 0, max: 100 }),
+      validateNumber(vatRate, 'KDV', { min: 0, max: 100 }),
+    ]);
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+    if (quoteItems.length === 0) {
+      alert('En az bir malzeme veya manuel kalem eklemelisiniz.');
       return;
     }
 
@@ -264,42 +401,63 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
 
     try {
       setIsBusy(true);
-      const details = quoteItems.map((item) => ({
-        ItemId: item.ItemId,
-        Quantity: item.Quantity,
-        DailyPrice: item.DailyPrice,
-      }));
+      const details = quoteItems.map((item) => {
+        if (item.kind === 'manual') {
+          return {
+            is_manual: true,
+            Description: item.Description,
+            Quantity: item.Quantity,
+            DailyPrice: item.DailyPrice,
+          };
+        }
+        return {
+          ItemId: item.ItemId,
+          Quantity: item.Quantity,
+        };
+      });
 
       const requestBody: Record<string, unknown> = {
         CustomerId: Number(selectedCustomerId),
         StartDate: new Date(startDate).toISOString(),
         PlannedEndDate: new Date(plannedEndDate).toISOString(),
-        TotalPrice: totalPrice,
         Status: status,
-        Notes: notes || undefined,
+        Notes: normalizeText(notes) || undefined,
         Iskonto: iskonto,
         VatRate: vatRate,
+        Currency: currency,
         details,
       };
 
       if (selectedSiteId) {
         requestBody.SiteId = Number(selectedSiteId);
       }
-      if (quoteCode.trim()) {
-        requestBody.QuoteCode = quoteCode.trim();
+      if (normalizeText(quoteCode)) {
+        requestBody.QuoteCode = normalizeText(quoteCode);
       }
 
       if (isNew) {
         const result = await quoteService.createAsync(requestBody as any);
         alert(`Teklif başarıyla oluşturuldu! (ID: ${result.QuoteId})`);
       } else if (quote) {
-        await quoteService.updateAsync(quote.QuoteId, requestBody as any);
+        const updateBody: Record<string, unknown> = {
+          Status: status,
+          Iskonto: iskonto,
+          VatRate: vatRate,
+          Currency: currency,
+        };
+        if (selectedSiteId) {
+          updateBody.SiteId = Number(selectedSiteId);
+        }
+        if (normalizeText(quoteCode)) {
+          updateBody.QuoteCode = normalizeText(quoteCode);
+        }
+        await quoteService.updateAsync(quote.QuoteId, updateBody as any);
         alert('Teklif başarıyla güncellendi!');
       }
       onClose();
     } catch (error) {
       console.error('Save quote error:', error);
-      alert('Kaydetme hatası');
+      alert(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -323,7 +481,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       onClose();
     } catch (error) {
       console.error('Delete quote error:', error);
-      alert('Silme hatası');
+      alert(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -340,7 +498,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       onClose();
     } catch (error) {
       console.error('Accept quote error:', error);
-      alert('Kabul etme hatası');
+      alert(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -357,7 +515,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
       onClose();
     } catch (error) {
       console.error('Reject quote error:', error);
-      alert('Reddetme hatası');
+      alert(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -426,6 +584,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
     } else if (convertMode === 'perItem') {
       const assignments: WarehouseAssignment[] = [];
       for (const item of quoteItems) {
+        if (item.kind !== 'inventory') continue;
         const itemAssignments = perItemAssignments[item.ItemId] ?? [];
         const total = itemAssignments.reduce((s, a) => s + a.Quantity, 0);
         if (total !== item.Quantity) {
@@ -460,7 +619,221 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
   };
 
   const formatCurrency = (amount: number) => {
-    return `₺${amount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    const formatted = amount.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    return currency === 'EUR' ? `€${formatted}` : `₺${formatted}`;
+  };
+
+  const handlePreviewDocument = async () => {
+    if (!quote || !selectedTemplateId) {
+      alert('Önizleme için bir şablon seçmelisiniz');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const blob = await quoteService.previewDocumentAsync(quote.QuoteId, Number(selectedTemplateId));
+      if (blob.size === 0) {
+        alert('Sunucu boş yanıt döndürdü (boyut: 0).');
+        return;
+      }
+      const isPdf = blob.type === 'application/pdf' || blob.type === '';
+      if (!isPdf && blob.size < 10000) {
+        const text = await blob.text();
+        try {
+          const j = JSON.parse(text);
+          alert('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
+        } catch {
+          alert('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
+        }
+        return;
+      }
+      const url = window.URL.createObjectURL(blob);
+      setPdfPreviewUrl(url);
+      setShowPdfPreview(true);
+    } catch (error) {
+      console.error('Preview document error:', error);
+      alert(getApiErrorMessage(error) || 'Önizleme hatası');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleCloneQuote = async () => {
+    if (!quote?.QuoteId) return;
+    try {
+      setIsBusy(true);
+      const result = await quoteService.cloneQuoteAsync(quote.QuoteId);
+      alert(`${result.message || 'Teklif başarıyla kopyalandı.'}\nYeni Teklif ID: ${result.QuoteId}`);
+      onClose();
+    } catch (error) {
+      console.error('Clone quote error:', error);
+      alert(getApiErrorMessage(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleCreateFromPackage = async () => {
+    const validationError = firstValidationError([
+      validateRequired(String(selectedPackageId || ''), 'Paket'),
+      validateRequired(String(selectedCustomerId || ''), 'Müşteri'),
+      validateDate(startDate, 'Başlangıç tarihi', true),
+      validateDate(plannedEndDate, 'Planlanan bitiş tarihi', true),
+    ]);
+    if (validationError) {
+      alert(validationError);
+      return;
+    }
+    if (sites.length > 0 && !selectedSiteId) {
+      alert('Bu müşterinin şantiyeleri bulunuyor. Lütfen bir şantiye seçin.');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const detail = await packageService.getByIdAsync(selectedPackageId);
+      const packageItems = detail.items ?? detail.Items ?? [];
+
+      if (packageItems.length === 0) {
+        alert('Seçili paket içinde ürün bulunamadı.');
+        return;
+      }
+
+      const nextItems: QuoteLineItem[] = [];
+      let missingCount = 0;
+
+      for (const pkgItem of packageItems) {
+        const rawId = pkgItem.ItemId ?? pkgItem.ProductId;
+        const itemId = Number.parseInt(String(rawId ?? ''), 10);
+        const quantity = Math.max(1, Number.parseInt(String(pkgItem.Quantity ?? 1), 10) || 1);
+
+        if (!Number.isFinite(itemId) || itemId <= 0) {
+          missingCount += 1;
+          continue;
+        }
+
+        const inv = availableItems.find((i) => i.ItemId === itemId);
+        if (!inv) {
+          missingCount += 1;
+          continue;
+        }
+
+        const dailyPrice =
+          currency === 'EUR'
+            ? (inv.MonthlyListPriceEur ?? 0) / 30
+            : (inv.MonthlyListPrice || 0) / 30;
+
+        const existing = nextItems.find((x) => x.kind === 'inventory' && x.ItemId === itemId);
+        if (existing && existing.kind === 'inventory') {
+          existing.Quantity += quantity;
+        } else {
+          nextItems.push({
+            kind: 'inventory',
+            QuoteDetailId: 0,
+            ItemId: itemId,
+            Quantity: quantity,
+            DailyPrice: dailyPrice,
+            Item: inv,
+            ItemName: inv.ItemName,
+          });
+        }
+      }
+
+      if (nextItems.length === 0) {
+        alert('Paketten aktarılabilecek geçerli ürün bulunamadı.');
+        return;
+      }
+
+      setQuoteItems(nextItems);
+      const packageDiscount = Number(detail.DefaultDiscount ?? 0) || 0;
+      handleGlobalIskontoChange(Math.max(0, Math.min(100, packageDiscount)));
+
+      const message =
+        missingCount > 0
+          ? `Paket uygulandı. ${missingCount} kalem envanterde bulunamadığı için atlandı.\nLütfen kontrol edip Kaydet'e basın.`
+          : "Paket ürünleri eklendi. Lütfen kontrol edip Kaydet'e basın.";
+      alert(message);
+    } catch (error) {
+      console.error('Apply package to quote form error:', error);
+      alert(getApiErrorMessage(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleCreatePackageFromCurrentQuote = async () => {
+    const inventoryItems = quoteItems.filter((i): i is Extract<QuoteLineItem, { kind: 'inventory' }> => i.kind === 'inventory');
+    if (!normalizeText(newPackageName)) {
+      alert('Paket adı zorunludur.');
+      return;
+    }
+    if (inventoryItems.length === 0) {
+      alert('Paket oluşturmak için teklifte en az bir envanter ürünü olmalıdır.');
+      return;
+    }
+    try {
+      setIsCreatingPackage(true);
+      const response = await packageService.createAsync({
+        packageName: normalizeText(newPackageName) as string,
+        description: normalizeText(newPackageDescription) || undefined,
+        defaultDiscount: Math.max(0, Math.min(100, Number(newPackageDiscount) || 0)),
+        items: inventoryItems.map((item) => ({
+          productId: item.ItemId,
+          quantity: item.Quantity,
+        })),
+      });
+      await loadPackages();
+      const createdId = String((response as any).PackageId ?? (response as any).packageId ?? (response as any).id ?? '');
+      if (createdId) {
+        setSelectedPackageId(createdId);
+      }
+      setShowCreatePackageModal(false);
+      setNewPackageName('');
+      setNewPackageDescription('');
+      setNewPackageDiscount(0);
+      alert('Paket başarıyla oluşturuldu.');
+    } catch (error) {
+      console.error('Create package error:', error);
+      alert(getApiErrorMessage(error));
+    } finally {
+      setIsCreatingPackage(false);
+    }
+  };
+
+  const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
+    if (!quote || !selectedTemplateId) {
+      alert('Döküman oluşturmak için bir şablon seçmelisiniz');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      const blob = await quoteService.generateDocumentAsync(
+        quote.QuoteId,
+        Number(selectedTemplateId),
+        format
+      );
+      if (blob.size === 0) {
+        alert('Belge oluşturulamadı (sunucu boş yanıt döndü).');
+        return;
+      }
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `teklif_${quote.QuoteId}.${format}`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+    } catch (error) {
+      console.error('Generate document error:', error);
+      alert(getApiErrorMessage(error) || 'Döküman oluşturma hatası');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const closePdfPreview = () => {
+    setShowPdfPreview(false);
+    if (pdfPreviewUrl) {
+      window.URL.revokeObjectURL(pdfPreviewUrl);
+      setPdfPreviewUrl(null);
+    }
   };
 
   const getStatusBadge = () => {
@@ -629,6 +1002,19 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                 />
               </div>
 
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Para Birimi</label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TRY">TRY (TL)</option>
+                  <option value="EUR">EUR (€)</option>
+                </select>
+              </div>
+
               <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
                 <label className="block text-xs font-medium text-text-primary">Notlar</label>
                 <textarea
@@ -639,6 +1025,102 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                   placeholder="Teklif ile ilgili notlar..."
                 />
               </div>
+
+              {!isReadOnly && (
+                <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
+                  <label className="block text-xs font-medium text-text-primary">Teklif Şablonu (Opsiyonel)</label>
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedTemplateId}
+                      onChange={(e) => setSelectedTemplateId(Number(e.target.value) || '')}
+                      className="input w-full text-sm py-1.5"
+                    >
+                      <option value="">Şablon seçin</option>
+                      {templates.map((t) => (
+                        <option key={t.TemplateId} value={t.TemplateId}>
+                          {t.TemplateName} {t.IsDefault ? '(Varsayılan)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {selectedTemplateId && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
+                          if (!template) return;
+                          try {
+                            setLoadingTemplate(true);
+                            const fullTemplate = await quoteTemplateService.getByIdAsync(template.TemplateId);
+                            setEditingTemplate(fullTemplate);
+                            setIsNewTemplate(false);
+                            setIsTemplateEditorOpen(true);
+                          } catch (error) {
+                            console.error('Şablon yükleme hatası:', error);
+                            alert(getApiErrorMessage(error));
+                          } finally {
+                            setLoadingTemplate(false);
+                          }
+                        }}
+                        disabled={loadingTemplate}
+                        className="btn-secondary text-sm shrink-0"
+                      >
+                        {loadingTemplate ? 'Yükleniyor...' : 'Düzenle'}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingTemplate(null);
+                        setIsNewTemplate(true);
+                        setIsTemplateEditorOpen(true);
+                      }}
+                      className="btn-secondary text-sm shrink-0"
+                    >
+                      Yeni
+                    </button>
+                  </div>
+                </div>
+              )}
+              {isNew && !isReadOnly && (
+                <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
+                  <label className="block text-xs font-medium text-text-primary">Hazır Paket (Opsiyonel)</label>
+                  {packagesLoadError && (
+                    <div className="text-xs text-red-300 mb-1">
+                      Paketler yüklenemedi: {packagesLoadError}
+                    </div>
+                  )}
+                  <div className="flex gap-2">
+                    <select
+                      value={selectedPackageId}
+                      onChange={(e) => setSelectedPackageId(e.target.value)}
+                      className="input w-full text-sm py-1.5"
+                    >
+                      <option value="">Paketten oluşturmak için paket seçin</option>
+                      {packages.map((p) => (
+                        <option key={p.PackageId} value={p.PackageId}>
+                          {p.PackageName || `Paket #${p.PackageId}`}
+                        </option>
+                      ))}
+                    </select>
+                    <button
+                      type="button"
+                      onClick={handleCreateFromPackage}
+                      disabled={isBusy || !selectedPackageId}
+                      className="btn-secondary text-sm shrink-0"
+                    >
+                      Paketten Oluştur
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setShowCreatePackageModal(true)}
+                      disabled={isBusy}
+                      className="btn-secondary text-sm shrink-0"
+                    >
+                      Yeni
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-background-border pt-2">
@@ -664,8 +1146,73 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                     Ürün Ekle
                   </button>
                 )}
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setShowManualLineModal(true)}
+                    className="btn-secondary"
+                  >
+                    Manuel Kalem Ekle
+                  </button>
+                )}
+                {!isReadOnly && selectedTemplateId && quoteItems.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
+                      if (!template) return;
+                      try {
+                        setIsAddingMaterialTable(true);
+                        const fullTemplate = await quoteTemplateService.getByIdAsync(template.TemplateId);
+                        const content = JSON.parse(JSON.stringify(fullTemplate.Content || { type: 'doc', content: [] }));
+                        if (!content.content) content.content = [];
+                        const hasPlaceholder = JSON.stringify(content).includes('{{malzemeTablosu}}');
+                        if (hasPlaceholder) {
+                          alert('Bu şablonda zaten malzeme tablosu placeholder\'ı mevcut.');
+                          return;
+                        }
+                        const placeholderNode = {
+                          type: 'paragraph',
+                          content: [{ type: 'text', text: '{{malzemeTablosu}}' }],
+                        };
+                        content.content.push(placeholderNode);
+                        await quoteTemplateService.updateAsync(template.TemplateId, { Content: content });
+                        await loadTemplates();
+                        alert('Malzeme tablosu şablona eklendi!');
+                      } catch (error) {
+                        console.error('Add material table error:', error);
+                        alert(getApiErrorMessage(error));
+                      } finally {
+                        setIsAddingMaterialTable(false);
+                      }
+                    }}
+                    disabled={isAddingMaterialTable}
+                    className="btn-secondary text-sm"
+                  >
+                    <ClipboardIcon size={16} weight="regular" className="inline mr-1" aria-hidden />
+                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Tabloyu Şablona Ekle'}
+                  </button>
+                )}
+                {!isNew && quote && selectedTemplateId && (
+                  <>
+                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className="btn-primary text-sm">
+                      {isBusy ? 'Yükleniyor...' : 'Önizle'}
+                    </button>
+                    <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className="btn-secondary text-sm">
+                      PDF İndir
+                    </button>
+                    <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className="btn-secondary text-sm">
+                      Word İndir
+                    </button>
+                  </>
+                )}
                 {!isNew && isReadOnly && (
                   <>
+                    {!quote?.ConvertedContractId && (
+                      <button onClick={handleCloneQuote} disabled={isBusy} className="btn-secondary">
+                        Teklifi Kopyala
+                      </button>
+                    )}
                     {status === QuoteStatus.Pending && !quote?.ConvertedContractId && (
                       <button
                         onClick={() => setIsReadOnly(false)}
@@ -795,19 +1342,23 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                   ) : (
                     quoteItems.map((item) => {
                       const itemCode =
-                        availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ??
-                        '—';
-                      const lineTotal = item.DailyPrice * item.Quantity * plannedDays;
-                      const justAdded = lastAddedItemIds.includes(item.ItemId);
+                        item.kind === 'inventory'
+                          ? availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ?? '—'
+                          : '—';
+                      const lineTotal = getLineTotal(item);
+                      const justAdded =
+                        item.kind === 'inventory' ? lastAddedItemIds.includes(item.ItemId) : false;
                       return (
                         <tr
-                          key={item.ItemId}
+                          key={item.kind === 'inventory' ? `inv-${item.ItemId}` : `man-${item.ClientId}`}
                           className={`border-b border-background-border hover:bg-background-hover/50 transition-colors duration-300 ${
                             justAdded ? 'bg-green-500/20' : ''
                           }`}
                         >
                           <td className="px-3 py-2 text-text-secondary">{itemCode}</td>
-                          <td className="px-3 py-2 font-medium">{item.ItemName}</td>
+                          <td className="px-3 py-2 font-medium">
+                            {item.kind === 'inventory' ? item.ItemName : item.Description}
+                          </td>
                           <td className="px-3 py-2 text-right">
                             {isReadOnly ? (
                               item.Quantity
@@ -816,12 +1367,20 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                                 type="number"
                                 min={1}
                                 value={item.Quantity}
-                                onChange={(e) =>
-                                  updateQuoteItemQuantity(
-                                    item.ItemId,
-                                    Number(e.target.value) || 1
-                                  )
-                                }
+                                onChange={(e) => {
+                                  const v = Number(e.target.value) || 1;
+                                  if (item.kind === 'inventory') {
+                                    updateQuoteItemQuantity(item.ItemId, v);
+                                  } else {
+                                    setQuoteItems((prev) =>
+                                      prev.map((x) =>
+                                        x.kind === 'manual' && x.ClientId === item.ClientId
+                                          ? { ...x, Quantity: Math.max(1, Math.floor(v)) }
+                                          : x
+                                      )
+                                    );
+                                  }
+                                }}
                                 className="input w-16 text-right py-1 text-sm"
                                 aria-label="Miktar"
                               />
@@ -832,17 +1391,21 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                           </td>
                           <td className="px-3 py-2 text-right">
                             {isReadOnly ? (
-                              Number(getItemIskonto(item.ItemId)) || 0
+                              Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto) || 0
                             ) : (
                               <input
                                 type="number"
                                 min={0}
                                 max={100}
                                 step={0.01}
-                                value={Number(getItemIskonto(item.ItemId)) || 0}
+                                value={Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto) || 0}
                                 onChange={(e) => {
                                   const v = parseFloat(e.target.value);
-                                  updateQuoteItemIskonto(item.ItemId, Number.isFinite(v) ? v : 0);
+                                  if (item.kind === 'inventory') {
+                                    updateQuoteItemIskonto(item.ItemId, Number.isFinite(v) ? v : 0);
+                                  } else {
+                                    setIskonto(Number.isFinite(v) ? v : 0);
+                                  }
                                 }}
                                 className="input w-16 text-right py-1 text-sm"
                                 aria-label="İskonto %"
@@ -856,7 +1419,11 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                             {!isReadOnly && (
                               <button
                                 type="button"
-                                onClick={() => handleRemoveItem(item.ItemId)}
+                                onClick={() =>
+                                  item.kind === 'inventory'
+                                    ? handleRemoveItem(item.ItemId)
+                                    : handleRemoveManualItem(item.ClientId)
+                                }
                                 className="text-error hover:text-red-700 inline-flex p-1"
                                 aria-label="Kaldır"
                               >
@@ -986,7 +1553,7 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
 
             {convertMode === 'perItem' && (
               <div className="space-y-4 mb-6">
-                {quoteItems.map((item) => {
+                {quoteItems.filter((i) => i.kind === 'inventory').map((item) => {
                   const assignments = perItemAssignments[item.ItemId] ?? [];
                   const total = getAssignmentTotalForItem(item.ItemId);
                   const isValid = total === item.Quantity;
@@ -1071,7 +1638,9 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
                   isBusy ||
                   (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) ||
                   (convertMode === 'perItem' &&
-                    quoteItems.some((q) => getAssignmentTotalForItem(q.ItemId) !== q.Quantity))
+                    quoteItems
+                      .filter((q) => q.kind === 'inventory')
+                      .some((q) => getAssignmentTotalForItem(q.ItemId) !== q.Quantity))
                 }
                 className="btn-success flex-1"
               >
@@ -1087,7 +1656,114 @@ export default function QuoteDetailModal({ quote, isNew, onClose }: QuoteDetailM
         items={availableItems}
         onItemSelect={addItemFromPicker}
         displayMode="quote"
+        currency={currency}
       />
+      <ManualLineItemModal
+        open={showManualLineModal}
+        mode="quote"
+        currency={currency}
+        onClose={() => setShowManualLineModal(false)}
+        onAdd={(data) => {
+          setQuoteItems((prev) => [
+            ...prev,
+            {
+              kind: 'manual',
+              ClientId: `manual-${crypto.randomUUID()}`,
+              is_manual: true,
+              Description: data.Description,
+              Quantity: data.Quantity,
+              DailyPrice: data.DailyPrice,
+            },
+          ]);
+        }}
+      />
+      {isTemplateEditorOpen &&
+        createPortal(
+          <QuoteTemplateEditorModal
+            template={editingTemplate}
+            isNew={isNewTemplate}
+            onClose={() => {
+              setIsTemplateEditorOpen(false);
+              setEditingTemplate(null);
+              loadTemplates();
+            }}
+            onSave={(templateId) => {
+              setSelectedTemplateId(templateId);
+              setIsTemplateEditorOpen(false);
+              setEditingTemplate(null);
+              loadTemplates();
+            }}
+          />,
+          document.body
+        )}
+      <PdfPreviewModal
+        open={showPdfPreview}
+        pdfUrl={pdfPreviewUrl}
+        title="Teklif Önizleme"
+        downloadFileName={`teklif_${quote?.QuoteId ?? ''}.pdf`}
+        onClose={closePdfPreview}
+      />
+      {showCreatePackageModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70]">
+          <div className="bg-background-panel rounded-panel w-full max-w-lg p-6">
+            <h3 className="text-lg font-semibold mb-3">Tekliften Yeni Paket Oluştur</h3>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-text-primary mb-1">Paket Adı *</label>
+                <input
+                  type="text"
+                  className="input w-full"
+                  value={newPackageName}
+                  onChange={(e) => setNewPackageName(e.target.value)}
+                  placeholder="Örn: 500m2 Standart Paket"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-primary mb-1">Açıklama</label>
+                <input
+                  type="text"
+                  className="input w-full"
+                  value={newPackageDescription}
+                  onChange={(e) => setNewPackageDescription(e.target.value)}
+                  placeholder="Opsiyonel açıklama"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-text-primary mb-1">Varsayılan İskonto (%)</label>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  className="input w-full"
+                  value={newPackageDiscount}
+                  onChange={(e) => setNewPackageDiscount(Number(e.target.value) || 0)}
+                />
+              </div>
+              <p className="text-xs text-text-secondary">
+                Not: Sadece envanter ürünleri pakete eklenir, manuel kalemler eklenmez.
+              </p>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                type="button"
+                className="btn-secondary flex-1"
+                onClick={() => setShowCreatePackageModal(false)}
+                disabled={isCreatingPackage}
+              >
+                İptal
+              </button>
+              <button
+                type="button"
+                className="btn-primary flex-1"
+                onClick={handleCreatePackageFromCurrentQuote}
+                disabled={isCreatingPackage}
+              >
+                {isCreatingPackage ? 'Oluşturuluyor...' : 'Oluştur'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

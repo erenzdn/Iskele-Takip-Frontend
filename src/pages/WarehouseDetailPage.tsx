@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { MagnifyingGlassIcon } from '@phosphor-icons/react';
-import { Warehouse, WarehouseStock, WarehouseStockResponse } from '../models';
+import {
+  Warehouse,
+  WarehouseStock,
+  WarehouseStockResponse,
+  Inventory,
+  MaterialCategory,
+  SubCategory,
+} from '../models';
 import { warehouseService } from '../services/warehouseService';
 import { contractService } from '../services/contractService';
+import { inventoryService } from '../services/inventoryService';
+import { subcategoryService } from '../services/subcategoryService';
 
 export default function WarehouseDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -16,6 +25,7 @@ export default function WarehouseDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [searchText, setSearchText] = useState('');
   const [selectedCategoryId, setSelectedCategoryId] = useState<number | 'all'>('all');
+  const [selectedSubCategoryId, setSelectedSubCategoryId] = useState<number | 'all'>('all');
   const [minQuantity, setMinQuantity] = useState<number | ''>('');
   const [maxQuantity, setMaxQuantity] = useState<number | ''>('');
   const [activeTab, setActiveTab] = useState<'stock' | 'rented'>('stock');
@@ -25,6 +35,9 @@ export default function WarehouseDetailPage() {
   const [rentedCategoryName, setRentedCategoryName] = useState<string>('all');
   const [rentedMinQty, setRentedMinQty] = useState<number | ''>('');
   const [rentedMaxQty, setRentedMaxQty] = useState<number | ''>('');
+  const [allInventory, setAllInventory] = useState<Inventory[]>([]);
+  const [allCategories, setAllCategories] = useState<MaterialCategory[]>([]);
+  const [allSubCategories, setAllSubCategories] = useState<SubCategory[]>([]);
 
   useEffect(() => {
     const warehouseId = Number(id);
@@ -37,9 +50,17 @@ export default function WarehouseDetailPage() {
       try {
         setLoading(true);
         setError(null);
-        const response: WarehouseStockResponse = await warehouseService.getStockAsync(warehouseId);
+        const [response, inventory, categories, subCategories] = await Promise.all([
+          warehouseService.getStockAsync(warehouseId),
+          inventoryService.getAllAsync(),
+          inventoryService.getAllCategoriesAsync(),
+          subcategoryService.getAllAsync(),
+        ]);
         setWarehouse(response.warehouse);
         setStock(response.stock);
+        setAllInventory(inventory);
+        setAllCategories(categories);
+        setAllSubCategories(subCategories);
       } catch (err) {
         console.error('Warehouse detail load error:', err);
         setError('Depo bilgileri yüklenirken bir hata oluştu.');
@@ -94,26 +115,37 @@ export default function WarehouseDetailPage() {
       const matchesCategory =
         selectedCategoryId === 'all' || s.CategoryId === selectedCategoryId;
 
+      const inv = allInventory.find((i) => i.ItemId === s.ItemId);
+      const subCats = inv?.SubCategories ?? [];
+      const matchesSubCategory =
+        selectedSubCategoryId === 'all' ||
+        subCats.some((sc) => sc.SubCategoryId === selectedSubCategoryId);
+
       const quantity = s.Quantity ?? 0;
       const matchesMin = minQuantity === '' || quantity >= minQuantity;
       const matchesMax = maxQuantity === '' || quantity <= maxQuantity;
 
-      return matchesText && matchesCategory && matchesMin && matchesMax;
+      return matchesText && matchesCategory && matchesSubCategory && matchesMin && matchesMax;
     });
-  }, [stock, searchText, selectedCategoryId, minQuantity, maxQuantity]);
+  }, [stock, searchText, selectedCategoryId, selectedSubCategoryId, minQuantity, maxQuantity, allInventory]);
 
   const categoryOptions = useMemo(() => {
-    const map = new Map<number, string | undefined>();
-    stock.forEach((s) => {
-      if (!map.has(s.CategoryId)) {
-        map.set(s.CategoryId, s.CategoryName);
-      }
-    });
-    return Array.from(map.entries()).map(([id, name]) => ({
-      id,
-      name: name || `Kategori #${id}`,
+    return allCategories.map((cat) => ({
+      id: cat.CategoryId,
+      name: cat.CategoryName,
     }));
-  }, [stock]);
+  }, [allCategories]);
+
+  const subCategoryOptions = useMemo(() => {
+    const filtered =
+      selectedCategoryId === 'all'
+        ? allSubCategories
+        : allSubCategories.filter((sc) => sc.CategoryId === selectedCategoryId);
+    return filtered.map((sc) => ({
+      id: sc.SubCategoryId,
+      name: sc.SubCategoryName,
+    }));
+  }, [allSubCategories, selectedCategoryId]);
 
   const filteredRentedItems = useMemo(() => {
     const text = rentedSearchText.trim().toLowerCase();
@@ -373,18 +405,19 @@ export default function WarehouseDetailPage() {
                 Aşağıdaki arama ve filtreleri kullanarak malzemeleri hızlıca daraltabilirsiniz.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => {
-                setSearchText('');
-                setSelectedCategoryId('all');
-                setMinQuantity('');
-                setMaxQuantity('');
-              }}
-              className="btn-secondary"
-            >
-              Filtreleri Sıfırla
-            </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSearchText('');
+                  setSelectedCategoryId('all');
+                  setSelectedSubCategoryId('all');
+                  setMinQuantity('');
+                  setMaxQuantity('');
+                }}
+                className="btn-secondary"
+              >
+                Filtreleri Sıfırla
+              </button>
           </div>
 
           <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
@@ -418,26 +451,49 @@ export default function WarehouseDetailPage() {
               </div>
             </div>
 
-            {/* Category filter */}
-            <div className="w-full lg:w-64">
-              <label className="block text-xs font-medium text-text-secondary mb-1">
-                Kategori
-              </label>
-              <select
-                className="input w-full"
-                value={selectedCategoryId === 'all' ? 'all' : String(selectedCategoryId)}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  setSelectedCategoryId(value === 'all' ? 'all' : Number(value));
-                }}
-              >
-                <option value="all">Tüm kategoriler</option>
-                {categoryOptions.map((cat) => (
-                  <option key={cat.id} value={cat.id}>
-                    {cat.name}
-                  </option>
-                ))}
-              </select>
+            {/* Category & Subcategory filters */}
+            <div className="w-full lg:w-64 space-y-3">
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">
+                  Kategori
+                </label>
+                <select
+                  className="input w-full"
+                  value={selectedCategoryId === 'all' ? 'all' : String(selectedCategoryId)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSelectedCategoryId(value === 'all' ? 'all' : Number(value));
+                  }}
+                >
+                  <option value="all">Tüm kategoriler</option>
+                  {categoryOptions.map((cat) => (
+                    <option key={cat.id} value={cat.id}>
+                      {cat.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-text-secondary mb-1">
+                  Alt Kategori
+                </label>
+                <select
+                  className="input w-full"
+                  value={selectedSubCategoryId === 'all' ? 'all' : String(selectedSubCategoryId)}
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSelectedSubCategoryId(value === 'all' ? 'all' : Number(value));
+                  }}
+                >
+                  <option value="all">Tüm alt kategoriler</option>
+                  {subCategoryOptions.map((sc) => (
+                    <option key={sc.id} value={sc.id}>
+                      {sc.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             {/* Quantity filter */}
@@ -492,19 +548,61 @@ export default function WarehouseDetailPage() {
               <table className="w-full text-xs border-collapse">
                 <thead className="sticky top-0 z-10 border-b border-background-border">
                   <tr>
-                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
-                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kategori</th>
-                    <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Miktar</th>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                      Malzeme
+                    </th>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                      Kategori
+                    </th>
+                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                      Alt Kategoriler
+                    </th>
+                    <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">
+                      Miktar
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredStock.map((s, idx) => (
-                    <tr key={s.StockId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}>
-                      <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">{s.ItemName}</td>
-                      <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">{s.CategoryName || '-'}</td>
-                      <td className="py-0.5 px-2 text-center align-middle"><span className="font-medium text-green-500">{s.Quantity.toLocaleString('tr-TR')}</span></td>
-                    </tr>
-                  ))}
+                  {filteredStock.map((s, idx) => {
+                    const inv = allInventory.find((i) => i.ItemId === s.ItemId);
+                    const subCats = inv?.SubCategories ?? [];
+                    return (
+                      <tr
+                        key={s.StockId}
+                        className={`border-b border-background-border hover:bg-background-hover ${
+                          idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
+                        }`}
+                      >
+                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">
+                          {s.ItemName}
+                        </td>
+                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">
+                          {s.CategoryName || '-'}
+                        </td>
+                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60">
+                          {subCats.length === 0 ? (
+                            <span className="text-text-secondary">-</span>
+                          ) : (
+                            <div className="flex flex-wrap gap-1">
+                              {subCats.map((sc) => (
+                                <span
+                                  key={sc.SubCategoryId}
+                                  className="inline-flex items-center rounded-full bg-purple-600/20 text-purple-200 px-2 py-0.5 text-[10px]"
+                                >
+                                  {sc.SubCategoryName}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="py-0.5 px-2 text-center align-middle">
+                          <span className="font-medium text-green-500">
+                            {s.Quantity.toLocaleString('tr-TR')}
+                          </span>
+                        </td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>

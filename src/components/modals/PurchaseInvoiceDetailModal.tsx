@@ -6,6 +6,19 @@ import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { formatCurrency } from '../../utils/formatters';
 import ConfirmModal from './ConfirmModal';
+import { getUserFacingErrorMessage } from '../../utils/apiError';
+import {
+  firstValidationError,
+  normalizeNumericText,
+  normalizeText,
+  validateDate,
+  validateEmail,
+  validateName,
+  validateNumber,
+  validatePhone,
+  validateRequired,
+  validateTaxNumber,
+} from '../../utils/validation';
 
 interface PurchaseInvoiceDetailModalProps {
   invoice: PurchaseInvoice | null;
@@ -162,16 +175,20 @@ export default function PurchaseInvoiceDetailModal({
   }, [items, itemSearch]);
 
   const handleSaveNewItem = async () => {
-    if (!newItemName.trim()) {
-      alert('Ürün adı zorunludur');
+    const newItemValidation = firstValidationError([
+      validateRequired(newItemName, 'Ürün adı'),
+      validateNumber(newItemTotalStock, 'Toplam stok', { min: 0 }),
+    ]);
+    if (newItemValidation) {
+      alert(newItemValidation);
       return;
     }
 
     try {
       setSavingItem(true);
       const result = await inventoryService.createAsync({
-        ItemName: newItemName,
-        ItemCode: newItemCode || undefined,
+        ItemName: normalizeText(newItemName),
+        ItemCode: normalizeText(newItemCode) || undefined,
         TotalStock: parseFloat(newItemTotalStock) || 0,
         OnRent: 0,
       });
@@ -181,7 +198,7 @@ export default function PurchaseInvoiceDetailModal({
       resetNewItemForm();
     } catch (error) {
       console.error('Save item error:', error);
-      alert('Ürün kaydetme hatası');
+      alert(getUserFacingErrorMessage(error, 'Ürün kaydetme hatası'));
     } finally {
       setSavingItem(false);
     }
@@ -196,19 +213,25 @@ export default function PurchaseInvoiceDetailModal({
 
   // Yeni müşteri kaydetme
   const handleSaveNewCustomer = async () => {
-    if (!newCustomerName.trim()) {
-      alert('Müşteri/Tedarikçi adı zorunludur');
+    const customerValidation = firstValidationError([
+      validateName(newCustomerName, 'Müşteri/Tedarikçi adı', true),
+      validateTaxNumber(newCustomerTaxId, 'Vergi no'),
+      validatePhone(newCustomerPhone, 'Telefon'),
+      validateEmail(newCustomerEmail, 'E-posta'),
+    ]);
+    if (customerValidation) {
+      alert(customerValidation);
       return;
     }
 
     try {
       setSavingCustomer(true);
       const result = await customerService.createAsync({
-        Name: newCustomerName,
-        TaxId: newCustomerTaxId || undefined,
-        PhoneNumber: newCustomerPhone || undefined,
-        Email: newCustomerEmail || undefined,
-        Address: newCustomerAddress || undefined,
+        Name: normalizeText(newCustomerName),
+        TaxId: normalizeNumericText(newCustomerTaxId) || undefined,
+        PhoneNumber: normalizeNumericText(newCustomerPhone) || undefined,
+        Email: normalizeText(newCustomerEmail) || undefined,
+        Address: normalizeText(newCustomerAddress) || undefined,
       });
 
       // Müşterileri yeniden yükle ve yeni müşteriyi seç
@@ -219,7 +242,7 @@ export default function PurchaseInvoiceDetailModal({
       resetNewCustomerForm();
     } catch (error) {
       console.error('Save customer error:', error);
-      alert('Müşteri kaydetme hatası');
+      alert(getUserFacingErrorMessage(error, 'Müşteri kaydetme hatası'));
     } finally {
       setSavingCustomer(false);
     }
@@ -235,26 +258,16 @@ export default function PurchaseInvoiceDetailModal({
   };
 
   const handleSave = async () => {
-    if (!invoiceDate) {
-      alert('Fatura tarihi zorunludur');
-      return;
-    }
-    if (!entryDate) {
-      alert('Giriş tarihi zorunludur');
-      return;
-    }
-    if (!customerId) {
-      alert('Tedarikçi seçimi zorunludur');
-      return;
-    }
-    const qty = parseFloat(quantity) || 0;
-    const price = parseFloat(unitPrice) || 0;
-    if (qty <= 0) {
-      alert('Miktar 0\'dan büyük olmalıdır');
-      return;
-    }
-    if (price <= 0) {
-      alert('Birim fiyat 0\'dan büyük olmalıdır');
+    const validationError = firstValidationError([
+      validateDate(invoiceDate, 'Fatura tarihi', true),
+      validateDate(entryDate, 'Giriş tarihi', true),
+      validateRequired(String(customerId || ''), 'Tedarikçi'),
+      validateNumber(quantity, 'Miktar', { min: 0.01 }),
+      validateNumber(unitPrice, 'Birim fiyat', { min: 0.01 }),
+      ...(exchangeRate ? [validateNumber(exchangeRate, 'Kur', { min: 0.0001 })] : []),
+    ]);
+    if (validationError) {
+      alert(validationError);
       return;
     }
 
@@ -265,13 +278,13 @@ export default function PurchaseInvoiceDetailModal({
         InvoiceDate: new Date(invoiceDate).toISOString(),
         EntryDate: new Date(entryDate).toISOString(),
         CustomerId: Number(customerId),
-        Description: description || undefined,
+        Description: normalizeText(description) || undefined,
         Subtotal: calculations.subtotal,
         VatAmount: calculations.vatAmount,
         TotalAmount: calculations.totalAmount,
         Iskonto: parseFloat(iskonto) || 0,
         VatRate: parseFloat(vatRate) || 0,
-        DocumentNo: documentNo || undefined,
+        DocumentNo: normalizeText(documentNo) || undefined,
         ItemId: itemId ? Number(itemId) : undefined,
         WarehouseId: warehouseId ? Number(warehouseId) : undefined,
         Quantity: itemId && warehouseId ? qty : undefined,
@@ -287,7 +300,7 @@ export default function PurchaseInvoiceDetailModal({
       onClose();
     } catch (error) {
       console.error('Save invoice error:', error);
-      alert('Kaydetme hatası');
+      alert(getUserFacingErrorMessage(error, 'Kaydetme hatası'));
     } finally {
       setIsBusy(false);
     }
@@ -307,7 +320,7 @@ export default function PurchaseInvoiceDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete invoice error:', error);
-      alert('Silme hatası');
+      alert(getUserFacingErrorMessage(error, 'Silme hatası'));
     } finally {
       setIsBusy(false);
     }

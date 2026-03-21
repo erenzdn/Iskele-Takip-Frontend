@@ -1,11 +1,12 @@
 import { useState, useEffect } from 'react';
-import { ClipboardIcon, NotePencilIcon } from '@phosphor-icons/react';
+import { ClipboardIcon, NotePencilIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
 import { contractService } from '../services/contractService';
 import { quoteService } from '../services/quoteService';
 import { customerService } from '../services/customerService';
 import { siteService } from '../services/siteService';
 import { Contract, Customer, ConstructionSite, Quote, QuoteStatus } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
+import { getApiErrorMessage } from '../utils/apiError';
 import EmptyState from '../components/EmptyState';
 import ContractDetailModal from '../components/modals/ContractDetailModal';
 import QuoteDetailModal from '../components/modals/QuoteDetailModal';
@@ -31,6 +32,13 @@ export default function ContractsPage() {
   // Customer ve Site Map (tüm tab'lar için ortak)
   const [customerMap, setCustomerMap] = useState<Map<number, Customer>>(new Map());
   const [siteMap, setSiteMap] = useState<Map<number, ConstructionSite>>(new Map());
+  const [searchText, setSearchText] = useState('');
+  const [selectedStatusFilter, setSelectedStatusFilter] = useState<'all' | 'active' | 'completed'>('all');
+  const [selectedCustomerFilter, setSelectedCustomerFilter] = useState<number | 'all'>('all');
+  const [quoteSearchText, setQuoteSearchText] = useState('');
+  const [quoteStatusFilter, setQuoteStatusFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('all');
+  const [quoteCustomerFilter, setQuoteCustomerFilter] = useState<number | 'all'>('all');
+  const [quotesError, setQuotesError] = useState<string | null>(null);
 
   useEffect(() => {
     loadCustomersAndSites();
@@ -71,6 +79,7 @@ export default function ContractsPage() {
 
       if (activeTab === 'quotes') {
         // Teklifleri yükle
+        setQuotesError(null);
         const quotesData = await quoteService.getAllAsync();
         const quotesWithCustomers = (quotesData || []).map((quote) => ({
           ...quote,
@@ -96,6 +105,7 @@ export default function ContractsPage() {
       console.error('Load data error:', error);
       if (activeTab === 'quotes') {
         setQuotes([]);
+        setQuotesError(getApiErrorMessage(error));
       } else {
         setContracts([]);
       }
@@ -174,8 +184,32 @@ export default function ContractsPage() {
     return activeTab === 'quotes' ? '+ Yeni Teklif' : '+ Yeni Sözleşme';
   };
 
+  const filteredContracts = contracts.filter((contract) => {
+    const text = searchText.trim().toLowerCase();
+    const customerName = contract.Customer?.Name?.toLowerCase() ?? '';
+    const contractCode = contract.ContractCode?.toLowerCase() ?? '';
+    const siteName = contract.Site ? contract.Site.SiteName?.toLowerCase() ?? '' : '';
+
+    const matchesText =
+      !text ||
+      customerName.includes(text) ||
+      contractCode.includes(text) ||
+      siteName.includes(text);
+
+    const matchesStatus =
+      selectedStatusFilter === 'all' ||
+      (selectedStatusFilter === 'active' && !contract.IsCompleted) ||
+      (selectedStatusFilter === 'completed' && contract.IsCompleted);
+
+    const matchesCustomer =
+      selectedCustomerFilter === 'all' ||
+      contract.CustomerId === selectedCustomerFilter;
+
+    return matchesText && matchesStatus && matchesCustomer;
+  });
+
   const renderContractsTable = () => {
-    if (contracts.length === 0) {
+    if (filteredContracts.length === 0) {
       return (
         <EmptyState
           icon={<ClipboardIcon size={48} weight="duotone" />}
@@ -207,7 +241,7 @@ export default function ContractsPage() {
               </tr>
             </thead>
             <tbody>
-              {contracts.map((contract, index) => (
+              {filteredContracts.map((contract, index) => (
                 <tr
                   key={contract.ContractId}
                   className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
@@ -239,15 +273,41 @@ export default function ContractsPage() {
           </table>
         </div>
         <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
-          <span>Toplam: {contracts.length} sözleşme</span>
+          <span>Toplam: {filteredContracts.length} sözleşme</span>
           <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
         </div>
       </div>
     );
   };
 
+  const filteredQuotes = quotes.filter((quote) => {
+    const text = quoteSearchText.trim().toLowerCase();
+    const customerName =
+      (quote.CustomerName || quote.Customer?.Name || '').toLowerCase();
+    const quoteCode = quote.QuoteCode?.toLowerCase() ?? '';
+    const siteName = quote.Site ? quote.Site.SiteName?.toLowerCase() ?? '' : '';
+
+    const matchesText =
+      !text ||
+      customerName.includes(text) ||
+      quoteCode.includes(text) ||
+      siteName.includes(text);
+
+    const matchesStatus =
+      quoteStatusFilter === 'all' ||
+      (quoteStatusFilter === 'pending' && quote.Status === QuoteStatus.Pending) ||
+      (quoteStatusFilter === 'accepted' && quote.Status === QuoteStatus.Accepted) ||
+      (quoteStatusFilter === 'rejected' && quote.Status === QuoteStatus.Rejected);
+
+    const matchesCustomer =
+      quoteCustomerFilter === 'all' ||
+      quote.CustomerId === quoteCustomerFilter;
+
+    return matchesText && matchesStatus && matchesCustomer;
+  });
+
   const renderQuotesTable = () => {
-    if (quotes.length === 0) {
+    if (filteredQuotes.length === 0) {
       return (
         <EmptyState
           icon={<NotePencilIcon size={48} weight="duotone" />}
@@ -275,7 +335,7 @@ export default function ContractsPage() {
               </tr>
             </thead>
             <tbody>
-              {quotes.map((quote, index) => (
+              {filteredQuotes.map((quote, index) => (
                 <tr
                   key={quote.QuoteId}
                   className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
@@ -296,7 +356,7 @@ export default function ContractsPage() {
           </table>
         </div>
         <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
-          <span>Toplam: {quotes.length} teklif</span>
+          <span>Toplam: {filteredQuotes.length} teklif</span>
           <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
         </div>
       </div>
@@ -313,6 +373,121 @@ export default function ContractsPage() {
         </div>
       </div>
 
+      {/* Sözleşme arama ve filtreleme alanı (sadece sözleşme tablarında) */}
+      {activeTab !== 'quotes' && (
+        <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
+          <div className="relative flex-1 min-w-[220px]">
+            <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
+              <MagnifyingGlassIcon size={14} weight="regular" color="currentColor" aria-hidden />
+            </span>
+            <input
+              type="text"
+              className="input w-full pl-7 py-2 text-sm"
+              placeholder="Müşteri adı, sözleşme kodu veya şantiye..."
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value)}
+            />
+          </div>
+          <select
+            value={selectedStatusFilter}
+            onChange={(e) =>
+              setSelectedStatusFilter(e.target.value as 'all' | 'active' | 'completed')
+            }
+            className="input py-2 px-3 text-sm w-40"
+          >
+            <option value="all">Tüm Durumlar</option>
+            <option value="active">Sadece Aktif</option>
+            <option value="completed">Sadece Tamamlanan</option>
+          </select>
+          <select
+            value={selectedCustomerFilter}
+            onChange={(e) => {
+              const val = e.target.value;
+              setSelectedCustomerFilter(val === 'all' ? 'all' : Number(val));
+            }}
+            className="input py-2 px-3 text-sm w-48"
+          >
+            <option value="all">Tüm Müşteriler</option>
+            {Array.from(customerMap.values()).map((c) => (
+              <option key={c.CustomerId} value={c.CustomerId}>
+                {c.Name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => {
+              setSearchText('');
+              setSelectedStatusFilter('all');
+              setSelectedCustomerFilter('all');
+            }}
+            className="btn-secondary py-2 px-3 text-sm"
+          >
+            Filtreleri Temizle
+          </button>
+        </div>
+      )}
+
+      {/* Teklif arama ve filtreleme alanı (sadece teklif tabında) */}
+      {activeTab === 'quotes' && (
+        <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+          <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
+          <div className="relative flex-1 min-w-[220px]">
+            <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
+              <MagnifyingGlassIcon size={14} weight="regular" color="currentColor" aria-hidden />
+            </span>
+            <input
+              type="text"
+              className="input w-full pl-7 py-2 text-sm"
+              placeholder="Müşteri adı, teklif kodu veya şantiye..."
+              value={quoteSearchText}
+              onChange={(e) => setQuoteSearchText(e.target.value)}
+            />
+          </div>
+          <select
+            value={quoteStatusFilter}
+            onChange={(e) =>
+              setQuoteStatusFilter(
+                e.target.value as 'all' | 'pending' | 'accepted' | 'rejected'
+              )
+            }
+            className="input py-2 px-3 text-sm w-40"
+          >
+            <option value="all">Tüm Durumlar</option>
+            <option value="pending">Beklemede</option>
+            <option value="accepted">Kabul Edilen</option>
+            <option value="rejected">Reddedilen</option>
+          </select>
+          <select
+            value={quoteCustomerFilter}
+            onChange={(e) => {
+              const val = e.target.value;
+              setQuoteCustomerFilter(val === 'all' ? 'all' : Number(val));
+            }}
+            className="input py-2 px-3 text-sm w-48"
+          >
+            <option value="all">Tüm Müşteriler</option>
+            {Array.from(customerMap.values()).map((c) => (
+              <option key={c.CustomerId} value={c.CustomerId}>
+                {c.Name}
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            onClick={() => {
+              setQuoteSearchText('');
+              setQuoteStatusFilter('all');
+              setQuoteCustomerFilter('all');
+            }}
+            className="btn-secondary py-2 px-3 text-sm"
+          >
+            Filtreleri Temizle
+          </button>
+        </div>
+      )}
+
       <div className="mb-3 border-b border-background-border flex gap-1">
         <button onClick={() => setActiveTab('active')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'active' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
           Aktif Sözleşmeler
@@ -327,6 +502,12 @@ export default function ContractsPage() {
           {activeTab === 'quotes' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
         </button>
       </div>
+
+      {activeTab === 'quotes' && quotesError && (
+        <div className="mb-3 rounded border border-red-700/50 bg-red-950/40 p-3 text-sm text-red-200">
+          Teklifler yüklenemedi: {quotesError}
+        </div>
+      )}
 
       {loading ? (
         <div className="flex items-center justify-center py-12">

@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../store/authStore';
 import { authService } from '../services/authService';
+import { getUserFacingErrorMessage } from '../utils/apiError';
+import { firstValidationError, normalizeText, validateRequired } from '../utils/validation';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -18,14 +20,12 @@ export default function LoginPage() {
     setIsBusy(true);
 
     // Validation
-    if (!username || !username.trim()) {
-      setErrorMessage('Kullanıcı adı boş olamaz');
-      setIsBusy(false);
-      return;
-    }
-    
-    if (!password || !password.trim()) {
-      setErrorMessage('Şifre boş olamaz');
+    const validationError = firstValidationError([
+      validateRequired(username, 'Kullanıcı adı'),
+      validateRequired(password, 'Şifre'),
+    ]);
+    if (validationError) {
+      setErrorMessage(validationError);
       setIsBusy(false);
       return;
     }
@@ -33,8 +33,8 @@ export default function LoginPage() {
     try {
       console.log('[LOGIN] Giriş denemesi:', { username, password: '***' });
       const response = await authService.loginAsync({ 
-        username: username.trim(), 
-        password: password.trim() 
+        username: normalizeText(username),
+        password: normalizeText(password)
       });
       console.log('[LOGIN] Başarılı, response:', response);
       
@@ -61,17 +61,7 @@ export default function LoginPage() {
         }
       }
       
-      // Backend'den gelen detaylı hata mesajını göster
-      if ((error as any)?.responseText) {
-        try {
-          const errorData = JSON.parse((error as any).responseText);
-          if (errorData.message) {
-            errorMsg = errorData.message;
-          }
-        } catch {
-          // JSON parse edilemezse olduğu gibi göster
-        }
-      }
+      errorMsg = getUserFacingErrorMessage(error, errorMsg);
       
       setErrorMessage(errorMsg);
     } finally {

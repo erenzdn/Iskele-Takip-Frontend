@@ -305,17 +305,39 @@ class ApiClient {
 
       if (!response.ok) {
         let errorText = '';
+        let userMessage = '';
         try {
           errorText = await response.text();
           devLog('[API ERROR RESPONSE]', errorText);
+
+          // Backend JSON hata gövdesi döndürdüyse anlamlı mesajı ayıkla
+          try {
+            const parsed = JSON.parse(errorText);
+            if (parsed && typeof parsed === 'object') {
+              userMessage =
+                (parsed.message as string) ||
+                (parsed.error as string) ||
+                (parsed.title as string) ||
+                '';
+            }
+          } catch {
+            // plain text ise olduğu gibi bırak
+          }
         } catch {
           errorText = 'Yanıt okunamadı';
         }
-        const error = new Error(`API Error: ${response.status} - ${errorText}`);
+
+        const finalMessage = userMessage || errorText;
+        const error = new Error(finalMessage || `API Error: ${response.status}`);
         (error as any).status = response.status;
-        (error as any).responseText = errorText;
+        (error as any).responseText = finalMessage;
+        (error as any).rawBody = errorText;
         throw error;
       }
+
+      const contentType = response.headers.get('Content-Type') || '';
+      const contentLength = response.headers.get('Content-Length') || '';
+      devLog('[API BLOB] Content-Type:', contentType, 'Content-Length:', contentLength);
 
       const blob = await response.blob();
       return blob;

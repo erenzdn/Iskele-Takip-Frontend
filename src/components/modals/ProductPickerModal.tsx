@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { CheckCircleIcon, XIcon } from '@phosphor-icons/react';
 import { Inventory } from '../../models';
 import ItemPickerPanel, { ItemDisplayMode } from '../ItemPickerPanel';
+import { validateNumber } from '../../utils/validation';
 
 interface ProductPickerModalProps {
   open: boolean;
@@ -10,6 +11,8 @@ interface ProductPickerModalProps {
   /** Ürün ve miktar ile listeye ekleme. Miktar sadece 1 değil, kullanıcının girdiği değer kullanılır. */
   onItemSelect: (item: Inventory, quantity: number) => void;
   displayMode?: ItemDisplayMode;
+  /** Seçilen para birimi; ürün listesinde fiyatlar bu birimde gösterilir. */
+  currency?: 'TRY' | 'EUR';
 }
 
 export default function ProductPickerModal({
@@ -18,6 +21,7 @@ export default function ProductPickerModal({
   items,
   onItemSelect,
   displayMode = 'contract',
+  currency = 'TRY',
 }: ProductPickerModalProps) {
   const [selectedForPreview, setSelectedForPreview] = useState<Inventory | null>(null);
   const [quantityStr, setQuantityStr] = useState('1');
@@ -46,6 +50,11 @@ export default function ProductPickerModal({
 
   const handleAddToList = () => {
     if (!selectedForPreview) return;
+    const qtyValidation = validateNumber(quantityStr, 'Miktar', { required: true, min: 1 });
+    if (!qtyValidation.valid) {
+      alert(qtyValidation.message);
+      return;
+    }
     const qty = Math.max(1, parseInt(quantityStr, 10) || 1);
     onItemSelect(selectedForPreview, qty);
     setQuantityStr('1');
@@ -84,6 +93,7 @@ export default function ProductPickerModal({
               items={items}
               onItemSelect={handleRowClick}
               displayMode={displayMode}
+              currency={currency}
               className="h-full"
             />
           </div>

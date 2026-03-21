@@ -3,6 +3,7 @@ import { MagnifyingGlassIcon, CaretRightIcon, CaretDownIcon } from '@phosphor-ic
 import { Inventory, MaterialCategory, SubCategory } from '../models';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
+import { normalizeText } from '../utils/validation';
 
 type ItemRecord = Inventory & Record<string, unknown>;
 
@@ -52,6 +53,15 @@ function getMonthlyPrice(i: ItemRecord): number {
   );
 }
 
+function getMonthlyPriceEur(i: ItemRecord): number {
+  return (
+    Number(
+      (i as { MonthlyListPriceEur?: number; monthlyListPriceEur?: number })
+        .MonthlyListPriceEur ?? (i as { monthlyListPriceEur?: number }).monthlyListPriceEur ?? 0
+    ) || 0
+  );
+}
+
 function getStock(i: ItemRecord): number {
   return (
     (Number((i as { TotalStock?: number; totalStock?: number }).TotalStock ?? (i as { totalStock?: number }).totalStock ?? 0) || 0) -
@@ -79,6 +89,8 @@ export interface ItemPickerPanelProps {
   onItemSelect: (item: Inventory) => void;
   displayMode?: ItemDisplayMode;
   className?: string;
+  /** Seçilen para birimi; fiyat bu birimde gösterilir. */
+  currency?: 'TRY' | 'EUR';
 }
 
 type SelectionType = 'all' | { categoryId: number } | { categoryId: number; subCategoryId: number };
@@ -88,6 +100,7 @@ export default function ItemPickerPanel({
   onItemSelect,
   displayMode = 'contract',
   className,
+  currency = 'TRY',
 }: ItemPickerPanelProps) {
   const [categories, setCategories] = useState<MaterialCategory[]>([]);
   const [allSubCategories, setAllSubCategories] = useState<SubCategory[]>([]);
@@ -378,7 +391,7 @@ export default function ItemPickerPanel({
             <input
               type="text"
               value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
+              onChange={(e) => setSearchText(normalizeText(e.target.value))}
               placeholder="Malzeme adı, kodu veya kategori ile ara..."
               className="input w-full pl-8 py-1.5 text-sm"
               aria-label="Ürün ara"
@@ -440,7 +453,9 @@ export default function ItemPickerPanel({
                         {getStock(i)}
                       </td>
                       <td className="px-3 py-2 text-right text-primary">
-                        ₺{getMonthlyPrice(i).toFixed(2)}/ay
+                        {currency === 'EUR'
+                          ? `€${getMonthlyPriceEur(i).toFixed(2)}/ay`
+                          : `₺${getMonthlyPrice(i).toFixed(2)}/ay`}
                       </td>
                     </tr>
                   );

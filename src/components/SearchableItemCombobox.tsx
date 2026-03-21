@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { MagnifyingGlassIcon, XIcon } from '@phosphor-icons/react';
 import { Inventory } from '../models';
+import { normalizeText } from '../utils/validation';
 
 type ItemRecord = Inventory & Record<string, unknown>;
 
@@ -58,7 +59,7 @@ interface SearchableItemComboboxProps {
 }
 
 export default function SearchableItemCombobox({
-  items,
+  items = [],
   value,
   onChange,
   displayMode = 'contract',
@@ -75,8 +76,8 @@ export default function SearchableItemCombobox({
   const q = searchText.trim().toLocaleLowerCase('tr-TR');
   const filtered =
     !q
-      ? items
-      : items.filter((item) => {
+      ? (items || [])
+      : (items || []).filter((item) => {
           const i = item as ItemRecord;
           return (
             getName(i).toLocaleLowerCase('tr-TR').includes(q) ||
@@ -85,7 +86,7 @@ export default function SearchableItemCombobox({
           );
         });
 
-  const selectedItem = items.find((item) => getItemId(item as ItemRecord) === value) as
+  const selectedItem = (items || []).find((item) => getItemId(item as ItemRecord) === value) as
     | ItemRecord
     | undefined;
   const displayValue = selectedItem ? getName(selectedItem) : '';
@@ -101,7 +102,7 @@ export default function SearchableItemCombobox({
   );
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const v = e.target.value;
+    const v = normalizeText(e.target.value);
     setSearchText(v);
     if (!isOpen) {
       setIsOpen(true);
@@ -183,8 +184,8 @@ export default function SearchableItemCombobox({
 
   return (
     <div ref={containerRef} className="relative flex-1 min-w-[200px]">
-      <div className="relative">
-        <span className="absolute inset-y-0 left-3 flex items-center text-text-secondary pointer-events-none">
+      <div className="flex items-stretch rounded-input border border-background-border bg-background-panel overflow-hidden focus-within:ring-2 focus-within:ring-primary focus-within:ring-offset-1 focus-within:ring-offset-background-main">
+        <span className="flex items-center justify-center w-10 shrink-0 text-text-secondary pointer-events-none bg-transparent">
           <MagnifyingGlassIcon size={20} weight="regular" color="currentColor" aria-hidden />
         </span>
         <input
@@ -195,28 +196,31 @@ export default function SearchableItemCombobox({
           onKeyDown={handleKeyDown}
           placeholder={placeholder}
           disabled={disabled}
-          className="input w-full pl-10 pr-10 focus:ring-2 focus:ring-primary focus:ring-offset-1 focus:ring-offset-background-main"
+          className="flex-1 min-w-0 px-3 py-2.5 bg-transparent border-0 text-text-primary placeholder-gray-500 focus:outline-none focus:ring-0 text-sm"
+          style={{ boxSizing: 'border-box' }}
           aria-label="Malzeme ara"
           aria-expanded={isOpen}
           aria-autocomplete="list"
           role="combobox"
         />
-        {inputValue && (
+        {inputValue ? (
           <button
             type="button"
             onClick={handleClear}
-            className="absolute right-2 top-1/2 -translate-y-1/2 w-7 h-7 flex items-center justify-center rounded-full text-text-secondary hover:text-text-primary hover:bg-background-hover transition-colors"
+            className="shrink-0 w-10 flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-background-hover transition-colors"
             aria-label="Temizle"
           >
-            <XIcon size={16} weight="regular" color="currentColor" aria-hidden />
+            <XIcon size={18} weight="regular" color="currentColor" aria-hidden />
           </button>
+        ) : (
+          <span className="w-2 shrink-0" aria-hidden />
         )}
       </div>
       {isOpen && (
         <ul
           ref={listRef}
           role="listbox"
-          className="absolute z-50 left-0 right-0 mt-1 max-h-72 overflow-auto rounded-lg border border-background-border bg-background-panel shadow-lg py-1"
+          className="absolute z-[200] left-0 right-0 mt-1 max-h-72 overflow-auto rounded-lg border border-background-border bg-background-panel shadow-lg py-1 min-w-[280px]"
         >
           {filtered.length === 0 ? (
             <li className="px-4 py-4 text-sm text-text-secondary">
