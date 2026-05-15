@@ -2,8 +2,11 @@ import { app, BrowserWindow, session, dialog } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
-import { autoUpdater } from 'electron-updater';
-import log from 'electron-log';
+import pkgUpdater from 'electron-updater';
+import pkgLog from 'electron-log';
+
+const { autoUpdater } = pkgUpdater;
+const log = pkgLog.default || pkgLog;
 
 // Logger configuration
 log.transports.file.level = 'info';
