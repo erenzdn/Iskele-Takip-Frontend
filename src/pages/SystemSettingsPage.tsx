@@ -2,11 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import {
   ArrowClockwiseIcon,
+  CircleNotchIcon,
   DownloadSimpleIcon,
   InfoIcon,
   MoonIcon,
   SunIcon,
   WarningIcon,
+  ShieldCheckIcon,
 } from '@phosphor-icons/react';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import { adminService } from '../services/adminService';
@@ -88,6 +90,7 @@ export default function SystemSettingsPage() {
     isUpdateAvailable, 
     isDownloading, 
     isDownloaded, 
+    isChecking,
     progress: updateProgress, 
     updateInfo, 
     error: updateError 
@@ -95,11 +98,12 @@ export default function SystemSettingsPage() {
 
   const updateStatus = useMemo(() => {
     if (updateError) return 'error';
+    if (isChecking) return 'checking';
     if (isDownloaded) return 'downloaded';
     if (isDownloading) return 'downloading';
     if (isUpdateAvailable) return 'available';
     return 'uptodate';
-  }, [isUpdateAvailable, isDownloading, isDownloaded, updateError]);
+  }, [isUpdateAvailable, isDownloading, isDownloaded, isChecking, updateError]);
 
   const confirmMessage = useMemo(() => {
     return [
@@ -264,20 +268,34 @@ export default function SystemSettingsPage() {
                 <span className={`badge flex items-center gap-1.5 ${
                   updateStatus === 'uptodate' ? 'bg-success/10 text-success' :
                   updateStatus === 'available' ? 'bg-error/10 text-error animate-pulse' :
+                  updateStatus === 'checking' ? 'bg-info/10 text-info' :
                   updateStatus === 'downloaded' ? 'bg-primary/10 text-primary' :
                   updateStatus === 'downloading' ? 'bg-info/10 text-info' :
                   updateStatus === 'error' ? 'bg-error/10 text-error' :
                   'bg-background-elevated text-text-secondary'
                 }`}>
                   {(updateStatus === 'available' || updateStatus === 'error') && <WarningIcon size={14} />}
-                  {updateStatus === 'idle' && 'Hazır'}
-                  {updateStatus === 'checking' && 'Kontrol ediliyor...'}
-                  {updateStatus === 'uptodate' && 'Güncel'}
+                  {updateStatus === 'checking' && (
+                    <>
+                      <CircleNotchIcon size={14} className="animate-spin" />
+                      Kontrol ediliyor...
+                    </>
+                  )}
+                  {updateStatus === 'uptodate' && (
+                    <>
+                      <ShieldCheckIcon size={14} />
+                      Yazılımınız Güncel
+                    </>
+                  )}
                   {updateStatus === 'available' && 'Yeni Güncelleme Mevcut!'}
                   {updateStatus === 'downloading' && 'İndiriliyor...'}
                   {updateStatus === 'downloaded' && 'Yüklemeye Hazır'}
                   {updateStatus === 'error' && 'Hata Oluştu'}
                 </span>
+              </div>
+              <div className="text-xs text-text-secondary flex items-center gap-2">
+                <InfoIcon size={14} />
+                <span>Mevcut Versiyon: v{window.electron?.appVersion || '1.4.5'}</span>
               </div>
 
               {updateInfo && (
@@ -312,15 +330,19 @@ export default function SystemSettingsPage() {
           </div>
 
           <div className="flex flex-wrap gap-3 items-center">
-            {updateStatus === 'uptodate' || updateStatus === 'idle' || updateStatus === 'error' ? (
+            {updateStatus === 'uptodate' || updateStatus === 'error' || updateStatus === 'checking' ? (
               <button
                 type="button"
                 onClick={handleCheckUpdates}
-                disabled={updateStatus === 'checking'}
-                className="btn-secondary flex items-center gap-2"
+                disabled={isChecking}
+                className="btn-secondary flex items-center gap-2 min-w-[180px] justify-center"
               >
-                <ArrowClockwiseIcon size={18} className={updateStatus === 'checking' ? 'animate-spin' : ''} />
-                {updateStatus === 'checking' ? 'Kontrol Ediliyor' : 'Güncellemeleri Denetle'}
+                {isChecking ? (
+                  <CircleNotchIcon size={18} className="animate-spin" />
+                ) : (
+                  <ArrowClockwiseIcon size={18} />
+                )}
+                {isChecking ? 'Denetleniyor...' : 'Güncellemeleri Denetle'}
               </button>
             ) : null}
 

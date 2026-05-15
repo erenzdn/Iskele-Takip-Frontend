@@ -3,7 +3,7 @@ import { useUpdateStore } from '../store/updateStore';
 import { toast } from '../hooks/useToast';
 
 export default function UpdateListener() {
-  const { setUpdateAvailable, setDownloading, setDownloaded, setError } = useUpdateStore();
+  const { setUpdateAvailable, setDownloading, setDownloaded, setError, setChecking } = useUpdateStore();
   const isInitialCheck = useRef(true);
 
   useEffect(() => {
@@ -11,7 +11,7 @@ export default function UpdateListener() {
 
     const unsubs = [
       window.electron.updates.onUpdateChecking(() => {
-        // Checking started
+        setChecking(true);
       }),
       window.electron.updates.onUpdateAvailable((info: any) => {
         setUpdateAvailable(true, info);
@@ -43,8 +43,15 @@ export default function UpdateListener() {
     // Initial check (Startup)
     window.electron.updates.checkForUpdates();
 
+    // 3 saniye sonra 'başlangıç kontrolü' sessizliğini boz. 
+    // Böylece kullanıcı butona bastığında her zaman geri bildirim alır.
+    const silenceTimer = setTimeout(() => {
+      isInitialCheck.current = false;
+    }, 3000);
+
     return () => {
       unsubs.forEach((unsub) => unsub());
+      clearTimeout(silenceTimer);
     };
   }, [setUpdateAvailable, setDownloading, setDownloaded, setError]);
 

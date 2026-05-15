@@ -133,7 +133,16 @@ app.whenReady().then(() => {
 
   ipcMain.on('check-for-updates', () => {
     log.info('Renderer: Güncelleme kontrolü tetiklendi.');
-    autoUpdater.checkForUpdates();
+    if (isDev) {
+      log.info('Geliştirme modu: Güncel durumu simüle ediliyor...');
+      setTimeout(() => {
+        BrowserWindow.getAllWindows().forEach(win => {
+          win.webContents.send('update-not-available', { version: app.getVersion() });
+        });
+      }, 1500);
+    } else {
+      autoUpdater.checkForUpdates();
+    }
   });
   // --- End Auto-updater Section ---
 
