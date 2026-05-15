@@ -1,5 +1,10 @@
-import { useState, useEffect, useMemo } from 'react';
-import { MagnifyingGlassIcon, CaretRightIcon, CaretDownIcon } from '@phosphor-icons/react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import {
+  MagnifyingGlassIcon,
+  CaretRightIcon,
+  CaretDownIcon,
+  CheckCircleIcon,
+} from '@phosphor-icons/react';
 import { Inventory, MaterialCategory, SubCategory } from '../models';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
@@ -17,6 +22,17 @@ function getName(i: ItemRecord): string {
         i.itemName ??
         (i.Item as { ItemName?: string })?.ItemName ??
         (i.Item as { itemName?: string })?.itemName
+    ) || ''
+  );
+}
+
+function getNameEn(i: ItemRecord): string {
+  return (
+    safeStr(
+      i.ItemNameEn ??
+        i.itemNameEn ??
+        (i.Item as { ItemNameEn?: string })?.ItemNameEn ??
+        (i.Item as { itemNameEn?: string })?.itemNameEn
     ) || ''
   );
 }
@@ -62,6 +78,42 @@ function getMonthlyPriceEur(i: ItemRecord): number {
   );
 }
 
+function getMonthlyPriceUsd(i: ItemRecord): number {
+  return (
+    Number(
+      (i as { MonthlyListPriceUsd?: number; monthlyListPriceUsd?: number })
+        .MonthlyListPriceUsd ?? (i as { monthlyListPriceUsd?: number }).monthlyListPriceUsd ?? 0
+    ) || 0
+  );
+}
+
+function getUnitPrice(i: ItemRecord): number {
+  return (
+    Number((i as { UnitPrice?: number; unitPrice?: number }).UnitPrice ?? (i as { unitPrice?: number }).unitPrice ?? 0) ||
+    0
+  );
+}
+
+function getUnitPriceEur(i: ItemRecord): number {
+  return (
+    Number(
+      (i as { UnitPriceEur?: number; unitPriceEur?: number }).UnitPriceEur ??
+        (i as { unitPriceEur?: number }).unitPriceEur ??
+        0
+    ) || 0
+  );
+}
+
+function getUnitPriceUsd(i: ItemRecord): number {
+  return (
+    Number(
+      (i as { UnitPriceUsd?: number; unitPriceUsd?: number }).UnitPriceUsd ??
+        (i as { unitPriceUsd?: number }).unitPriceUsd ??
+        0
+    ) || 0
+  );
+}
+
 function getStock(i: ItemRecord): number {
   return (
     (Number((i as { TotalStock?: number; totalStock?: number }).TotalStock ?? (i as { totalStock?: number }).totalStock ?? 0) || 0) -
@@ -84,13 +136,22 @@ const TURKISH_LETTERS = ['A', 'B', 'C', 'Ç', 'D', 'E', 'F', 'G', 'Ğ', 'H', 'I'
 
 export type ItemDisplayMode = 'contract' | 'quote';
 
+/** Teklif ürün seçicide: kiralama aylık liste, satış birim fiyat. */
+export type QuotePricingMode = 'rental' | 'sale';
+
 export interface ItemPickerPanelProps {
   items: Inventory[];
   onItemSelect: (item: Inventory) => void;
   displayMode?: ItemDisplayMode;
+  /** displayMode=quote için: satış teklifinde birim fiyat sütunu. */
+  quotePricing?: QuotePricingMode;
   className?: string;
   /** Seçilen para birimi; fiyat bu birimde gösterilir. */
-  currency?: 'TRY' | 'EUR';
+  currency?: 'TRY' | 'EUR' | 'USD';
+  /** Son eklenen / vurgulanacak ürün satırları (kısa süreli geri bildirim). */
+  highlightedItemIds?: ReadonlySet<number>;
+  /** Kalem listesinde olan ürünler (kalıcı «seçili» görünümü). */
+  pickedItemIds?: ReadonlySet<number>;
 }
 
 type SelectionType = 'all' | { categoryId: number } | { categoryId: number; subCategoryId: number };
@@ -99,8 +160,11 @@ export default function ItemPickerPanel({
   items,
   onItemSelect,
   displayMode = 'contract',
+  quotePricing = 'rental',
   className,
   currency = 'TRY',
+  highlightedItemIds,
+  pickedItemIds,
 }: ItemPickerPanelProps) {
   const [categories, setCategories] = useState<MaterialCategory[]>([]);
   const [allSubCategories, setAllSubCategories] = useState<SubCategory[]>([]);
@@ -109,6 +173,10 @@ export default function ItemPickerPanel({
   const [searchText, setSearchText] = useState('');
   const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
+  const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const rowRefs = useRef<Map<number, HTMLTableRowElement | null>>(new Map());
+  const searchInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -202,11 +270,79 @@ export default function ItemPickerPanel({
       const i = item as ItemRecord;
       return (
         getName(i).toLocaleLowerCase('tr-TR').includes(q) ||
+        getNameEn(i).toLocaleLowerCase('tr-TR').includes(q) ||
         getCode(i).toLocaleLowerCase('tr-TR').includes(q) ||
         getCatName(i).toLocaleLowerCase('tr-TR').includes(q)
       );
     });
   }, [filteredByLetter, q]);
+
+  useEffect(() => {
+    if (filteredItems.length === 0) {
+      setActiveItemId(null);
+      return;
+    }
+    setActiveItemId((current) => {
+      if (current != null && filteredItems.some((item) => item.ItemId === current)) return current;
+      return filteredItems[0].ItemId;
+    });
+  }, [filteredItems]);
+
+  useEffect(() => {
+    if (activeItemId == null) return;
+    rowRefs.current.get(activeItemId)?.scrollIntoView({ block: 'nearest' });
+  }, [activeItemId]);
+
+  const moveActiveSelection = useCallback(
+    (direction: 1 | -1) => {
+      if (filteredItems.length === 0) return;
+      const currentIndex = filteredItems.findIndex((item) => item.ItemId === activeItemId);
+      const startIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex =
+        direction === 1
+          ? (startIndex + 1) % filteredItems.length
+          : (startIndex - 1 + filteredItems.length) % filteredItems.length;
+      setActiveItemId(filteredItems[nextIndex].ItemId);
+    },
+    [activeItemId, filteredItems]
+  );
+
+  const focusSearchInput = useCallback(() => {
+    requestAnimationFrame(() => {
+      searchInputRef.current?.focus();
+    });
+  }, []);
+
+  const handleKeyboardSelect = useCallback(() => {
+    if (activeItemId == null) return;
+    const item = filteredItems.find((entry) => entry.ItemId === activeItemId);
+    if (item) {
+      onItemSelect(item);
+      // Enter ile seçimden sonra odağı panel içinde tut.
+      focusSearchInput();
+    }
+  }, [activeItemId, filteredItems, focusSearchInput, onItemSelect]);
+
+  const handleListKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLElement>) => {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault();
+        moveActiveSelection(1);
+      } else if (e.key === 'ArrowUp') {
+        e.preventDefault();
+        moveActiveSelection(-1);
+      } else if (e.key === 'Enter') {
+        e.preventDefault();
+        handleKeyboardSelect();
+      }
+    },
+    [handleKeyboardSelect, moveActiveSelection]
+  );
+
+  useEffect(() => {
+    if (!rootRef.current) return;
+    focusSearchInput();
+  }, [focusSearchInput]);
 
   const categoryCount = (categoryId: number) =>
     items.filter((item) => itemBelongsToCategory(item, categoryId)).length;
@@ -217,7 +353,11 @@ export default function ItemPickerPanel({
     ).length;
 
   return (
-    <div className={`flex border border-background-border rounded-lg overflow-hidden bg-background-panel ${className ?? ''}`}>
+    <div
+      ref={rootRef}
+      className={`flex border border-background-border rounded-lg overflow-hidden bg-background-panel ${className ?? ''}`}
+      onKeyDownCapture={handleListKeyDown}
+    >
       {/* Sol panel - Kategori ağacı */}
       <div className="w-[260px] flex-shrink-0 border-r border-background-border flex flex-col">
         <div className="p-2 border-b border-background-border bg-background-secondary">
@@ -389,17 +529,22 @@ export default function ItemPickerPanel({
               <MagnifyingGlassIcon size={18} weight="regular" />
             </span>
             <input
+              ref={searchInputRef}
               type="text"
               value={searchText}
               onChange={(e) => setSearchText(normalizeText(e.target.value))}
+              autoFocus
               placeholder="Malzeme adı, kodu veya kategori ile ara..."
               className="input w-full pl-8 py-1.5 text-sm"
               aria-label="Ürün ara"
             />
           </div>
         </div>
-        <div className="overflow-auto flex-1 min-h-[280px]">
-          <table className="w-full text-sm border-collapse" aria-label={displayMode === 'quote' ? 'Teklif ürün listesi' : 'Sözleşme ürün listesi'}>
+        <div
+          className="overflow-auto flex-1 min-h-[280px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+          tabIndex={0}
+        >
+          <table className="w-full text-sm border-collapse text-text-primary" aria-label={displayMode === 'quote' ? 'Teklif ürün listesi' : 'Sözleşme ürün listesi'}>
             <thead className="sticky top-0 bg-background-secondary z-10">
               <tr>
                 <th className="text-left px-3 py-2 font-semibold text-text-secondary border-b border-background-border">
@@ -418,7 +563,7 @@ export default function ItemPickerPanel({
                   Stok
                 </th>
                 <th className="text-right px-3 py-2 font-semibold text-text-secondary border-b border-background-border w-28">
-                  Fiyat
+                  {displayMode === 'quote' && quotePricing === 'sale' ? 'Birim' : 'Fiyat'}
                 </th>
               </tr>
             </thead>
@@ -439,23 +584,74 @@ export default function ItemPickerPanel({
               ) : (
                 filteredItems.map((item) => {
                   const i = item as ItemRecord;
+                  const isFlash = highlightedItemIds?.has(item.ItemId) ?? false;
+                  const isPicked = pickedItemIds?.has(item.ItemId) ?? false;
+                  const isActive = activeItemId === item.ItemId;
                   return (
                     <tr
                       key={item.ItemId}
-                      onClick={() => onItemSelect(item)}
-                      className="border-b border-background-border hover:bg-primary/15 cursor-pointer transition-colors"
+                      ref={(node) => {
+                        rowRefs.current.set(item.ItemId, node);
+                      }}
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                      }}
+                      onClick={() => {
+                        onItemSelect(item);
+                        focusSearchInput();
+                      }}
+                      onMouseEnter={() => setActiveItemId(item.ItemId)}
+                      className={`border-b border-background-border bg-background-surface hover:bg-background-hover cursor-pointer transition-colors ${
+                        isPicked ? 'bg-primary/12 border-l-[3px] border-l-primary' : ''
+                      } ${isFlash ? 'ring-1 ring-inset ring-primary/40' : ''} ${
+                        isActive ? 'bg-primary/20 ring-2 ring-inset ring-primary/70' : ''
+                      }`}
+                      aria-selected={isPicked}
                     >
-                      <td className="px-3 py-2 text-text-secondary">{getCode(i) || '—'}</td>
-                      <td className="px-3 py-2 font-medium">{getName(i)}</td>
+                      <td className="px-3 py-2 text-text-secondary">
+                        <span className="inline-flex items-center gap-2">
+                          {isPicked && (
+                            <CheckCircleIcon
+                              size={18}
+                              weight="fill"
+                              className="shrink-0 text-primary"
+                              aria-hidden
+                            />
+                          )}
+                          {!isPicked && isFlash && (
+                            <CheckCircleIcon
+                              size={18}
+                              weight="fill"
+                              className="shrink-0 text-green-400"
+                              aria-hidden
+                            />
+                          )}
+                          <span>{getCode(i) || '—'}</span>
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        <div className="font-medium text-text-primary leading-tight">{getName(i)}</div>
+                        {getNameEn(i).trim() ? (
+                          <div className="text-xs text-text-secondary mt-0.5 leading-tight">{getNameEn(i).trim()}</div>
+                        ) : null}
+                      </td>
                       <td className="px-3 py-2 text-text-secondary">Adet</td>
                       <td className="px-3 py-2 text-text-secondary">{getCatName(i) || '—'}</td>
                       <td className="px-3 py-2 text-right text-text-secondary">
                         {getStock(i)}
                       </td>
                       <td className="px-3 py-2 text-right text-primary">
-                        {currency === 'EUR'
-                          ? `€${getMonthlyPriceEur(i).toFixed(2)}/ay`
-                          : `₺${getMonthlyPrice(i).toFixed(2)}/ay`}
+                        {displayMode === 'quote' && quotePricing === 'sale'
+                          ? currency === 'EUR'
+                            ? `€${getUnitPriceEur(i).toFixed(2)}`
+                            : currency === 'USD'
+                              ? `$${getUnitPriceUsd(i).toFixed(2)}`
+                              : `₺${getUnitPrice(i).toFixed(2)}`
+                          : currency === 'EUR'
+                            ? `€${getMonthlyPriceEur(i).toFixed(2)}/ay`
+                            : currency === 'USD'
+                              ? `$${getMonthlyPriceUsd(i).toFixed(2)}/ay`
+                              : `₺${getMonthlyPrice(i).toFixed(2)}/ay`}
                       </td>
                     </tr>
                   );

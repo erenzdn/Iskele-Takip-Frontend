@@ -25,7 +25,7 @@ export default function ProtectedRoute({
   }
 
   if (requiredPermission) {
-    const permissions = user?.Permissions ?? [];
+    const permissions = user?.permissions ?? [];
     if (!permissions.includes(requiredPermission)) {
       return <Navigate to="/" replace />;
     }

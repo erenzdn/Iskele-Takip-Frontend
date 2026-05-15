@@ -5,6 +5,7 @@ import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
+import { toast } from '../../hooks/useToast';
 
 interface WarehouseDetailModalProps {
   warehouse: Warehouse | null;
@@ -96,7 +97,7 @@ export default function WarehouseDetailModal({
 
   const handleSave = async () => {
     if (!warehouseName.trim()) {
-      alert('Depo adı zorunludur');
+      toast.warning('Depo adı zorunludur');
       return;
     }
 
@@ -118,7 +119,7 @@ export default function WarehouseDetailModal({
       onClose();
     } catch (error) {
       console.error('Save warehouse error:', error);
-      alert('Kaydetme hatası');
+      toast.error('Kaydetme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -138,7 +139,7 @@ export default function WarehouseDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete warehouse error:', error);
-      alert('Silme hatası');
+      toast.error('Silme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -154,7 +155,7 @@ export default function WarehouseDetailModal({
   const handleAddStock = async () => {
     const qty = Math.max(0, parseInt(quantityStr, 10) || 0);
     if (!warehouse || !selectedItemId || qty <= 0) {
-      alert('Lütfen ürün seçin ve geçerli bir miktar girin');
+      toast.warning('Lütfen ürün seçin ve geçerli bir miktar girin');
       return;
     }
 
@@ -170,7 +171,7 @@ export default function WarehouseDetailModal({
       await loadStock();
     } catch (error) {
       console.error('Add stock error:', error);
-      alert('Stok ekleme hatası');
+      toast.error('Stok ekleme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -184,7 +185,7 @@ export default function WarehouseDetailModal({
   const handleSaveEditStock = async (stockItem: WarehouseStock) => {
     const qty = Math.max(0, parseInt(editingQuantityStr, 10) || 0);
     if (!warehouse || qty < 0) {
-      alert('Geçerli bir miktar girin');
+      toast.warning('Geçerli bir miktar girin');
       return;
     }
 
@@ -198,7 +199,7 @@ export default function WarehouseDetailModal({
       await loadStock();
     } catch (error) {
       console.error('Update stock error:', error);
-      alert('Stok güncelleme hatası');
+      toast.error('Stok güncelleme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -224,7 +225,7 @@ export default function WarehouseDetailModal({
       await loadStock();
     } catch (error) {
       console.error('Remove stock error:', error);
-      alert('Stok silme hatası');
+      toast.error('Stok silme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -406,8 +407,8 @@ export default function WarehouseDetailModal({
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full text-sm table-compact">
-                  <thead>
+                <table className="w-full text-sm table-compact text-text-primary">
+                  <thead className="bg-background-surface">
                     <tr className="border-b border-background-border">
                       <th className="text-left p-3 font-semibold">Ürün</th>
                       <th className="text-left p-3 font-semibold">Kategori</th>
@@ -417,7 +418,7 @@ export default function WarehouseDetailModal({
                   </thead>
                   <tbody>
                     {stock.map((item) => (
-                      <tr key={item.StockId} className="border-b border-background-border">
+                      <tr key={item.StockId} className="border-b border-background-border bg-background-surface hover:bg-background-hover transition-colors">
                         <td className="p-3 font-medium">{item.ItemName}</td>
                         <td className="p-3 text-text-secondary">{item.CategoryName || '-'}</td>
                         <td className="p-3 text-center">

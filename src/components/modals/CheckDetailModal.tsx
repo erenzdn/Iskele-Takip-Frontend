@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Check, CheckStatus, Customer } from '../../models';
+import { CashAccount, Check, CheckStatus, Customer } from '../../models';
 import { checkService } from '../../services/checkService';
+import { cashService } from '../../services/cashService';
 import { customerService } from '../../services/customerService';
 import { firstValidationError, normalizeText, validateDate, validateIban, validateNumber, validateRequired } from '../../utils/validation';
-import { getUserFacingErrorMessage } from '../../utils/apiError';
+import { getApiFieldErrors, getUserFacingErrorMessage } from '../../utils/apiError';
+import { toast } from '../../hooks/useToast';
 
 interface CheckDetailModalProps {
   check: Check | null;
@@ -37,6 +39,10 @@ export default function CheckDetailModal({
   const [status, setStatus] = useState<CheckStatus>('PORTFOLIO');
   const [ownerName, setOwnerName] = useState('');
   const [notes, setNotes] = useState('');
+  const [cashAccountId, setCashAccountId] = useState('');
+  const [reason, setReason] = useState('');
+  const [accounts, setAccounts] = useState<CashAccount[]>([]);
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const [isBusy, setIsBusy] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -72,11 +78,73 @@ export default function CheckDetailModal({
       setStatus(check.Status ?? 'PORTFOLIO');
       setOwnerName(check.OwnerName ?? '');
       setNotes(check.Notes ?? '');
+      setCashAccountId('');
+      setReason('');
     } else {
       setStatus('PORTFOLIO');
       setCurrency('TRY');
+      setCashAccountId('');
+      setReason('');
     }
   }, [check]);
+
+  useEffect(() => {
+    if (!check || status !== 'CASHED') {
+      setAccounts([]);
+      return;
+    }
+
+    const loadAccounts = async () => {
+      try {
+        const data = await cashService.listAccountsAsync();
+        setAccounts(data.filter((acc) => acc.is_active));
+      } catch (e) {
+        console.error('Load cash accounts error (check detail):', e);
+        setAccounts([]);
+      }
+    };
+
+    void loadAccounts();
+  }, [check, status]);
+
+  const isStatusChanged = !!check && status !== (check.Status ?? 'PORTFOLIO');
+
+  const isBaseFieldChanged = () => {
+    if (!check) return true;
+    const originalCustomerId = check.CustomerId ?? null;
+    const currentCustomerId = selectedCustomer?.CustomerId ?? null;
+    return (
+      normalizeText(bankName) !== normalizeText(check.BankName) ||
+      (normalizeText(branchName) || '') !== (normalizeText(check.BranchName ?? '') || '') ||
+      (normalizeText(accountNumber) || '') !== (normalizeText(check.AccountNumber ?? '') || '') ||
+      normalizeText(checkNumber) !== normalizeText(check.CheckNumber) ||
+      (typeof amount === 'number' ? amount : Number(amount)) !== Number(check.Amount) ||
+      currency !== ((check.Currency as 'TRY' | 'EUR') || 'TRY') ||
+      issueDate !== (check.IssueDate?.slice(0, 10) ?? '') ||
+      dueDate !== (check.DueDate?.slice(0, 10) ?? '') ||
+      (normalizeText(ownerName) || '') !== (normalizeText(check.OwnerName ?? '') || '') ||
+      (normalizeText(notes) || '') !== (normalizeText(check.Notes ?? '') || '') ||
+      originalCustomerId !== currentCustomerId
+    );
+  };
+
+  const getFinanceActionMessage = (financeAction?: string | null) => {
+    switch ((financeAction || '').toUpperCase()) {
+      case 'CASH_CREATED':
+      case 'CREATE_CASH_TRANSACTION':
+      case 'CREATED':
+        return 'Çek durumu güncellendi ve finans hareketi oluşturuldu.';
+      case 'CASH_REVERSED':
+      case 'REVERSE_CASH_TRANSACTION':
+      case 'REVERSED':
+        return 'Çek durumu güncellendi ve önceki finans hareketi terslendi.';
+      case 'NONE':
+      case 'NO_ACTION':
+        return 'Çek durumu güncellendi.';
+      default:
+        return 'Çek başarıyla güncellendi.';
+    }
+  };
 
   const handleSave = async () => {
     if (!canEdit) {
@@ -85,6 +153,7 @@ export default function CheckDetailModal({
     }
 
     setError(null);
+    setFieldErrors({});
     const validationError = firstValidationError([
       validateRequired(bankName, 'Banka Adı'),
       validateRequired(checkNumber, 'Çek Numarası'),
@@ -109,7 +178,7 @@ export default function CheckDetailModal({
       Currency: currency,
       IssueDate: issueDate,
       DueDate: dueDate,
-      Status: status,
+      Status: isNew ? 'PORTFOLIO' : status,
       OwnerName: normalizeText(ownerName) || undefined,
       Notes: normalizeText(notes) || undefined,
     };
@@ -118,13 +187,65 @@ export default function CheckDetailModal({
       setIsBusy(true);
       if (isNew) {
         await checkService.createAsync(payload);
+        toast.success('Çek kaydı başarıyla oluşturuldu.');
       } else if (check?.CheckId) {
-        await checkService.updateAsync(check.CheckId, payload);
+        const baseChanged = isBaseFieldChanged();
+        if (!baseChanged && !isStatusChanged) {
+          setError('Durum veya kayıt alanlarında değişiklik yok. Güncelleme yapılmadı.');
+          return;
+        }
+
+        const statusPatch: Record<string, unknown> = {};
+        if (isStatusChanged) {
+          statusPatch.Status = status;
+          if (status === 'CASHED') {
+            const trimmedCashAccountId = cashAccountId.trim();
+            if (!trimmedCashAccountId) {
+              setFieldErrors({ cash_account_id: 'Tahsil edildi için kasa hesabı seçimi zorunludur.' });
+              return;
+            }
+            statusPatch.cash_account_id = trimmedCashAccountId;
+          }
+          if (status === 'RETURNED' || status === 'CANCELLED') {
+            const trimmedReason = normalizeText(reason);
+            if (trimmedReason) statusPatch.reason = trimmedReason;
+          }
+        }
+
+        const patchPayload = baseChanged
+          ? {
+              ...payload,
+              ...statusPatch,
+            }
+          : statusPatch;
+
+        const response = await checkService.updateAsync(check.CheckId, patchPayload);
+        const financeAction = response.FinanceAction ?? response.financeAction ?? null;
+        toast.success(getFinanceActionMessage(financeAction));
       }
       onClose(true);
     } catch (e) {
       console.error('Save check error:', e);
-      setError(getUserFacingErrorMessage(e, 'Çek kaydedilirken bir hata oluştu'));
+      const apiFieldErrors = getApiFieldErrors(e, [
+        'cash_account_id',
+        'CashAccountId',
+        'reason',
+        'Reason',
+        'status',
+        'Status',
+      ]);
+      if (Object.keys(apiFieldErrors).length > 0) {
+        setFieldErrors(apiFieldErrors);
+      }
+      const statusCode = (e as { status?: number })?.status;
+      if (statusCode === 404) {
+        setError('Çek kaydı bulunamadı. Liste yenilenecek.');
+        onClose(true);
+      } else if (statusCode === 422 && Object.keys(apiFieldErrors).length > 0) {
+        setError('Bazı alanlar geçersiz. Lütfen alan hatalarını düzeltin.');
+      } else {
+        setError(getUserFacingErrorMessage(e, 'Çek kaydedilirken bir hata oluştu'));
+      }
     } finally {
       setIsBusy(false);
     }
@@ -271,21 +392,68 @@ export default function CheckDetailModal({
               </div>
             </div>
 
-            <div>
-              <label className="block text-sm font-medium mb-1">Durum</label>
-              <select
-                className="input w-full"
-                value={status}
-                onChange={(e) => setStatus(e.target.value as CheckStatus)}
-                disabled={readOnly}
-              >
-                {STATUS_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            {!isNew && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Durum</label>
+                <select
+                  className="input w-full"
+                  value={status}
+                  onChange={(e) => setStatus(e.target.value as CheckStatus)}
+                  disabled={readOnly}
+                >
+                  {STATUS_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
+                    </option>
+                  ))}
+                </select>
+                {(fieldErrors.status || fieldErrors.Status) && (
+                  <p className="mt-1 text-xs text-red-400">{fieldErrors.status || fieldErrors.Status}</p>
+                )}
+              </div>
+            )}
+
+            {!isNew && status === 'CASHED' && (
+              <div>
+                <label className="block text-sm font-medium mb-1">
+                  Kasa Hesabı <span className="text-red-500">*</span>
+                </label>
+                <select
+                  className="input w-full"
+                  value={cashAccountId}
+                  onChange={(e) => setCashAccountId(e.target.value)}
+                  disabled={readOnly}
+                >
+                  <option value="">Kasa hesabı seçin</option>
+                  {accounts.map((acc) => (
+                    <option key={acc.id} value={acc.id}>
+                      {acc.name} ({acc.currency})
+                    </option>
+                  ))}
+                </select>
+                {(fieldErrors.cash_account_id || fieldErrors.CashAccountId) && (
+                  <p className="mt-1 text-xs text-red-400">
+                    {fieldErrors.cash_account_id || fieldErrors.CashAccountId}
+                  </p>
+                )}
+              </div>
+            )}
+
+            {!isNew && (status === 'RETURNED' || status === 'CANCELLED') && (
+              <div>
+                <label className="block text-sm font-medium mb-1">Durum Açıklaması (Opsiyonel)</label>
+                <textarea
+                  className="input w-full min-h-[72px] resize-y"
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  disabled={readOnly}
+                  placeholder="İade/iptal sebebini yazabilirsiniz"
+                />
+                {(fieldErrors.reason || fieldErrors.Reason) && (
+                  <p className="mt-1 text-xs text-red-400">{fieldErrors.reason || fieldErrors.Reason}</p>
+                )}
+              </div>
+            )}
 
             <div>
               <label className="block text-sm font-medium mb-1">Çek Sahibi (Borçlu)</label>

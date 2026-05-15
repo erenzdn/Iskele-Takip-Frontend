@@ -3,10 +3,12 @@ import { CalendarBlankIcon, FunnelSimpleIcon, NotePencilIcon, PlusIcon, TrashIco
 import { checkService } from '../services/checkService';
 import { Check, CheckFilters, CheckStatus, Customer } from '../models';
 import EmptyState from '../components/EmptyState';
+import { toast } from '../hooks/useToast';
 import { useAuthStore } from '../store/authStore';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import { customerService } from '../services/customerService';
 import CheckDetailModal from '../components/modals/CheckDetailModal';
+import ExcelManager from '../components/ExcelManager';
 
 type DateRange = {
   from: string | null;
@@ -22,7 +24,7 @@ const STATUS_LABELS: Record<CheckStatus, string> = {
 
 export default function ChecksPage() {
   const user = useAuthStore((state) => state.user);
-  const permissions = user?.Permissions ?? [];
+  const permissions = user?.permissions ?? [];
 
   const canCreate = permissions.includes('checks_create');
   const canUpdate = permissions.includes('checks_update');
@@ -118,7 +120,7 @@ export default function ChecksPage() {
       await loadData();
     } catch (e) {
       console.error('Delete check error:', e);
-      alert('Çek silinirken bir hata oluştu');
+      toast.error('Çek silinirken bir hata oluştu');
     } finally {
       setDeleteBusy(false);
     }
@@ -129,7 +131,7 @@ export default function ChecksPage() {
       await checkService.downloadPdfAsync(check.CheckId!);
     } catch (e) {
       console.error('Download check PDF error:', e);
-      alert('PDF oluşturulurken hata oluştu');
+      toast.error('PDF oluşturulurken hata oluştu');
     }
   };
 
@@ -200,7 +202,7 @@ export default function ChecksPage() {
             Vadesi yaklaşan ve tahsil edilmiş çekleri buradan izleyebilirsiniz.
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={loadData}
@@ -208,6 +210,7 @@ export default function ChecksPage() {
           >
             Yenile
           </button>
+          <ExcelManager type="checks" onImportSuccess={() => void loadData()} />
           {canCreate && (
             <button
               type="button"

@@ -5,6 +5,7 @@ import { warehouseService } from '../services/warehouseService';
 import { StockReceipt, ReceiptType, StockReceiptStatus, Warehouse } from '../models';
 import { useAuthStore } from '../store/authStore';
 import EmptyState from '../components/EmptyState';
+import ExcelManager from '../components/ExcelManager';
 import StockReceiptDetailModal from '../components/modals/StockReceiptDetailModal';
 import { formatShortDateTime } from '../utils/formatters';
 
@@ -22,8 +23,8 @@ const STATUS_LABELS: Record<StockReceiptStatus, string> = {
 
 export default function StockReceiptsPage() {
   const user = useAuthStore((state) => state.user);
-  const canView = user?.Permissions?.includes('stockReceipts_view');
-  const canCreate = user?.Permissions?.includes('stockReceipts_create');
+  const canView = user?.permissions?.includes('stockReceipts_view');
+  const canCreate = user?.permissions?.includes('stockReceipts_create');
 
   const [receipts, setReceipts] = useState<StockReceipt[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -126,10 +127,11 @@ export default function StockReceiptsPage() {
     <div className="p-8">
       <div className="mb-3 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-text-primary">Stok Fişleri</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
           <button onClick={loadReceipts} className="btn-secondary py-2 px-3 text-sm">
             Yenile
           </button>
+          <ExcelManager type="stockReceipts" onImportSuccess={() => void loadReceipts()} />
           {canCreate && (
             <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
               + Yeni Fiş
@@ -205,7 +207,7 @@ export default function StockReceiptsPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
@@ -242,7 +244,7 @@ export default function StockReceiptsPage() {
                   <tr
                     key={receipt.ReceiptId}
                     className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${
-                      index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
+                      index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
                     }`}
                     onClick={() => handleOpenDetail(receipt)}
                   >
@@ -262,7 +264,15 @@ export default function StockReceiptsPage() {
                       {receipt.Description || '-'}
                     </td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
-                      {STATUS_LABELS[receipt.Status]}
+                      <span
+                        className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                          receipt.Status === 'CANCELLED'
+                            ? 'bg-red-500/15 text-red-400'
+                            : 'bg-emerald-500/15 text-emerald-400'
+                        }`}
+                      >
+                        {STATUS_LABELS[receipt.Status]}
+                      </span>
                     </td>
                     <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0">
                       {receipt.ItemCount ?? 0}

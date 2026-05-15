@@ -1,16 +1,33 @@
 import { apiClient } from './apiClient';
-import { AuditLog, Contract, ContractReturn, ContractPriceCalculation, ReturnItemResponse } from '../models';
+import {
+  AuditLog,
+  Contract,
+  ContractQuoteType,
+  ContractReturn,
+  ContractPriceCalculation,
+  ReturnItemResponse,
+  SettleNonReturnRequest,
+} from '../models';
 
 export interface CreateContractDetailRequest {
   ItemId: number;
   WarehouseId: number;
   RentedQuantity: number;
-  DailyPriceAtRent: number;
 }
+
+export interface CreateContractManualDetailRequest {
+  IsManual: true;
+  Description: string;
+  RentedQuantity: number;
+  UnitPriceSnapshot: number;
+}
+
+export type CreateContractDetailPayload = CreateContractDetailRequest | CreateContractManualDetailRequest;
 
 export interface CreateContractRequest {
   ContractCode?: string;
   CustomerId: number;
+  CustomerAuthorizedContactId: number;
   SiteId?: number; // Şantiye ID (opsiyonel)
   StartDate: string; // ISO 8601
   PlannedEndDate: string; // ISO 8601
@@ -19,22 +36,123 @@ export interface CreateContractRequest {
   Iskonto?: number;  // yüzde
   VatRate?: number;  // yüzde
   Currency?: 'TRY' | 'EUR';
+  Type?: ContractQuoteType;
   /** Opsiyonel. Bir kalemde WarehouseId yoksa bu depo kullanılır; depo stoğu düşümü için her detayda WarehouseId veya bu alan gerekir. */
   defaultWarehouseId?: number;
-  details: CreateContractDetailRequest[];
+  details: CreateContractDetailPayload[];
 }
 
 export interface UpdateContractRequest {
   ContractCode?: string;
+  CustomerAuthorizedContactId?: number;
   SiteId?: number;
   Iskonto?: number;
   VatRate?: number;
   Currency?: 'TRY' | 'EUR';
   IsCompleted?: boolean;
+  /** ISO 8601 */
+  StartDate?: string;
+  /** Kiralama sözleşmesi planlanan bitiş (ISO 8601) */
+  PlannedEndDate?: string;
 }
 
 export interface CreateContractResponse {
   ContractId: number;
+}
+
+export interface RevertToQuoteResponse {
+  message: string;
+  QuoteId: number | null;
+}
+
+export type AddContractDetailInventoryRequest = {
+  ItemId: number;
+  WarehouseId: number;
+  RentedQuantity: number;
+  IsManual?: false;
+  /** Kiralama sözleşmesi için: gönderilmezse backend "şimdi" kabul eder */
+  EffectiveStartDate?: string;
+};
+
+export type AddContractDetailManualRequest = {
+  IsManual: true;
+  Description: string;
+  RentedQuantity: number;
+  UnitPriceSnapshot?: number;
+};
+
+export type AddContractDetailRequest = AddContractDetailInventoryRequest | AddContractDetailManualRequest;
+
+export interface AddContractDetailsRequestBody {
+  details: AddContractDetailRequest[];
+  /** Satış sözleşmesinde opsiyonel; kiralamada genelde true kullanılır */
+  decrementStock?: boolean;
+}
+
+export interface AddContractDetailsResponse {
+  detailIds: number[];
+  warnings?: string[];
+  contract: Contract;
+}
+
+/** API .NET vb. PascalCase de dönebilir; tek tip camelCase modele çevirir. */
+function parseContractPriceCalculation(raw: unknown): ContractPriceCalculation {
+  const empty: ContractPriceCalculation = {
+    contractId: 0,
+    plannedDays: 0,
+    basePrice: 0,
+    totalLateFee: 0,
+    finalPrice: 0,
+    returns: [],
+  };
+  if (!raw || typeof raw !== 'object') return empty;
+  const d = raw as Record<string, unknown>;
+  const num = (camel: string, pascal: string): number => {
+    const v = d[camel] ?? d[pascal];
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : 0;
+  };
+  const returnsRaw = d.returns ?? d.Returns;
+  const returnsList: ContractPriceCalculation['returns'] = [];
+  if (Array.isArray(returnsRaw)) {
+    for (const item of returnsRaw) {
+      if (!item || typeof item !== 'object') continue;
+      const r = item as Record<string, unknown>;
+      const rn = (c: string, p: string): number => {
+        const v = r[c] ?? r[p];
+        if (typeof v === 'number' && Number.isFinite(v)) return v;
+        const n = Number(v);
+        return Number.isFinite(n) ? n : 0;
+      };
+      const rs = (c: string, p: string): string => {
+        const v = r[c] ?? r[p];
+        return typeof v === 'string' ? v : v != null ? String(v) : '';
+      };
+      returnsList.push({
+        ReturnId: Math.floor(rn('returnId', 'ReturnId')),
+        ItemId: Math.floor(rn('itemId', 'ItemId')),
+        ReturnQuantity: Math.floor(rn('returnQuantity', 'ReturnQuantity')),
+        ReturnDate: rs('returnDate', 'ReturnDate'),
+        LateDays: Math.floor(rn('lateDays', 'LateDays')),
+        LateFee: rn('lateFee', 'LateFee'),
+      });
+    }
+  }
+  return {
+    contractId: Math.floor(num('contractId', 'ContractId')),
+    plannedDays: Math.floor(num('plannedDays', 'PlannedDays')),
+    basePrice: num('basePrice', 'BasePrice'),
+    totalLateFee: num('totalLateFee', 'TotalLateFee'),
+    finalPrice: num('finalPrice', 'FinalPrice'),
+    returns: returnsList,
+  };
+}
+
+export interface ContractListQuery {
+  status?: 'active' | 'completed';
+  type?: ContractQuoteType;
+  search?: string;
 }
 
 export const contractService = {
@@ -46,12 +164,22 @@ export const contractService = {
     return apiClient.get<Contract>(`/contracts/${id}`);
   },
 
-  async getActiveContractsAsync(): Promise<Contract[]> {
-    return apiClient.get<Contract[]>('/contracts?status=active');
+  async listAsync(query: ContractListQuery): Promise<Contract[]> {
+    const sp = new URLSearchParams();
+    if (query.status) sp.set('status', query.status);
+    if (query.type) sp.set('type', query.type);
+    const s = query.search?.trim();
+    if (s) sp.set('search', s);
+    const qs = sp.toString();
+    return apiClient.get<Contract[]>(qs ? `/contracts?${qs}` : '/contracts');
   },
 
-  async getCompletedContractsAsync(): Promise<Contract[]> {
-    return apiClient.get<Contract[]>('/contracts?status=completed');
+  async getActiveContractsAsync(quoteType?: ContractQuoteType): Promise<Contract[]> {
+    return this.listAsync({ status: 'active', type: quoteType });
+  },
+
+  async getCompletedContractsAsync(quoteType?: ContractQuoteType): Promise<Contract[]> {
+    return this.listAsync({ status: 'completed', type: quoteType });
   },
 
   async createAsync(data: CreateContractRequest): Promise<CreateContractResponse> {
@@ -62,8 +190,19 @@ export const contractService = {
     return apiClient.patch<void>(`/contracts/${id}`, data as Record<string, unknown>);
   },
 
+  async addDetailsAsync(id: number, body: AddContractDetailsRequestBody): Promise<AddContractDetailsResponse> {
+    return apiClient.post<AddContractDetailsResponse>(
+      `/contracts/${id}/details`,
+      body as unknown as Record<string, unknown>
+    );
+  },
+
   async deleteAsync(id: number): Promise<void> {
     return apiClient.delete<void>(`/contracts/${id}`);
+  },
+
+  async revertToQuoteAsync(id: number): Promise<RevertToQuoteResponse> {
+    return apiClient.post<RevertToQuoteResponse>(`/contracts/${id}/revert-to-quote`, {});
   },
 
   async completeContractAsync(id: number, actualEndDate: string): Promise<void> {
@@ -94,12 +233,20 @@ export const contractService = {
     return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/return`, body);
   },
 
+  async settleNonReturnAsync(
+    contractId: number,
+    payload: SettleNonReturnRequest
+  ): Promise<ReturnItemResponse> {
+    return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/settle-non-return`, payload);
+  },
+
   async getReturnsAsync(contractId: number): Promise<ContractReturn[]> {
     return apiClient.get<ContractReturn[]>(`/contracts/${contractId}/returns`);
   },
 
   async calculatePriceAsync(contractId: number): Promise<ContractPriceCalculation> {
-    return apiClient.post<ContractPriceCalculation>(`/contracts/${contractId}/calculate-price`, {});
+    const raw = await apiClient.post<unknown>(`/contracts/${contractId}/calculate-price`, {});
+    return parseContractPriceCalculation(raw);
   },
 
   async generateDocumentAsync(
@@ -128,7 +275,7 @@ export const contractService = {
   async getRentedItemsByWarehouseAsync(warehouseId: number): Promise<
     { ItemId: number; ItemName: string; CategoryName: string; Quantity: number }[]
   > {
-    const active = await this.getActiveContractsAsync();
+    const active = await this.getActiveContractsAsync('RENTAL');
     const byItem = new Map<
       number,
       { ItemId: number; ItemName: string; CategoryName: string; Quantity: number }

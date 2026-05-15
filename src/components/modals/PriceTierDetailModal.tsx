@@ -3,6 +3,7 @@ import { InfoIcon } from '@phosphor-icons/react';
 import { PriceTier, Inventory } from '../../models';
 import { priceTierService } from '../../services/priceTierService';
 import ConfirmModal from './ConfirmModal';
+import { toast } from '../../hooks/useToast';
 
 interface PriceTierDetailModalProps {
   tier: PriceTier | null;
@@ -35,12 +36,12 @@ export default function PriceTierDetailModal({
 
   const handleSave = async () => {
     if (!selectedItemId) {
-      alert('Malzeme seçimi zorunludur');
+      toast.warning('Malzeme seçimi zorunludur');
       return;
     }
 
     if (Number(minDays) > Number(maxDays)) {
-      alert('Minimum gün maksimum günden büyük olamaz');
+      toast.warning('Minimum gün maksimum günden büyük olamaz');
       return;
     }
 
@@ -64,7 +65,7 @@ export default function PriceTierDetailModal({
       onClose();
     } catch (error) {
       console.error('Save price tier error:', error);
-      alert('Kaydetme hatası');
+      toast.error('Kaydetme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -84,7 +85,7 @@ export default function PriceTierDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete price tier error:', error);
-      alert('Silme hatası');
+      toast.error('Silme hatası');
     } finally {
       setIsBusy(false);
     }

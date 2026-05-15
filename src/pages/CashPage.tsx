@@ -16,6 +16,7 @@ import CashAccountModal from '../components/modals/CashAccountModal';
 import EmptyState from '../components/EmptyState';
 import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
+import { toast } from '../hooks/useToast';
 
 const LIMIT = 20;
 
@@ -76,7 +77,7 @@ function getStatusBadgeClass(status: CashTransaction['status']) {
 export default function CashPage() {
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
-  const permissions = user?.Permissions ?? [];
+  const permissions = user?.permissions ?? [];
 
   const canCreate = permissions.includes('cash_create');
   const canCreateAccount = permissions.includes('cash_account_create');
@@ -193,7 +194,7 @@ export default function CashPage() {
       setDownloadBusyId(tx.id);
       const blob = await cashService.downloadReceiptAsync(tx.id);
       if (blob.size === 0) {
-        alert('PDF oluşturulamadı.');
+        toast.error('PDF oluşturulamadı.');
         return;
       }
 
@@ -205,7 +206,7 @@ export default function CashPage() {
       window.URL.revokeObjectURL(url);
     } catch (e: unknown) {
       console.error('Download receipt error:', e);
-      alert(getApiErrorMessage(e) || 'PDF indirme hatası');
+      toast.error(getApiErrorMessage(e) || 'PDF indirme hatası');
     } finally {
       setDownloadBusyId(null);
     }
@@ -221,7 +222,7 @@ export default function CashPage() {
       await loadAccounts();
     } catch (e: unknown) {
       console.error('Approve error:', e);
-      alert(getApiErrorMessage(e) || 'Onaylama hatası');
+      toast.error(getApiErrorMessage(e) || 'Onaylama hatası');
     } finally {
       setApproveBusy(false);
     }
@@ -237,7 +238,7 @@ export default function CashPage() {
       await loadAccounts();
     } catch (e: unknown) {
       console.error('Delete error:', e);
-      alert(getApiErrorMessage(e) || 'Silme hatası');
+      toast.error(getApiErrorMessage(e) || 'Silme hatası');
     } finally {
       setDeleteBusy(false);
     }
@@ -267,7 +268,7 @@ export default function CashPage() {
       await loadAccounts();
     } catch (e: unknown) {
       console.error('Cancel error:', e);
-      alert(getApiErrorMessage(e) || 'İptal hatası');
+      toast.error(getApiErrorMessage(e) || 'İptal hatası');
     } finally {
       setCancelBusy(false);
     }
@@ -392,7 +393,7 @@ export default function CashPage() {
                         Kayıtlı kasa hesabı yok.
                       </div>
                     ) : (
-                      <table className="w-full text-xs border-collapse">
+                      <table className="w-full text-xs border-collapse text-text-primary">
                         <thead className="border-b border-background-border bg-background-hover">
                           <tr>
                             <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
@@ -403,6 +404,12 @@ export default function CashPage() {
                             </th>
                             <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
                               Bakiye
+                            </th>
+                            <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
+                              Şube
+                            </th>
+                            <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
+                              Hesap No / IBAN
                             </th>
                             <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
                               Negatif Bakiye
@@ -420,7 +427,7 @@ export default function CashPage() {
                             <tr
                               key={acc.id}
                               className={`border-b border-background-border/60 hover:bg-background-hover/50 cursor-pointer ${
-                                idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
+                                idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
                               }`}
                               onClick={() => navigate(`/cash/accounts/${acc.id}`)}
                             >
@@ -432,6 +439,12 @@ export default function CashPage() {
                               </td>
                               <td className="py-1 px-2 align-middle text-right border-r border-background-border/40 tabular-nums">
                                 {formatAmount(acc.current_balance)}
+                              </td>
+                              <td className="py-1 px-2 align-middle border-r border-background-border/40 text-text-secondary">
+                                {acc.branch_name || '-'}
+                              </td>
+                              <td className="py-1 px-2 align-middle border-r border-background-border/40 text-text-secondary">
+                                {acc.account_no || '-'}
                               </td>
                               <td className="py-1 px-2 align-middle text-center border-r border-background-border/40">
                                 {acc.allow_negative_balance ? 'Evet' : 'Hayır'}
@@ -487,7 +500,7 @@ export default function CashPage() {
                         Kayıtlı banka hesabı yok.
                       </div>
                     ) : (
-                      <table className="w-full text-xs border-collapse">
+                      <table className="w-full text-xs border-collapse text-text-primary">
                         <thead className="border-b border-background-border bg-background-hover">
                           <tr>
                             <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
@@ -515,7 +528,7 @@ export default function CashPage() {
                             <tr
                               key={acc.id}
                               className={`border-b border-background-border/60 hover:bg-background-hover/50 cursor-pointer ${
-                                idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
+                                idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
                               }`}
                               onClick={() => navigate(`/cash/accounts/${acc.id}`)}
                             >
@@ -641,7 +654,7 @@ export default function CashPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-260px)] min-h-[320px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
@@ -658,6 +671,9 @@ export default function CashPage() {
                   </th>
                   <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
                     Tarih
+                  </th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
+                    Müşteri
                   </th>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary">İşlemler</th>
                 </tr>
@@ -693,6 +709,11 @@ export default function CashPage() {
                     <td className="py-1 px-2 align-middle text-center border-r border-background-border/60 last:border-r-0">
                       <span className="text-xs text-text-secondary">
                         {formatDate(tx.transaction_date)}
+                      </span>
+                    </td>
+                    <td className="py-1 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className="text-xs text-text-secondary">
+                        {tx.related_entity_type === 'CUSTOMER' ? tx.customer_name || '-' : '-'}
                       </span>
                     </td>
                     <td className="py-1 px-2 align-middle">

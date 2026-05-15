@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { XIcon } from '@phosphor-icons/react';
 import { CashAccount } from '../../models';
 import { cashService } from '../../services/cashService';
-import { getApiErrorMessage } from '../../utils/apiError';
+import { getApiErrorMessage, getApiFieldErrors } from '../../utils/apiError';
 import ConfirmModal from './ConfirmModal';
 
 interface CashAccountModalProps {
@@ -27,10 +27,17 @@ export default function CashAccountModal({
   const [name, setName] = useState('');
   const [type, setType] = useState<AccountType>('CASH');
   const [currency, setCurrency] = useState<Currency>('TRY');
+  const [branchName, setBranchName] = useState('');
+  const [accountNo, setAccountNo] = useState('');
   const [allowNegativeBalance, setAllowNegativeBalance] = useState(false);
   const [isActive, setIsActive] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{
+    name?: string;
+    branch_name?: string;
+    account_no?: string;
+  }>({});
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
   useEffect(() => {
@@ -40,44 +47,61 @@ export default function CashAccountModal({
       setName(account.name ?? '');
       setType(account.type);
       setCurrency(account.currency);
+      setBranchName(account.branch_name ?? '');
+      setAccountNo(account.account_no ?? '');
       setAllowNegativeBalance(Boolean(account.allow_negative_balance));
       setIsActive(Boolean(account.is_active));
     } else {
       setName('');
       setType('CASH');
       setCurrency('TRY');
+      setBranchName('');
+      setAccountNo('');
       setAllowNegativeBalance(false);
       setIsActive(true);
     }
     setBusy(false);
     setError(null);
+    setFieldErrors({});
     setShowDeleteConfirm(false);
   }, [open, isNew, account]);
 
   const handleSave = async () => {
     try {
       setError(null);
+      setFieldErrors({});
       setBusy(true);
 
       const trimmedName = name.trim();
+      const trimmedBranchName = branchName.trim();
+      const trimmedAccountNo = accountNo.trim();
       if (!trimmedName) {
-        setError('Hesap adı gereklidir.');
+        setFieldErrors({ name: 'Hesap adı gereklidir.' });
+        return;
+      }
+      if (type === 'BANK' && !trimmedBranchName) {
+        setFieldErrors({ branch_name: 'Şube adı gereklidir.' });
+        return;
+      }
+      if (type === 'BANK' && !trimmedAccountNo) {
+        setFieldErrors({ account_no: 'Hesap no/IBAN gereklidir.' });
         return;
       }
 
+      const payload = {
+        name: trimmedName,
+        type,
+        currency,
+        allow_negative_balance: allowNegativeBalance,
+        ...(trimmedBranchName ? { branch_name: trimmedBranchName } : {}),
+        ...(trimmedAccountNo ? { account_no: trimmedAccountNo } : {}),
+      };
+
       if (isNew) {
-        await cashService.createAccountAsync({
-          name: trimmedName,
-          type,
-          currency,
-          allow_negative_balance: allowNegativeBalance,
-        });
+        await cashService.createAccountAsync(payload);
       } else if (account) {
         await cashService.updateAccountAsync(account.id, {
-          name: trimmedName,
-          type,
-          currency,
-          allow_negative_balance: allowNegativeBalance,
+          ...payload,
           is_active: isActive,
         });
       }
@@ -85,6 +109,7 @@ export default function CashAccountModal({
       await onCreated?.();
       onClose();
     } catch (e: unknown) {
+      setFieldErrors(getApiFieldErrors(e, ['name', 'branch_name', 'account_no']));
       setError(getApiErrorMessage(e) || 'Hesap kaydedilemedi');
     } finally {
       setBusy(false);
@@ -131,11 +156,16 @@ export default function CashAccountModal({
             <input
               type="text"
               value={name}
-              onChange={(e) => setName(e.target.value)}
+              onChange={(e) => {
+                setName(e.target.value);
+                if (error) setError(null);
+                if (fieldErrors.name) setFieldErrors((prev) => ({ ...prev, name: undefined }));
+              }}
               className="input w-full py-2 px-3 text-sm"
               placeholder="Örn: Merkez Kasa"
               disabled={busy || isReadOnly}
             />
+            {fieldErrors.name && <p className="text-xs text-red-400">{fieldErrors.name}</p>}
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -143,7 +173,11 @@ export default function CashAccountModal({
               <label className="block text-xs font-medium text-text-primary">Hesap Türü</label>
               <select
                 value={type}
-                onChange={(e) => setType(e.target.value as AccountType)}
+                onChange={(e) => {
+                  setType(e.target.value as AccountType);
+                  if (error) setError(null);
+                  setFieldErrors((prev) => ({ ...prev, branch_name: undefined, account_no: undefined }));
+                }}
                 className="input w-full py-2 px-3 text-sm"
                 disabled={busy || isReadOnly}
               >
@@ -165,6 +199,50 @@ export default function CashAccountModal({
                 <option value="EUR">EUR</option>
                 <option value="GBP">GBP</option>
               </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-text-primary">
+                Şube Adı {type === 'BANK' ? '*' : '(Opsiyonel)'}
+              </label>
+              <input
+                type="text"
+                value={branchName}
+                onChange={(e) => {
+                  setBranchName(e.target.value);
+                  if (error) setError(null);
+                  if (fieldErrors.branch_name) {
+                    setFieldErrors((prev) => ({ ...prev, branch_name: undefined }));
+                  }
+                }}
+                className="input w-full py-2 px-3 text-sm"
+                placeholder="Örn: Kadıköy Şubesi"
+                disabled={busy || isReadOnly}
+              />
+              {fieldErrors.branch_name && <p className="text-xs text-red-400">{fieldErrors.branch_name}</p>}
+            </div>
+
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-text-primary">
+                Hesap No / IBAN {type === 'BANK' ? '*' : '(Opsiyonel)'}
+              </label>
+              <input
+                type="text"
+                value={accountNo}
+                onChange={(e) => {
+                  setAccountNo(e.target.value);
+                  if (error) setError(null);
+                  if (fieldErrors.account_no) {
+                    setFieldErrors((prev) => ({ ...prev, account_no: undefined }));
+                  }
+                }}
+                className="input w-full py-2 px-3 text-sm"
+                placeholder="Örn: TR12..."
+                disabled={busy || isReadOnly}
+              />
+              {fieldErrors.account_no && <p className="text-xs text-red-400">{fieldErrors.account_no}</p>}
             </div>
           </div>
 

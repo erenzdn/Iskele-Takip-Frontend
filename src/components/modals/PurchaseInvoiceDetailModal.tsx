@@ -6,7 +6,8 @@ import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { formatCurrency } from '../../utils/formatters';
 import ConfirmModal from './ConfirmModal';
-import { getUserFacingErrorMessage } from '../../utils/apiError';
+import { getApiErrorMessage, getUserFacingErrorMessage, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
+import { toast } from '../../hooks/useToast';
 import {
   firstValidationError,
   normalizeNumericText,
@@ -56,6 +57,7 @@ export default function PurchaseInvoiceDetailModal({
   const [newItemCode, setNewItemCode] = useState('');
   const [newItemTotalStock, setNewItemTotalStock] = useState('0');
   const [savingItem, setSavingItem] = useState(false);
+  const [newItemSaveError, setNewItemSaveError] = useState<string | null>(null);
 
   // Form alanları
   const [invoiceDate, setInvoiceDate] = useState('');
@@ -67,6 +69,7 @@ export default function PurchaseInvoiceDetailModal({
   const [warehouseId, setWarehouseId] = useState<number | ''>('');
   const [currency, setCurrency] = useState<string>('TL');
   const [exchangeRate, setExchangeRate] = useState('');
+  const [customerSearch, setCustomerSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
 
   // Tutar alanları - string olarak tutulur, input'larda doğal düzenleme sağlanır
@@ -164,15 +167,35 @@ export default function PurchaseInvoiceDetailModal({
     }
   };
 
+  const filteredCustomers = useMemo(() => {
+    const search = customerSearch.trim().toLowerCase();
+    if (!search) return customers;
+    return customers.filter((customer) => {
+      const name = String(customer.Name || '').toLowerCase();
+      const taxId = String(customer.TaxId || '').toLowerCase();
+      return name.includes(search) || taxId.includes(search);
+    });
+  }, [customers, customerSearch]);
+
   const filteredItems = useMemo(() => {
-    if (!itemSearch.trim()) return items;
-    const search = itemSearch.toLowerCase();
-    return items.filter(
-      (item) =>
-        item.ItemName.toLowerCase().includes(search) ||
-        (item.ItemCode?.toLowerCase().includes(search) ?? false)
-    );
+    const search = itemSearch.trim().toLowerCase();
+    if (!search) return items;
+    return items.filter((item) => {
+      const name = String(item.ItemName || '').toLowerCase();
+      const code = String(item.ItemCode || '').toLowerCase();
+      return name.includes(search) || code.includes(search);
+    });
   }, [items, itemSearch]);
+
+  const selectedCustomer = useMemo(
+    () => (customerId ? customers.find((customer) => customer.CustomerId === Number(customerId)) ?? null : null),
+    [customers, customerId]
+  );
+  const selectedItem = useMemo(
+    () => (itemId ? items.find((item) => item.ItemId === Number(itemId)) ?? null : null),
+    [items, itemId]
+  );
+
 
   const handleSaveNewItem = async () => {
     const newItemValidation = firstValidationError([
@@ -180,11 +203,12 @@ export default function PurchaseInvoiceDetailModal({
       validateNumber(newItemTotalStock, 'Toplam stok', { min: 0 }),
     ]);
     if (newItemValidation) {
-      alert(newItemValidation);
+      toast.warning(newItemValidation);
       return;
     }
 
     try {
+      setNewItemSaveError(null);
       setSavingItem(true);
       const result = await inventoryService.createAsync({
         ItemName: normalizeText(newItemName),
@@ -198,7 +222,7 @@ export default function PurchaseInvoiceDetailModal({
       resetNewItemForm();
     } catch (error) {
       console.error('Save item error:', error);
-      alert(getUserFacingErrorMessage(error, 'Ürün kaydetme hatası'));
+      setNewItemSaveError(getApiErrorMessage(error));
     } finally {
       setSavingItem(false);
     }
@@ -209,6 +233,7 @@ export default function PurchaseInvoiceDetailModal({
     setNewItemName('');
     setNewItemCode('');
     setNewItemTotalStock('0');
+    setNewItemSaveError(null);
   };
 
   // Yeni müşteri kaydetme
@@ -220,7 +245,7 @@ export default function PurchaseInvoiceDetailModal({
       validateEmail(newCustomerEmail, 'E-posta'),
     ]);
     if (customerValidation) {
-      alert(customerValidation);
+      toast.warning(customerValidation);
       return;
     }
 
@@ -242,7 +267,7 @@ export default function PurchaseInvoiceDetailModal({
       resetNewCustomerForm();
     } catch (error) {
       console.error('Save customer error:', error);
-      alert(getUserFacingErrorMessage(error, 'Müşteri kaydetme hatası'));
+      toast.error(getUserFacingErrorMessage(error, 'Müşteri kaydetme hatası'));
     } finally {
       setSavingCustomer(false);
     }
@@ -267,7 +292,7 @@ export default function PurchaseInvoiceDetailModal({
       ...(exchangeRate ? [validateNumber(exchangeRate, 'Kur', { min: 0.0001 })] : []),
     ]);
     if (validationError) {
-      alert(validationError);
+      toast.warning(validationError);
       return;
     }
 
@@ -300,7 +325,7 @@ export default function PurchaseInvoiceDetailModal({
       onClose();
     } catch (error) {
       console.error('Save invoice error:', error);
-      alert(getUserFacingErrorMessage(error, 'Kaydetme hatası'));
+      toast.error(userMessageForCustomerRelatedApiError(error, 'Kaydetme hatası'));
     } finally {
       setIsBusy(false);
     }
@@ -320,16 +345,28 @@ export default function PurchaseInvoiceDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete invoice error:', error);
-      alert(getUserFacingErrorMessage(error, 'Silme hatası'));
+      toast.error(getUserFacingErrorMessage(error, 'Silme hatası'));
     } finally {
       setIsBusy(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-background-panel rounded-panel w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-4">
+    <div
+      className={
+        isNew
+          ? 'fixed inset-0 z-50 flex flex-col bg-background-main'
+          : 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
+      }
+    >
+      <div
+        className={
+          isNew
+            ? 'w-full h-full overflow-hidden p-1.5 md:p-2 text-xs leading-tight [&_.input]:text-xs [&_.input]:py-1 [&_.input]:px-2 [&_.input]:min-h-[28px] [&_textarea.input]:min-h-[38px]'
+            : 'bg-background-panel rounded-panel w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto'
+        }
+      >
+        <h2 className="mb-1 text-base font-semibold">
           {isNew ? 'Yeni Alış Faturası' : 'Fatura Detayı'}
         </h2>
 
@@ -389,437 +426,304 @@ export default function PurchaseInvoiceDetailModal({
           </div>
         )}
 
-        <div className="space-y-4">
-          {/* Tarihler ve Evrak No */}
-          <div className="grid grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium mb-2">Fatura Tarihi *</label>
-              <input
-                type="date"
-                value={invoiceDate}
-                onChange={(e) => setInvoiceDate(e.target.value)}
-                disabled={isReadOnly}
-                className="input w-full"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Giriş Tarihi *</label>
-              <input
-                type="date"
-                value={entryDate}
-                onChange={(e) => setEntryDate(e.target.value)}
-                disabled={isReadOnly}
-                className="input w-full"
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium mb-2">Evrak No</label>
-              <input
-                type="text"
-                value={documentNo}
-                onChange={(e) => setDocumentNo(e.target.value)}
-                disabled={isReadOnly}
-                maxLength={100}
-                placeholder="Evrak numarası"
-                className="input w-full"
-              />
-            </div>
-          </div>
-
-          {/* Tedarikçi Seçimi */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Tedarikçi *</label>
-            {customersLoading ? (
-              <div className="text-text-secondary">Yükleniyor...</div>
-            ) : (
-              <div className="flex gap-2">
-                <select
-                  value={customerId}
-                  onChange={(e) => setCustomerId(e.target.value ? Number(e.target.value) : '')}
-                  disabled={isReadOnly}
-                  className="input flex-1"
-                  required
-                >
-                  <option value="">Tedarikçi seçin...</option>
-                  {customers.map((customer) => (
-                    <option key={customer.CustomerId} value={customer.CustomerId}>
-                      {customer.Name}
-                    </option>
-                  ))}
-                </select>
-                {!isReadOnly && (
-                  <button
-                    type="button"
-                    onClick={() => setShowNewCustomerForm(!showNewCustomerForm)}
-                    className="btn-secondary whitespace-nowrap"
-                  >
-                    + Yeni C/H
-                  </button>
-                )}
+        <div className="grid h-[calc(100%-66px)] grid-cols-12 gap-2">
+          <div className="col-span-7 space-y-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
+              <div>
+                <label className="mb-1 block text-xs font-medium">Fatura Tarihi *</label>
+                <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} disabled={isReadOnly} className="input w-full" required />
               </div>
-            )}
-          </div>
-
-          {/* Yeni Müşteri/Tedarikçi Ekleme Formu */}
-          {showNewCustomerForm && !isReadOnly && (
-            <div className="card bg-background-secondary p-4 border border-accent">
-              <h4 className="text-md font-semibold mb-3">Yeni Cari Hesap Ekle</h4>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-sm font-medium mb-1">Ad/Ünvan *</label>
-                  <input
-                    type="text"
-                    value={newCustomerName}
-                    onChange={(e) => setNewCustomerName(e.target.value)}
-                    placeholder="Firma veya kişi adı"
-                    className="input w-full"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Vergi No</label>
-                  <input
-                    type="text"
-                    value={newCustomerTaxId}
-                    onChange={(e) => setNewCustomerTaxId(e.target.value)}
-                    placeholder="Vergi numarası"
-                    className="input w-full"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">Telefon</label>
-                  <input
-                    type="text"
-                    value={newCustomerPhone}
-                    onChange={(e) => setNewCustomerPhone(e.target.value)}
-                    placeholder="0xxx xxx xx xx"
-                    className="input w-full"
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-1">E-posta</label>
-                  <input
-                    type="email"
-                    value={newCustomerEmail}
-                    onChange={(e) => setNewCustomerEmail(e.target.value)}
-                    placeholder="ornek@email.com"
-                    className="input w-full"
-                  />
-                </div>
-                <div className="col-span-2">
-                  <label className="block text-sm font-medium mb-1">Adres</label>
-                  <input
-                    type="text"
-                    value={newCustomerAddress}
-                    onChange={(e) => setNewCustomerAddress(e.target.value)}
-                    placeholder="Adres bilgisi"
-                    className="input w-full"
-                  />
-                </div>
+              <div>
+                <label className="mb-1 block text-xs font-medium">Giriş Tarihi *</label>
+                <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} disabled={isReadOnly} className="input w-full" required />
               </div>
-              <div className="flex gap-2 mt-3">
-                <button
-                  type="button"
-                  onClick={resetNewCustomerForm}
-                  className="btn-secondary"
-                  disabled={savingCustomer}
-                >
-                  İptal
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSaveNewCustomer}
-                  className="btn-primary"
-                  disabled={savingCustomer}
-                >
-                  {savingCustomer ? 'Kaydediliyor...' : 'Kaydet'}
-                </button>
+              <div>
+                <label className="mb-1 block text-xs font-medium">Evrak No</label>
+                <input type="text" value={documentNo} onChange={(e) => setDocumentNo(e.target.value)} disabled={isReadOnly} maxLength={100} placeholder="Evrak numarası" className="input w-full" />
               </div>
             </div>
-          )}
 
-          {/* Ürün ve Depo Seçimi */}
-          <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium mb-2">Ürün</label>
+              <label className="mb-1 block text-xs font-medium">Tedarikçi *</label>
+              {customersLoading ? (
+                <div className="text-text-secondary">Yükleniyor...</div>
+              ) : (
+                <div className="space-y-1">
+                  {!isReadOnly && (
+                    <input
+                      type="text"
+                      value={customerSearch}
+                      onChange={(e) => setCustomerSearch(e.target.value)}
+                      placeholder="Tedarikçi ara..."
+                      className="input w-full"
+                    />
+                  )}
+                  {isReadOnly ? (
+                    <input type="text" readOnly value={selectedCustomer?.Name || 'Tedarikçi seçilmedi'} className="input w-full" />
+                  ) : (
+                    <div className="rounded-panel border border-background-border bg-background-secondary p-1">
+                      {selectedCustomer && (
+                        <div className="mb-1 rounded-md border border-background-border bg-background-main px-2 py-1 text-[11px] text-text-secondary">
+                          <span className="mr-1 font-medium text-text-primary">Seçili:</span>
+                          {selectedCustomer.Name}
+                        </div>
+                      )}
+                      <div className="max-h-28 overflow-y-auto pr-0.5">
+                        {filteredCustomers.length === 0 ? (
+                          <div className="px-2 py-1.5 text-[11px] text-text-secondary">Eşleşen tedarikçi bulunamadı.</div>
+                        ) : (
+                          filteredCustomers.map((customer) => {
+                            const isSelected = Number(customerId) === customer.CustomerId;
+                            return (
+                              <button
+                                key={customer.CustomerId}
+                                type="button"
+                                onClick={() => setCustomerId(customer.CustomerId)}
+                                className={`mb-1 w-full rounded-md border px-2 py-1 text-left text-[11px] last:mb-0 ${
+                                  isSelected
+                                    ? 'border-blue-700/50 bg-blue-900/30 text-text-primary'
+                                    : 'border-transparent bg-background-main text-text-primary hover:border-background-border hover:bg-background-hover'
+                                }`}
+                              >
+                                {customer.Name}
+                              </button>
+                            );
+                          })
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  {!isReadOnly && (
+                    <button type="button" onClick={() => setShowNewCustomerForm(!showNewCustomerForm)} className="btn-secondary whitespace-nowrap">
+                      + Yeni C/H
+                    </button>
+                  )}
+                  {!isReadOnly && customerId && !selectedCustomer && (
+                    <p className="text-[11px] text-amber-600">
+                      Seçili tedarikçi listede yok (muhtemelen arşivlenmiş). Kaydetmek için listeden aktif bir müşteri seçin.
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="mb-1 block text-xs font-medium">Ürün</label>
               {itemsLoading ? (
                 <div className="text-text-secondary text-sm">Yükleniyor...</div>
               ) : (
-                <div>
+                <div className="space-y-1">
                   {!isReadOnly && (
                     <input
                       type="text"
                       value={itemSearch}
                       onChange={(e) => setItemSearch(e.target.value)}
                       placeholder="Ürün ara..."
-                      className="input w-full mb-1 text-sm"
+                      className="input w-full"
                     />
                   )}
-                  <div className="flex gap-2">
-                    <select
-                      value={itemId}
-                      onChange={(e) => setItemId(e.target.value ? Number(e.target.value) : '')}
-                      disabled={isReadOnly}
-                      className="input flex-1"
-                    >
-                      <option value="">Ürün seçin (opsiyonel)</option>
-                      {filteredItems.map((item) => (
-                        <option key={item.ItemId} value={item.ItemId}>
-                          {item.ItemCode ? `[${item.ItemCode}] ` : ''}{item.ItemName}
-                        </option>
-                      ))}
-                    </select>
-                    {!isReadOnly && (
-                      <button
-                        type="button"
-                        onClick={() => setShowNewItemForm((prev) => !prev)}
-                        className="btn-secondary whitespace-nowrap"
-                      >
-                        {showNewItemForm ? '✕' : '+ Yeni Ürün'}
-                      </button>
-                    )}
-                  </div>
-
-                  {showNewItemForm && !isReadOnly && (
-                    <div className="mt-2 rounded-lg border border-accent bg-blue-900/30 p-3">
-                      <h4 className="text-sm font-semibold mb-2">Yeni Ürün Ekle</h4>
-                      <div className="space-y-2">
-                        <div>
-                          <label className="block text-xs font-medium mb-1">Ürün Adı *</label>
-                          <input
-                            type="text"
-                            value={newItemName}
-                            onChange={(e) => setNewItemName(e.target.value)}
-                            placeholder="Ürün adı"
-                            className="input w-full text-sm"
-                          />
+                  {isReadOnly ? (
+                    <input
+                      type="text"
+                      readOnly
+                      value={
+                        selectedItem
+                          ? `${selectedItem.ItemCode ? `[${selectedItem.ItemCode}] ` : ''}${selectedItem.ItemName}`
+                          : 'Ürün seçilmedi'
+                      }
+                      className="input w-full"
+                    />
+                  ) : (
+                    <div className="rounded-panel border border-background-border bg-background-secondary p-1">
+                      {selectedItem && (
+                        <div className="mb-1 rounded-md border border-background-border bg-background-main px-2 py-1 text-[11px] text-text-secondary">
+                          <span className="mr-1 font-medium text-text-primary">Seçili:</span>
+                          {selectedItem.ItemCode ? `[${selectedItem.ItemCode}] ` : ''}
+                          {selectedItem.ItemName}
                         </div>
-                        <div className="grid grid-cols-2 gap-2">
-                          <div>
-                            <label className="block text-xs font-medium mb-1">Ürün Kodu</label>
-                            <input
-                              type="text"
-                              value={newItemCode}
-                              onChange={(e) => setNewItemCode(e.target.value)}
-                              placeholder="Alfanümerik kod"
-                              maxLength={50}
-                              className="input w-full text-sm"
-                            />
-                          </div>
-                          <div>
-                            <label className="block text-xs font-medium mb-1">Stok Adedi</label>
-                            <input
-                              type="number"
-                              value={newItemTotalStock}
-                              onChange={(e) => setNewItemTotalStock(e.target.value)}
-                              min="0"
-                              step="1"
-                              placeholder="0"
-                              className="input w-full text-sm"
-                            />
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex gap-2 mt-2">
-                        <button
-                          type="button"
-                          onClick={resetNewItemForm}
-                          className="btn-secondary text-xs py-1 px-2"
-                          disabled={savingItem}
-                        >
-                          İptal
-                        </button>
-                        <button
-                          type="button"
-                          onClick={handleSaveNewItem}
-                          className="btn-primary text-xs py-1 px-2"
-                          disabled={savingItem}
-                        >
-                          {savingItem ? 'Kaydediliyor...' : 'Kaydet'}
-                        </button>
+                      )}
+                      <div className="max-h-28 overflow-y-auto pr-0.5">
+                        {filteredItems.length === 0 ? (
+                          <div className="px-2 py-1.5 text-[11px] text-text-secondary">Eşleşen ürün bulunamadı.</div>
+                        ) : (
+                          filteredItems.map((item) => {
+                            const isSelected = Number(itemId) === item.ItemId;
+                            return (
+                              <button
+                                key={item.ItemId}
+                                type="button"
+                                onClick={() => setItemId(item.ItemId)}
+                                className={`mb-1 w-full rounded-md border px-2 py-1 text-left text-[11px] last:mb-0 ${
+                                  isSelected
+                                    ? 'border-blue-700/50 bg-blue-900/30 text-text-primary'
+                                    : 'border-transparent bg-background-main text-text-primary hover:border-background-border hover:bg-background-hover'
+                                }`}
+                              >
+                                <div>{item.ItemName}</div>
+                                <div className="text-[10px] text-text-secondary">Kod: {item.ItemCode || '—'}</div>
+                              </button>
+                            );
+                          })
+                        )}
                       </div>
                     </div>
                   )}
+                  {!isReadOnly && (
+                    <button type="button" onClick={() => { setNewItemSaveError(null); setShowNewItemForm((prev) => !prev); }} className="btn-secondary whitespace-nowrap">
+                      {showNewItemForm ? '✕' : '+ Yeni Ürün'}
+                    </button>
+                  )}
                 </div>
               )}
             </div>
+
+            {showNewCustomerForm && !isReadOnly && (
+              <div className="rounded-panel border border-background-border bg-background-secondary p-2">
+                <h4 className="mb-1 text-xs font-semibold">Yeni Cari Hesap Ekle</h4>
+                <div className="grid grid-cols-2 gap-1.5">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium">Ad/Ünvan *</label>
+                    <input type="text" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Firma veya kişi adı" className="input w-full" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium">Vergi No</label>
+                    <input
+                      type="text"
+                      value={newCustomerTaxId}
+                      onChange={(e) => setNewCustomerTaxId(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                      placeholder="Vergi numarası"
+                      inputMode="numeric"
+                      maxLength={11}
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium">Telefon</label>
+                    <input type="text" value={newCustomerPhone} onChange={(e) => setNewCustomerPhone(e.target.value)} placeholder="0xxx xxx xx xx" className="input w-full" />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-medium">E-posta</label>
+                    <input type="email" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} placeholder="ornek@email.com" className="input w-full" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="mb-1 block text-xs font-medium">Adres</label>
+                    <input type="text" value={newCustomerAddress} onChange={(e) => setNewCustomerAddress(e.target.value)} placeholder="Adres bilgisi" className="input w-full" />
+                  </div>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" onClick={resetNewCustomerForm} className="btn-secondary" disabled={savingCustomer}>İptal</button>
+                  <button type="button" onClick={handleSaveNewCustomer} className="btn-primary" disabled={savingCustomer}>{savingCustomer ? 'Kaydediliyor...' : 'Kaydet'}</button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="col-span-5 space-y-1.5">
+            <div className="grid grid-cols-2 gap-1.5">
+              <div className="col-span-2">
+                <label className="mb-1 block text-xs font-medium">Depo</label>
+                {warehousesLoading ? (
+                  <div className="text-text-secondary text-sm">Yükleniyor...</div>
+                ) : (
+                  <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value ? Number(e.target.value) : '')} disabled={isReadOnly} className="input w-full">
+                    <option value="">Depo seçin (opsiyonel)</option>
+                    {warehouses.map((wh) => (
+                      <option key={wh.WarehouseId} value={wh.WarehouseId}>{wh.WarehouseName}</option>
+                    ))}
+                  </select>
+                )}
+              </div>
+            </div>
+
+            {showNewItemForm && !isReadOnly && (
+              <div className="rounded-panel border border-background-border bg-background-secondary p-2">
+                <h4 className="mb-1 text-xs font-semibold">Yeni Ürün Ekle</h4>
+                {newItemSaveError && (
+                  <div role="alert" className="mb-2 rounded-md border border-red-600/60 bg-red-950/45 p-2 text-xs text-red-100 whitespace-pre-wrap">{newItemSaveError}</div>
+                )}
+                <div className="space-y-1.5">
+                  <div>
+                    <label className="mb-1 block text-xs font-medium">Ürün Adı *</label>
+                    <input type="text" value={newItemName} onChange={(e) => { setNewItemName(e.target.value); setNewItemSaveError(null); }} placeholder="Ürün adı" className="input w-full" />
+                  </div>
+                  <div className="grid grid-cols-2 gap-1.5">
+                    <div>
+                      <label className="mb-1 block text-xs font-medium">Ürün Kodu</label>
+                      <input type="text" value={newItemCode} onChange={(e) => setNewItemCode(e.target.value)} placeholder="Alfanümerik kod" maxLength={50} className="input w-full" />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-medium">Stok Adedi</label>
+                      <input type="number" value={newItemTotalStock} onChange={(e) => setNewItemTotalStock(e.target.value)} min="0" step="1" placeholder="0" className="input w-full" />
+                    </div>
+                  </div>
+                </div>
+                <div className="mt-2 flex gap-2">
+                  <button type="button" onClick={resetNewItemForm} className="btn-secondary text-xs py-1 px-2" disabled={savingItem}>İptal</button>
+                  <button type="button" onClick={handleSaveNewItem} className="btn-primary text-xs py-1 px-2" disabled={savingItem}>{savingItem ? 'Kaydediliyor...' : 'Kaydet'}</button>
+                </div>
+              </div>
+            )}
+
+            {!isReadOnly && itemId && warehouseId && (
+              <div className="flex items-start gap-2 rounded-md border border-green-700/40 bg-green-900/20 p-2 text-[11px] text-green-300">
+                <span className="mt-0.5 shrink-0">&#9432;</span>
+                <span>Ürün ve depo seçili olduğundan, fatura kaydedildiğinde <strong>{parseFloat(quantity) || 0} adet</strong> ürün otomatik olarak envanter stokuna ve depo stokuna eklenecektir.</span>
+              </div>
+            )}
+
             <div>
-              <label className="block text-sm font-medium mb-2">Depo</label>
-              {warehousesLoading ? (
-                <div className="text-text-secondary text-sm">Yükleniyor...</div>
-              ) : (
-                <select
-                  value={warehouseId}
-                  onChange={(e) => setWarehouseId(e.target.value ? Number(e.target.value) : '')}
-                  disabled={isReadOnly}
-                  className="input w-full"
-                >
-                  <option value="">Depo seçin (opsiyonel)</option>
-                  {warehouses.map((wh) => (
-                    <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                      {wh.WarehouseName}
-                    </option>
-                  ))}
-                </select>
-              )}
-            </div>
-          </div>
-
-          {/* Stok güncelleme bilgi notu */}
-          {!isReadOnly && itemId && warehouseId && (
-            <div className="rounded-lg bg-green-900/30 border border-green-700/50 p-3 text-sm text-green-300 flex items-start gap-2">
-              <span className="shrink-0 mt-0.5">&#9432;</span>
-              <span>
-                Ürün ve depo seçili olduğundan, fatura kaydedildiğinde <strong>{parseFloat(quantity) || 0} adet</strong> ürün otomatik olarak envanter stokuna ve depo stokuna eklenecektir.
-              </span>
-            </div>
-          )}
-
-          {/* Açıklama */}
-          <div>
-            <label className="block text-sm font-medium mb-2">Açıklama</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              disabled={isReadOnly}
-              placeholder="Fatura açıklaması (opsiyonel)"
-              className="input w-full h-16 resize-none"
-            />
-          </div>
-
-          {/* Tutar Bilgileri */}
-          <div className="border-t border-background-border pt-4">
-            <h3 className="text-lg font-semibold mb-4">Tutar Bilgileri</h3>
-
-            {/* Miktar ve Birim Fiyat */}
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">Miktar *</label>
-                <input
-                  type="number"
-                  value={quantity}
-                  onChange={(e) => setQuantity(e.target.value)}
-                  disabled={isReadOnly}
-                  min="0"
-                  step="1"
-                  placeholder="1"
-                  className="input w-full"
-                  required
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">Birim Fiyat *</label>
-                <input
-                  type="number"
-                  value={unitPrice}
-                  onChange={(e) => setUnitPrice(e.target.value)}
-                  disabled={isReadOnly}
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  className="input w-full"
-                  required
-                />
-              </div>
+              <label className="mb-1 block text-xs font-medium">Açıklama</label>
+              <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={isReadOnly} placeholder="Fatura açıklaması (opsiyonel)" className="input h-14 w-full resize-none" />
             </div>
 
-            {/* İskonto, KDV, Para Birimi, Döviz Kuru */}
-            <div className="grid grid-cols-4 gap-4 mb-4">
-              <div>
-                <label className="block text-sm font-medium mb-2">İskonto (%)</label>
-                <input
-                  type="number"
-                  value={iskonto}
-                  onChange={(e) => setIskonto(e.target.value)}
-                  disabled={isReadOnly}
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  placeholder="0"
-                  className="input w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">KDV Oranı (%)</label>
-                <input
-                  type="number"
-                  value={vatRate}
-                  onChange={(e) => setVatRate(e.target.value)}
-                  disabled={isReadOnly}
-                  min="0"
-                  max="100"
-                  step="1"
-                  placeholder="20"
-                  className="input w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium mb-2">Para Birimi</label>
-                <select
-                  value={currency}
-                  onChange={(e) => {
-                    setCurrency(e.target.value);
-                    if (e.target.value === 'TL') setExchangeRate('');
-                  }}
-                  disabled={isReadOnly}
-                  className="input w-full"
-                >
-                  <option value="TL">TL</option>
-                  <option value="EUR">EUR</option>
-                </select>
-              </div>
-              {currency === 'EUR' && (
+            <div className="rounded-panel border border-background-border bg-background-secondary p-2">
+              <h3 className="mb-1 text-xs font-semibold">Tutar Bilgileri</h3>
+              <div className="mb-1 grid grid-cols-2 gap-1.5">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Döviz Kuru</label>
-                  <input
-                    type="number"
-                    value={exchangeRate}
-                    onChange={(e) => setExchangeRate(e.target.value)}
-                    disabled={isReadOnly}
-                    min="0"
-                    step="0.0001"
-                    placeholder="Kur değeri"
-                    className="input w-full"
-                  />
+                  <label className="mb-1 block text-xs font-medium">Miktar *</label>
+                  <input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} disabled={isReadOnly} min="0" step="1" placeholder="1" className="input w-full" required />
                 </div>
-              )}
-            </div>
-
-            {/* Hesaplama Özeti */}
-            <div className="mt-4 p-4 bg-background-secondary rounded-lg">
-              <div className="flex justify-between mb-2">
-                <span className="text-text-secondary">Toplam ({parseFloat(quantity) || 0} x {formatCurrency(parseFloat(unitPrice) || 0)}):</span>
-                <span>{formatCurrency(calculations.grossTotal)}</span>
-              </div>
-
-              {calculations.discountAmount > 0 && (
-                <div className="flex justify-between mb-2 text-red-400">
-                  <span>İskonto ({parseFloat(iskonto) || 0}%):</span>
-                  <span>-{formatCurrency(calculations.discountAmount)}</span>
+                <div>
+                  <label className="mb-1 block text-xs font-medium">Birim Fiyat *</label>
+                  <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} disabled={isReadOnly} min="0" step="0.01" placeholder="0.00" className="input w-full" required />
                 </div>
-              )}
-
-              <div className="flex justify-between mb-2 border-t border-background-border pt-2">
-                <span className="text-text-secondary">Ara Toplam:</span>
-                <span>{formatCurrency(calculations.subtotal)}</span>
               </div>
-
-              <div className="flex justify-between mb-2">
-                <span className="text-text-secondary">KDV ({parseFloat(vatRate) || 0}%):</span>
-                <span>{formatCurrency(calculations.vatAmount)}</span>
+              <div className="mb-1 grid grid-cols-4 gap-1.5">
+                <div>
+                  <label className="mb-1 block text-xs font-medium">İskonto (%)</label>
+                  <input type="number" value={iskonto} onChange={(e) => setIskonto(e.target.value)} disabled={isReadOnly} min="0" max="100" step="0.01" placeholder="0" className="input w-full" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium">KDV (%)</label>
+                  <input type="number" value={vatRate} onChange={(e) => setVatRate(e.target.value)} disabled={isReadOnly} min="0" max="100" step="1" placeholder="20" className="input w-full" />
+                </div>
+                <div>
+                  <label className="mb-1 block text-xs font-medium">Para Birimi</label>
+                  <select value={currency} onChange={(e) => { setCurrency(e.target.value); if (e.target.value === 'TL') setExchangeRate(''); }} disabled={isReadOnly} className="input w-full">
+                    <option value="TL">TL</option>
+                    <option value="EUR">EUR</option>
+                  </select>
+                </div>
+                {currency === 'EUR' && (
+                  <div>
+                    <label className="mb-1 block text-xs font-medium">Kur</label>
+                    <input type="number" value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)} disabled={isReadOnly} min="0" step="0.0001" placeholder="Kur" className="input w-full" />
+                  </div>
+                )}
               </div>
-
-              <div className="flex justify-between text-lg font-bold border-t border-background-border pt-2 mt-2">
-                <span>Alt Toplam:</span>
-                <span className="text-accent">{formatCurrency(calculations.totalAmount)}</span>
+              <div className="rounded-md border border-background-border bg-background-main p-2">
+                <div className="mb-1 flex justify-between"><span className="text-text-secondary">Toplam:</span><span>{formatCurrency(calculations.grossTotal)}</span></div>
+                {calculations.discountAmount > 0 && <div className="mb-1 flex justify-between text-red-400"><span>İskonto:</span><span>-{formatCurrency(calculations.discountAmount)}</span></div>}
+                <div className="mb-1 flex justify-between border-t border-background-border pt-1"><span className="text-text-secondary">Ara Toplam:</span><span>{formatCurrency(calculations.subtotal)}</span></div>
+                <div className="mb-1 flex justify-between"><span className="text-text-secondary">KDV:</span><span>{formatCurrency(calculations.vatAmount)}</span></div>
+                <div className="mt-1 flex justify-between border-t border-background-border pt-1 text-xs font-semibold"><span>Genel Toplam:</span><span className="text-accent">{formatCurrency(calculations.totalAmount)}</span></div>
               </div>
             </div>
           </div>
         </div>
 
         {/* Action Buttons */}
-        <div className="flex gap-3 mt-6">
+        <div className="flex gap-2 mt-3">
           {!isNew && isReadOnly && (
             <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
               Düzenle
@@ -836,13 +740,13 @@ export default function PurchaseInvoiceDetailModal({
                   Sil
                 </button>
               )}
-              <button onClick={onClose} className="btn-secondary flex-1">
+              <button onClick={onClose} className="btn-secondary flex-1 !text-sm !py-2 !px-4">
                 İptal
               </button>
               <button
                 onClick={handleSave}
                 disabled={isBusy}
-                className="btn-primary flex-1"
+                className="btn-primary flex-1 !text-sm !py-2 !px-4"
               >
                 {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
               </button>

@@ -1,5 +1,5 @@
 import { apiClient } from './apiClient';
-import { AuditLog, Warehouse, WarehouseStockResponse } from '../models';
+import { AuditLog, Warehouse, WarehouseMovementsResponse, WarehouseStockResponse } from '../models';
 
 export interface CreateWarehouseRequest {
   WarehouseName: string;
@@ -66,5 +66,26 @@ export const warehouseService = {
 
   async getAuditLogsByWarehouseAsync(warehouseId: number): Promise<AuditLog[]> {
     return apiClient.get<AuditLog[]>(`/warehouses/${warehouseId}/audit-logs`);
+  },
+
+  // Warehouse Movements (GET /warehouses/:warehouseId/movements)
+  async getMovementsAsync(
+    warehouseId: number,
+    params?: {
+      itemId?: number;
+      dateFrom?: string;
+      dateTo?: string;
+      includeCompleted?: boolean;
+    }
+  ): Promise<WarehouseMovementsResponse> {
+    const sp = new URLSearchParams();
+    if (params?.itemId != null) sp.set('itemId', String(params.itemId));
+    if (params?.dateFrom) sp.set('dateFrom', params.dateFrom);
+    if (params?.dateTo) sp.set('dateTo', params.dateTo);
+    if (params?.includeCompleted != null) sp.set('includeCompleted', String(params.includeCompleted));
+    const qs = sp.toString();
+    return apiClient.get<WarehouseMovementsResponse>(
+      qs ? `/warehouses/${warehouseId}/movements?${qs}` : `/warehouses/${warehouseId}/movements`
+    );
   },
 };

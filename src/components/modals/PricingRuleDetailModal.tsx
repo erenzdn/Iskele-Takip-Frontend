@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { PricingRule, PricingRuleType } from '../../models';
 import { pricingRulesService } from '../../services/pricingRulesService';
 import ConfirmModal from './ConfirmModal';
+import { toast } from '../../hooks/useToast';
 
 interface PricingRuleTypeItem {
   Type: PricingRuleType;
@@ -107,7 +108,7 @@ export default function PricingRuleDetailModal({
 
   const handleSave = async () => {
     if (!ruleName.trim()) {
-      alert('Kural adı zorunludur');
+      toast.warning('Kural adı zorunludur');
       return;
     }
 
@@ -132,7 +133,7 @@ export default function PricingRuleDetailModal({
       onClose();
     } catch (error) {
       console.error('Save pricing rule error:', error);
-      alert('Kaydetme hatası');
+      toast.error('Kaydetme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -152,7 +153,7 @@ export default function PricingRuleDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete pricing rule error:', error);
-      alert('Silme hatası');
+      toast.error('Silme hatası');
     } finally {
       setIsBusy(false);
     }

@@ -13,8 +13,10 @@ import {
   RentalMovementSummaryGlobal,
   ReportTemplate,
 } from '../models';
+import { toast } from '../hooks/useToast';
 import { useAuthStore } from '../store/authStore';
 import EmptyState from '../components/EmptyState';
+import CustomerSearchField from '../components/CustomerSearchField';
 import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import ReportTemplateEditorModal from '../components/modals/ReportTemplateEditorModal';
 
@@ -39,11 +41,11 @@ function toDateOnly(d: Date): string {
 
 export default function RentalMovementReportPage() {
   const user = useAuthStore((state) => state.user);
-  const hasPermission = user?.Permissions?.includes('reports_view');
-  const canViewTemplates = user?.Permissions?.includes('reportTemplates_view');
-  const canCreateTemplate = user?.Permissions?.includes('reportTemplates_create');
-  const canUpdateTemplate = user?.Permissions?.includes('reportTemplates_update');
-  const canDeleteTemplate = user?.Permissions?.includes('reportTemplates_delete');
+  const hasPermission = user?.permissions?.includes('reports_view');
+  const canViewTemplates = user?.permissions?.includes('reportTemplates_view');
+  const canCreateTemplate = user?.permissions?.includes('reportTemplates_create');
+  const canUpdateTemplate = user?.permissions?.includes('reportTemplates_update');
+  const canDeleteTemplate = user?.permissions?.includes('reportTemplates_delete');
 
   const [reportType, setReportType] = useState<ReportType>('customer');
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -227,7 +229,7 @@ export default function RentalMovementReportPage() {
         loadReportTemplates();
       } catch (err) {
         console.error('Copy template error:', err);
-        alert('Kopyalama başarısız.');
+        toast.error('Kopyalama başarısız.');
       }
     },
     [canCreateTemplate, loadReportTemplates]
@@ -243,7 +245,7 @@ export default function RentalMovementReportPage() {
         if (selectedTemplateId === t.TemplateId) setSelectedTemplateId('');
       } catch (err) {
         console.error('Delete template error:', err);
-        alert('Silme başarısız.');
+        toast.error('Silme başarısız.');
       }
     },
     [canDeleteTemplate, loadReportTemplates, selectedTemplateId]
@@ -322,43 +324,34 @@ export default function RentalMovementReportPage() {
         </div>
 
         {reportType === 'customer' && (
-          <div className="mb-4">
-            <label className="block text-sm text-text-secondary mb-2">Müşteri</label>
-            <select
-              value={selectedCustomerId === '' ? '' : selectedCustomerId}
-              onChange={(e) => setSelectedCustomerId(e.target.value === '' ? '' : Number(e.target.value))}
-              className="input w-full max-w-md"
-            >
-              <option value="">Müşteri seçin</option>
-              {customers.map((c) => (
-                <option key={c.CustomerId} value={c.CustomerId}>
-                  {c.Name}
-                </option>
-              ))}
-            </select>
+          <div className="mb-4 max-w-md">
+            <label htmlFor="rental-report-customer" className="block text-sm text-text-secondary mb-2">
+              Müşteri
+            </label>
+            <CustomerSearchField
+              id="rental-report-customer"
+              customers={customers}
+              value={selectedCustomerId}
+              onChange={setSelectedCustomerId}
+            />
           </div>
         )}
 
         {reportType === 'site' && (
           <>
-            <div className="mb-4">
-              <label className="block text-sm text-text-secondary mb-2">Müşteri</label>
-              <select
-                value={selectedCustomerId === '' ? '' : selectedCustomerId}
-                onChange={(e) => {
-                  const v = e.target.value === '' ? '' : Number(e.target.value);
-                  setSelectedCustomerId(v);
+            <div className="mb-4 max-w-md">
+              <label htmlFor="rental-report-site-customer" className="block text-sm text-text-secondary mb-2">
+                Müşteri
+              </label>
+              <CustomerSearchField
+                id="rental-report-site-customer"
+                customers={customers}
+                value={selectedCustomerId}
+                onChange={(id) => {
+                  setSelectedCustomerId(id);
                   setSelectedSiteId('');
                 }}
-                className="input w-full max-w-md"
-              >
-                <option value="">Müşteri seçin</option>
-                {customers.map((c) => (
-                  <option key={c.CustomerId} value={c.CustomerId}>
-                    {c.Name}
-                  </option>
-                ))}
-              </select>
+              />
             </div>
             <div className="mb-4">
               <label className="block text-sm text-text-secondary mb-2">Şantiye</label>
@@ -547,7 +540,7 @@ export default function RentalMovementReportPage() {
                   <tr
                     key={row.product_id}
                     className={`border-b border-background-border hover:bg-background-hover ${
-                      index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
+                      index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
                     }`}
                   >
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">

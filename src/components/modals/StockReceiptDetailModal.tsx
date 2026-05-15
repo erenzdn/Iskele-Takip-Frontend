@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { XIcon, TrashIcon, PlusIcon, FileTextIcon } from '@phosphor-icons/react';
+import { XIcon, TrashIcon, PlusIcon } from '@phosphor-icons/react';
 import {
   StockReceipt,
   StockReceiptDetail,
@@ -16,6 +16,7 @@ import { inventoryService } from '../../services/inventoryService';
 import { reportTemplateService } from '../../services/reportTemplateService';
 import { useAuthStore } from '../../store/authStore';
 import { getApiErrorMessage } from '../../utils/apiError';
+import { toast } from '../../hooks/useToast';
 import { formatShortDateTime } from '../../utils/formatters';
 import ConfirmModal from './ConfirmModal';
 import PdfPreviewModal from './PdfPreviewModal';
@@ -42,7 +43,6 @@ interface CreateLineRow {
   clientId: string;
   ItemId: number | '';
   Quantity: string;
-  IsManual: boolean;
   Description: string;
 }
 
@@ -52,9 +52,9 @@ export default function StockReceiptDetailModal({
   onClose,
 }: StockReceiptDetailModalProps) {
   const user = useAuthStore((state) => state.user);
-  const canCreate = user?.Permissions?.includes('stockReceipts_create');
-  const canCreateReportTemplate = user?.Permissions?.includes('reportTemplates_create');
-  const canUpdateReportTemplate = user?.Permissions?.includes('reportTemplates_update');
+  const canCreate = user?.permissions?.includes('stockReceipts_create');
+  const canCreateReportTemplate = user?.permissions?.includes('reportTemplates_create');
+  const canUpdateReportTemplate = user?.permissions?.includes('reportTemplates_update');
 
   const [detail, setDetail] = useState<StockReceiptDetail | null>(null);
   const [loadingDetail, setLoadingDetail] = useState(false);
@@ -119,10 +119,16 @@ export default function StockReceiptDetailModal({
     try {
       setIsBusy(true);
       await stockReceiptService.cancelAsync(detail.ReceiptId);
+      const [refetchedDetail, refetchedInventory] = await Promise.all([
+        stockReceiptService.getByIdAsync(detail.ReceiptId),
+        inventoryService.getAllAsync(),
+      ]);
+      setDetail(refetchedDetail);
+      setInventoryItems(refetchedInventory ?? []);
       setShowCancelConfirm(false);
       onClose();
     } catch (error) {
-      alert(getApiErrorMessage(error) || 'İptal işlemi başarısız');
+      toast.error(getApiErrorMessage(error) || 'İptal işlemi başarısız');
     } finally {
       setIsBusy(false);
     }
@@ -135,7 +141,7 @@ export default function StockReceiptDetailModal({
       const templateId = selectedPdfTemplateId === '' ? undefined : selectedPdfTemplateId;
       const blob = await stockReceiptService.getPdfBlobAsync(detail.ReceiptId, templateId);
       if (blob.size === 0) {
-        alert('PDF oluşturulamadı.');
+        toast.error('PDF oluşturulamadı.');
         return;
       }
       const url = window.URL.createObjectURL(blob);
@@ -145,7 +151,7 @@ export default function StockReceiptDetailModal({
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (error) {
-      alert(getApiErrorMessage(error) || 'PDF indirme hatası');
+      toast.error(getApiErrorMessage(error) || 'PDF indirme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -158,14 +164,14 @@ export default function StockReceiptDetailModal({
       const templateId = selectedPdfTemplateId === '' ? undefined : selectedPdfTemplateId;
       const blob = await stockReceiptService.getPdfBlobAsync(detail.ReceiptId, templateId);
       if (blob.size === 0) {
-        alert('PDF oluşturulamadı.');
+        toast.error('PDF oluşturulamadı.');
         return;
       }
       const url = window.URL.createObjectURL(blob);
       setPdfPreviewUrl(url);
       setShowPdfPreview(true);
     } catch (error) {
-      alert(getApiErrorMessage(error) || 'PDF önizleme hatası');
+      toast.error(getApiErrorMessage(error) || 'PDF önizleme hatası');
     } finally {
       setPdfLoading(false);
     }
@@ -186,24 +192,11 @@ export default function StockReceiptDetailModal({
         clientId: crypto.randomUUID(),
         ItemId: item.ItemId,
         Quantity: String(Math.max(1, quantity)),
-        IsManual: false,
         Description: '',
       },
     ]);
     setShowProductPicker(false);
-  };
-
-  const addManualLine = () => {
-    setLineRows((prev) => [
-      ...prev,
-      {
-        clientId: crypto.randomUUID(),
-        ItemId: '',
-        Quantity: '1',
-        IsManual: true,
-        Description: '',
-      },
-    ]);
+    return true;
   };
 
   const removeLineRow = (clientId: string) => {
@@ -226,23 +219,22 @@ export default function StockReceiptDetailModal({
       setCreateError('Transfer için farklı bir hedef depo seçmelisiniz.');
       return;
     }
-    const validRows = lineRows.filter((r) => {
-      const qty = Number(r.Quantity) > 0;
-      if (r.IsManual) return qty && (r.Description?.trim() ?? '').length > 0;
-      return qty && r.ItemId !== '';
-    });
+    const validRows = lineRows.filter((r) => Number(r.Quantity) > 0 && r.ItemId !== '');
+    const hasInvalidRows = lineRows.some((r) => Number(r.Quantity) <= 0 || r.ItemId === '');
     if (validRows.length === 0) {
-      setCreateError('En az bir kalem ekleyin. Envanter kaleminde ürün seçin; manuel kalemde açıklama yazın ve miktar girin.');
+      setCreateError('En az bir kalem ekleyin ve her satırda ürün seçin.');
+      return;
+    }
+    if (hasInvalidRows) {
+      setCreateError('Tüm satırlarda ürün seçimi ve pozitif miktar zorunludur.');
       return;
     }
     const quantityInt = (n: number) => Math.max(1, Math.floor(Number(n)) || 1);
-    const items = validRows.map((r) => {
-      const quantity = quantityInt(Number(r.Quantity));
-      if (r.IsManual) {
-        return { IsManual: true as const, Description: (r.Description ?? '').trim(), Quantity: quantity };
-      }
-      return { ItemId: Number(r.ItemId), Quantity: quantity };
-    });
+    const items = validRows.map((r) => ({
+      ItemId: Number(r.ItemId),
+      Quantity: quantityInt(Number(r.Quantity)),
+      ...(r.Description.trim() ? { Description: r.Description.trim() } : {}),
+    }));
 
     try {
       setIsBusy(true);
@@ -261,6 +253,12 @@ export default function StockReceiptDetailModal({
         console.log('[Stok Fişi] POST body:', JSON.stringify(payload, null, 2));
       }
       await stockReceiptService.createAsync(payload);
+      const [refetchedInventory, refetchedWarehouses] = await Promise.all([
+        inventoryService.getAllAsync(),
+        warehouseService.getAllAsync(),
+      ]);
+      setInventoryItems(refetchedInventory ?? []);
+      setWarehouses(refetchedWarehouses ?? []);
       onClose();
     } catch (error) {
       setCreateError(getApiErrorMessage(error) || 'Fiş oluşturulamadı.');
@@ -314,7 +312,15 @@ export default function StockReceiptDetailModal({
                   )}
                   <div>
                     <span className="text-text-secondary">Durum: </span>
-                    <span className="font-medium">{STATUS_LABELS[displayReceipt.Status]}</span>
+                    <span
+                      className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
+                        displayReceipt.Status === 'CANCELLED'
+                          ? 'bg-red-500/15 text-red-400'
+                          : 'bg-emerald-500/15 text-emerald-400'
+                      }`}
+                    >
+                      {STATUS_LABELS[displayReceipt.Status]}
+                    </span>
                   </div>
                   <div>
                     <span className="text-text-secondary">Oluşturan: </span>
@@ -335,24 +341,20 @@ export default function StockReceiptDetailModal({
                 <div className="mb-4">
                   <h3 className="text-sm font-medium text-text-secondary mb-2">Kalemler</h3>
                   <div className="border border-background-border rounded overflow-hidden">
-                    <table className="w-full text-xs border-collapse">
-                      <thead className="bg-background-hover">
+                    <table className="w-full text-xs border-collapse text-text-primary">
+                      <thead className="bg-background-surface">
                         <tr>
                           <th className="text-left py-2 px-2 font-medium">Ürün</th>
                           <th className="text-right py-2 px-2 font-medium">Miktar</th>
-                          <th className="text-left py-2 px-2 font-medium">Manuel / Açıklama</th>
+                          <th className="text-left py-2 px-2 font-medium">Açıklama</th>
                         </tr>
                       </thead>
                       <tbody>
                         {items.map((item: StockReceiptItem) => (
-                          <tr key={item.ItemLineId} className="border-t border-background-border">
-                            <td className="py-1.5 px-2">
-                              {item.IsManual ? (item.Description || 'Manuel kalem') : (item.ItemName ?? '-')}
-                            </td>
+                          <tr key={item.ItemLineId} className="border-t border-background-border bg-background-surface hover:bg-background-hover transition-colors">
+                            <td className="py-1.5 px-2">{item.ItemName ?? '-'}</td>
                             <td className="py-1.5 px-2 text-right">{item.Quantity}</td>
-                            <td className="py-1.5 px-2 text-text-secondary">
-                              {item.IsManual ? 'Manuel' : '-'}
-                            </td>
+                            <td className="py-1.5 px-2 text-text-secondary">{item.Description?.trim() || '-'}</td>
                           </tr>
                         ))}
                       </tbody>
@@ -436,6 +438,16 @@ export default function StockReceiptDetailModal({
                       İptal Et
                     </button>
                   )}
+                  {canCreate && displayReceipt.Status === 'CANCELLED' && (
+                    <button
+                      type="button"
+                      disabled
+                      className="btn-secondary text-sm opacity-60 cursor-not-allowed"
+                      title="İptal edilmiş fiş yeniden iptal edilemez."
+                    >
+                      Zaten İptal Edildi
+                    </button>
+                  )}
                 </div>
               </>
             )}
@@ -505,53 +517,34 @@ export default function StockReceiptDetailModal({
                 <div className="mb-4">
                   <div className="flex items-center justify-between mb-2">
                     <h3 className="text-sm font-medium text-text-secondary">Fiş kalemleri</h3>
-                    <div className="flex items-center gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setShowProductPicker(true)}
-                        className="btn-primary text-sm flex items-center gap-2 py-2 px-3"
-                      >
-                        <PlusIcon size={18} weight="bold" /> Ürün ekle
-                      </button>
-                      <button
-                        type="button"
-                        onClick={addManualLine}
-                        className="btn-secondary text-sm flex items-center gap-2 py-2 px-3"
-                      >
-                        <FileTextIcon size={18} weight="regular" /> Manuel kalem ekle
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowProductPicker(true)}
+                      className="btn-primary text-sm flex items-center gap-2 py-2 px-3"
+                    >
+                      <PlusIcon size={18} weight="bold" /> Ürün ekle
+                    </button>
                   </div>
                   {lineRows.length === 0 ? (
                     <div className="border border-dashed border-background-border rounded-lg py-8 px-4 text-center bg-background-hover/30">
                       <p className="text-text-secondary text-sm mb-3">Henüz kalem eklenmedi.</p>
-                      <p className="text-text-secondary/80 text-xs mb-4">Ürün ekle ile envanterden seçin veya manuel kalem ekleyin (nakliye, hizmet vb.).</p>
-                      <div className="flex flex-wrap justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => setShowProductPicker(true)}
-                          className="btn-primary text-sm inline-flex items-center gap-2"
-                        >
-                          <PlusIcon size={16} /> Ürün ekle
-                        </button>
-                        <button
-                          type="button"
-                          onClick={addManualLine}
-                          className="btn-secondary text-sm inline-flex items-center gap-2"
-                        >
-                          <FileTextIcon size={16} /> Manuel kalem ekle
-                        </button>
-                      </div>
+                      <p className="text-text-secondary/80 text-xs mb-4">Kalem eklemek için envanterden ürün seçin.</p>
+                      <button
+                        type="button"
+                        onClick={() => setShowProductPicker(true)}
+                        className="btn-primary text-sm inline-flex items-center gap-2"
+                      >
+                        <PlusIcon size={16} /> Ürün ekle
+                      </button>
                     </div>
                   ) : (
                     <div className="border border-background-border rounded-lg overflow-visible">
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm border-collapse">
-                        <thead className="bg-background-hover">
+                        <table className="w-full text-sm border-collapse text-text-primary">
+                        <thead className="bg-background-surface">
                           <tr>
                             <th className="text-left py-2.5 px-3 font-medium text-text-secondary min-w-[260px]">Ürün</th>
                             <th className="text-right py-2.5 px-3 font-medium text-text-secondary w-28">Miktar</th>
-                            <th className="text-left py-2.5 px-3 font-medium text-text-secondary w-24">Manuel</th>
                             <th className="text-left py-2.5 px-3 font-medium text-text-secondary min-w-[140px]">Açıklama</th>
                             <th className="w-12"></th>
                           </tr>
@@ -562,17 +555,9 @@ export default function StockReceiptDetailModal({
                               ? (inventoryItems.find((i) => i.ItemId === row.ItemId)?.ItemName ?? `#${row.ItemId}`)
                               : null;
                             return (
-                              <tr key={row.clientId} className="border-t border-background-border hover:bg-background-hover/50">
+                              <tr key={row.clientId} className="border-t border-background-border bg-background-surface hover:bg-background-hover transition-colors">
                                 <td className="py-2 px-3 align-top min-w-[260px]">
-                                  {row.IsManual ? (
-                                    <input
-                                      type="text"
-                                      value={row.Description}
-                                      onChange={(e) => updateLineRow(row.clientId, { Description: e.target.value })}
-                                      className="input w-full py-2 px-3 text-sm"
-                                      placeholder="Açıklama (zorunlu, örn. Nakliye hizmeti)"
-                                    />
-                                  ) : itemName !== null ? (
+                                  {itemName !== null ? (
                                     <span className="font-medium text-text-primary">{itemName}</span>
                                   ) : (
                                     <div className="w-full min-w-[240px]">
@@ -595,33 +580,13 @@ export default function StockReceiptDetailModal({
                                   />
                                 </td>
                                 <td className="py-2 px-3">
-                                  {row.IsManual ? (
-                                    <span className="text-xs text-text-secondary">Manuel</span>
-                                  ) : (
-                                    <label className="flex items-center gap-2 cursor-pointer">
-                                      <input
-                                        type="checkbox"
-                                        checked={row.IsManual}
-                                        onChange={(e) => updateLineRow(row.clientId, { IsManual: e.target.checked })}
-                                        className="rounded border-background-border"
-                                      />
-                                      <span className="text-xs text-text-secondary">Hizmet</span>
-                                    </label>
-                                  )}
-                                </td>
-                                <td className="py-2 px-3">
-                                  {row.IsManual ? (
-                                    <span className="text-xs text-text-secondary">—</span>
-                                  ) : (
-                                    <input
-                                      type="text"
-                                      value={row.Description}
-                                      onChange={(e) => updateLineRow(row.clientId, { Description: e.target.value })}
-                                      className="input w-full py-2 px-2"
-                                      placeholder="Opsiyonel"
-                                      disabled={!row.IsManual}
-                                    />
-                                  )}
+                                  <input
+                                    type="text"
+                                    value={row.Description}
+                                    onChange={(e) => updateLineRow(row.clientId, { Description: e.target.value })}
+                                    className="input w-full py-2 px-2"
+                                    placeholder="Opsiyonel açıklama"
+                                  />
                                 </td>
                                 <td className="py-2 px-2">
                                   <button

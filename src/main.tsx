@@ -2,6 +2,8 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/index.css';
+import { applyInitialTheme } from './store/themeStore';
+import { apiClient } from './services/apiClient';
 
 // react-pdf / pdf.js bazı ortamlarda URL.parse kullanır.
 // Electron/Chromium sürümüne göre bu API olmayabilir; basit polyfill.
@@ -39,6 +41,16 @@ if (!(URL as any).canParse) {
       return false;
     }
   };
+}
+
+applyInitialTheme();
+
+if (import.meta.env.DEV) {
+  const metricsApi = {
+    snapshot: () => apiClient.getRequestMetricsSnapshot(),
+    reset: () => apiClient.resetRequestMetrics(),
+  };
+  (globalThis as any).__apiMetrics = metricsApi;
 }
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

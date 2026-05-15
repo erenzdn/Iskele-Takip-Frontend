@@ -3,6 +3,7 @@ import { MaterialCategory, SubCategory } from '../../models';
 import { inventoryService } from '../../services/inventoryService';
 import { subcategoryService } from '../../services/subcategoryService';
 import ConfirmModal from './ConfirmModal';
+import { toast } from '../../hooks/useToast';
 
 interface CategoryDetailModalProps {
   category?: MaterialCategory | null;
@@ -106,7 +107,7 @@ export default function CategoryDetailModal({
   // ---- Kategori kaydet (yeni veya guncelle) ----
   const handleSaveCategory = async () => {
     if (!categoryName.trim()) {
-      alert('Kategori adı zorunludur');
+      toast.warning('Kategori adı zorunludur');
       return;
     }
 
@@ -126,7 +127,7 @@ export default function CategoryDetailModal({
       onClose();
     } catch (error) {
       console.error('Save category error:', error);
-      alert('Kaydetme hatası');
+      toast.error('Kaydetme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -146,7 +147,7 @@ export default function CategoryDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete category error:', error);
-      alert('Silme hatası. Kategoriye ait envanter varsa önce onları silin veya başka kategoriye taşıyın.');
+      toast.error('Silme hatası. Kategoriye ait envanter varsa önce onları silin veya başka kategoriye taşıyın.');
     } finally {
       setIsBusy(false);
     }
@@ -155,11 +156,11 @@ export default function CategoryDetailModal({
   // ---- Alt kategori ekleme (yeni modda - parent secili) ----
   const handleAddSubCategoryNew = async () => {
     if (!selectedParentCategoryId) {
-      alert('Lütfen bir kategori seçin');
+      toast.warning('Lütfen bir kategori seçin');
       return;
     }
     if (!newSubCategoryName.trim()) {
-      alert('Alt kategori adı zorunludur');
+      toast.warning('Alt kategori adı zorunludur');
       return;
     }
 
@@ -173,7 +174,7 @@ export default function CategoryDetailModal({
       loadParentSubCategories(Number(selectedParentCategoryId));
     } catch (error) {
       console.error('Add subcategory error:', error);
-      alert('Alt kategori ekleme hatası');
+      toast.error('Alt kategori ekleme hatası');
     } finally {
       setSubCategoryBusy(false);
     }
@@ -182,7 +183,7 @@ export default function CategoryDetailModal({
   // ---- Alt kategori ekleme (mevcut kategori modunda) ----
   const handleAddSubCategoryExisting = async () => {
     if (!category || !existingNewSubCategoryName.trim()) {
-      alert('Alt kategori adı zorunludur');
+      toast.warning('Alt kategori adı zorunludur');
       return;
     }
 
@@ -196,7 +197,7 @@ export default function CategoryDetailModal({
       loadSubCategories(category.CategoryId);
     } catch (error) {
       console.error('Add subcategory error:', error);
-      alert('Alt kategori ekleme hatası');
+      toast.error('Alt kategori ekleme hatası');
     } finally {
       setSubCategoryBusy(false);
     }
@@ -210,7 +211,7 @@ export default function CategoryDetailModal({
 
   const handleSaveEditSubCategory = async () => {
     if (!editingSubCategory || !editSubCategoryName.trim()) {
-      alert('Alt kategori adı zorunludur');
+      toast.warning('Alt kategori adı zorunludur');
       return;
     }
 
@@ -229,7 +230,7 @@ export default function CategoryDetailModal({
       }
     } catch (error) {
       console.error('Update subcategory error:', error);
-      alert('Alt kategori güncelleme hatası');
+      toast.error('Alt kategori güncelleme hatası');
     } finally {
       setSubCategoryBusy(false);
     }
@@ -255,7 +256,7 @@ export default function CategoryDetailModal({
       }
     } catch (error) {
       console.error('Delete subcategory error:', error);
-      alert('Alt kategori silme hatası');
+      toast.error('Alt kategori silme hatası');
     } finally {
       setSubCategoryBusy(false);
     }

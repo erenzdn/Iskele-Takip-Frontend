@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, Fragment } from 'react';
+import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { MagnifyingGlassIcon, WarehouseIcon } from '@phosphor-icons/react';
 import { warehouseService } from '../services/warehouseService';
@@ -7,9 +7,11 @@ import { Warehouse, WarehouseStock, Inventory } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import WarehouseDetailModal from '../components/modals/WarehouseDetailModal';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 export default function WarehousesPage() {
   const navigate = useNavigate();
+  const { setActions } = useHeaderActions();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
@@ -35,7 +37,7 @@ export default function WarehousesPage() {
     loadRentedItems();
   }, []);
 
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       const data = await warehouseService.getAllAsync();
@@ -45,13 +47,13 @@ export default function WarehousesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleAddNew = () => {
+  const handleAddNew = useCallback(() => {
     setSelectedWarehouse(null);
     setIsNewWarehouse(true);
     setIsModalOpen(true);
-  };
+  }, []);
 
   const handleOpenDetail = (warehouse: Warehouse, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -156,6 +158,25 @@ export default function WarehousesPage() {
     }
   };
 
+  const headerActions = useMemo(
+    () => (
+      <>
+        <button onClick={() => { void loadData(); void loadRentedItems(); }} className="btn-secondary py-2 px-3 text-sm">
+          Yenile
+        </button>
+        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+          + Yeni Depo
+        </button>
+      </>
+    ),
+    [handleAddNew, loadData]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
+
   if (loading) {
     return (
       <div className="p-8 flex items-center justify-center">
@@ -166,18 +187,6 @@ export default function WarehousesPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Depolar</h1>
-        <div className="flex items-center gap-2">
-          <button onClick={() => { loadData(); loadRentedItems(); }} className="btn-secondary py-2 px-3 text-sm">
-            Yenile
-          </button>
-          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
-            + Yeni Depo
-          </button>
-        </div>
-      </div>
-
       {/* Kiradakiler */}
       <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
         <span className="text-xs text-text-secondary whitespace-nowrap">Kiradakiler — Kriterler:</span>
@@ -243,7 +252,7 @@ export default function WarehousesPage() {
       ) : rentedItems.length > 0 ? (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col mb-6">
           <div className="overflow-auto max-h-[280px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
@@ -253,7 +262,7 @@ export default function WarehousesPage() {
               </thead>
               <tbody>
                 {filteredRentedItems.map((item, idx) => (
-                  <tr key={item.ItemId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}>
+                  <tr key={item.ItemId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">{item.ItemName}</td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">
                       {item.Categories?.length
@@ -281,7 +290,7 @@ export default function WarehousesPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-320px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Depo Adı</th>
@@ -304,7 +313,7 @@ export default function WarehousesPage() {
                   return (
                     <Fragment key={warehouse.WarehouseId}>
                       <tr
-                        className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${isExpanded ? 'bg-background-hover' : index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
+                        className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${isExpanded ? 'bg-background-hover' : index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
                         onClick={() => navigate(`/warehouses/${warehouse.WarehouseId}`)}
                       >
                         <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
@@ -322,6 +331,17 @@ export default function WarehousesPage() {
                         <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
                           {statusBadge}
                           <button type="button" onClick={(e) => { e.stopPropagation(); navigate(`/warehouses/${warehouse.WarehouseId}`); }} className="ml-1 text-xs text-primary hover:underline">Detay</button>
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              navigate(`/warehouses/${warehouse.WarehouseId}`, { state: { initialTab: 'movements' } });
+                            }}
+                            className="ml-1 text-xs text-primary hover:underline"
+                            title="Depo hareket dökümü"
+                          >
+                            Hareketler
+                          </button>
                           <button type="button" onClick={(e) => handleOpenDetail(warehouse, e)} className="ml-1 text-blue-400 hover:text-blue-300" title="Düzenle">✎</button>
                         </td>
                         <td className="py-0.5 px-2 align-middle text-text-secondary">
@@ -337,7 +357,7 @@ export default function WarehousesPage() {
                               ) : expandedStock.length === 0 ? (
                                 <div className="text-center py-2 text-text-secondary text-xs">Bu depoda malzeme yok.</div>
                               ) : (
-                                <table className="w-full text-xs border-collapse">
+                                <table className="w-full text-xs border-collapse text-text-primary">
                                   <thead>
                                     <tr className="border-b border-background-border">
                                       <th className="text-left py-0.5 px-2 font-medium text-text-secondary bg-background-hover border-r border-background-border">Malzeme</th>
@@ -347,7 +367,7 @@ export default function WarehousesPage() {
                                   </thead>
                                   <tbody>
                                     {expandedStock.map((stock, i) => (
-                                      <tr key={stock.StockId} className={`border-b border-background-border/50 ${i % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}>
+                                      <tr key={stock.StockId} className={`border-b border-background-border/50 ${i % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}>
                                         <td className="py-0.5 px-2 font-medium border-r border-background-border/60">{stock.ItemName}</td>
                                         <td className="py-0.5 px-2 text-text-secondary border-r border-background-border/60">{stock.CategoryName || '-'}</td>
                                         <td className="py-0.5 px-2 text-center text-green-500 font-medium">{stock.Quantity.toLocaleString('tr-TR')}</td>

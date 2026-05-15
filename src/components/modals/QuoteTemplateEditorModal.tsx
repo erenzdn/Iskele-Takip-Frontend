@@ -13,6 +13,7 @@ import { QuoteTemplate, TemplateImage } from '../../models';
 import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { templateImageService } from '../../services/templateImageService';
 import { getApiErrorMessage } from '../../utils/apiError';
+import { toast } from '../../hooks/useToast';
 import { CustomImage } from './CustomImageExtension';
 import PdfPreviewModal from './PdfPreviewModal';
 
@@ -144,7 +145,7 @@ export default function QuoteTemplateEditorModal({
         fileInputRef.current.value = '';
       }
     } catch (error: unknown) {
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     } finally {
       setUploadingImage(false);
     }
@@ -158,7 +159,7 @@ export default function QuoteTemplateEditorModal({
 
   const handleSave = async () => {
     if (!templateName.trim()) {
-      alert('Şablon adı gereklidir');
+      toast.warning('Şablon adı gereklidir');
       return;
     }
 
@@ -177,19 +178,19 @@ export default function QuoteTemplateEditorModal({
         if (onSave) {
           onSave(response.TemplateId);
         }
-        alert('Teklif şablonu başarıyla oluşturuldu!');
+        toast.success('Teklif şablonu başarıyla oluşturuldu!');
       } else if (template) {
         await quoteTemplateService.updateAsync(template.TemplateId, {
           TemplateName: templateName,
           Content: content,
         });
-        alert('Teklif şablonu başarıyla güncellendi!');
+        toast.success('Teklif şablonu başarıyla güncellendi!');
       }
 
       onClose();
     } catch (error) {
       console.error('Save template error:', error);
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -204,7 +205,7 @@ export default function QuoteTemplateEditorModal({
       const blob = await quoteTemplateService.previewContentAsync(content);
 
       if (blob.size === 0) {
-        alert('PDF önizlemesi oluşturulamadı (sunucu boş yanıt döndü).');
+        toast.error('PDF önizlemesi oluşturulamadı (sunucu boş yanıt döndü).');
         return;
       }
       const isPdf = blob.type === 'application/pdf' || blob.type === '';
@@ -212,9 +213,9 @@ export default function QuoteTemplateEditorModal({
         const text = await blob.text();
         try {
           const j = JSON.parse(text);
-          alert('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
+          toast.error('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
         } catch {
-          alert('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
+          toast.error('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
         }
         return;
       }
@@ -224,7 +225,7 @@ export default function QuoteTemplateEditorModal({
       setShowPdfPreview(true);
     } catch (error) {
       console.error('Preview error:', error);
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }

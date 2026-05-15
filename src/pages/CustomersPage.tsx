@@ -1,83 +1,268 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } from 'react';
 import { UsersIcon } from '@phosphor-icons/react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { customerService } from '../services/customerService';
 import { Customer } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from '../components/EmptyState';
+import ExcelManager from '../components/ExcelManager';
 import CustomerDetailModal from '../components/modals/CustomerDetailModal';
+import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
+import { getPreferredCustomerContact } from '../utils/customerContacts';
+import { getUserFacingErrorMessage } from '../utils/apiError';
+import { toast } from '../hooks/useToast';
+import { useAuthStore } from '../store/authStore';
+import { useContextMenu, useContextMenuHandlers, type CustomerModalInitialTab, type CustomerRowTarget } from '../context-menu';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 export default function CustomersPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const permissions = user?.permissions ?? [];
+  const canUpdate = permissions.includes('customers_update');
+  const canDelete = permissions.includes('customers_delete');
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [searchText, setSearchText] = useState('');
+  const debouncedSearch = useDebouncedValue(searchText, 300);
   const [loading, setLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
+  const [hadFirstLoad, setHadFirstLoad] = useState(false);
+  const hadFirstLoadRef = useRef(false);
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isNewCustomer, setIsNewCustomer] = useState(false);
-  const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
+  const [startInEditMode, setStartInEditMode] = useState(false);
+  const [initialTab, setInitialTab] = useState<CustomerModalInitialTab>('info');
+  const consumedOpenCustomerIdRef = useRef<number | null>(null);
+  const fetchingOpenCustomerByIdRef = useRef<number | null>(null);
+  const returnOnCloseRef = useRef<boolean>(false);
+  const returnToRef = useRef<{ path: string; state?: any } | null>(null);
+  const { openContextMenu } = useContextMenu();
+  const { setActions } = useHeaderActions();
 
-  useEffect(() => {
-    loadCustomers();
-  }, []);
-
-  const loadCustomers = async () => {
+  const fetchCustomers = useCallback(async (forceRefresh = false) => {
+    const q = debouncedSearch.trim() || undefined;
     try {
-      setLoading(true);
-      const data = await customerService.getAllAsync();
+      if (!hadFirstLoadRef.current) setLoading(true);
+      else setListLoading(true);
+      const data = await customerService.getAllAsync(q, {
+        forceRefresh,
+        staleTimeMs: 120_000,
+      });
       setCustomers(data);
     } catch (error) {
       console.error('Load customers error:', error);
     } finally {
       setLoading(false);
+      setListLoading(false);
+      if (!hadFirstLoadRef.current) {
+        hadFirstLoadRef.current = true;
+        setHadFirstLoad(true);
+      }
     }
-  };
+  }, [debouncedSearch]);
 
-  const handleSearch = async () => {
-    if (!searchText.trim()) {
-      loadCustomers();
+  useEffect(() => {
+    void fetchCustomers();
+  }, [fetchCustomers]);
+
+  const loadCustomers = useCallback((forceRefresh = true) => {
+    void fetchCustomers(forceRefresh);
+  }, [fetchCustomers]);
+
+  const handleAddNew = useCallback(() => {
+    setSelectedCustomer(null);
+    setIsNewCustomer(true);
+    setStartInEditMode(true);
+    setInitialTab('info');
+    setIsModalOpen(true);
+  }, []);
+
+  const handleOpenDetail = useCallback((customer: Customer, options?: { startInEditMode?: boolean; initialTab?: CustomerModalInitialTab }) => {
+    setSelectedCustomer(customer);
+    setIsNewCustomer(false);
+    setStartInEditMode(Boolean(options?.startInEditMode));
+    setInitialTab(options?.initialTab ?? 'info');
+    setIsModalOpen(true);
+  }, []);
+
+  useEffect(() => {
+    const st = location.state as any;
+    const openCustomerId = st?.openCustomerId;
+    if (!openCustomerId) return;
+    const idNum = Number(openCustomerId);
+    if (!Number.isFinite(idNum) || idNum <= 0) return;
+    if (consumedOpenCustomerIdRef.current === idNum) return;
+
+    const found = customers.find((c) => c.CustomerId === idNum);
+    if (found) {
+      consumedOpenCustomerIdRef.current = idNum;
+      returnOnCloseRef.current = Boolean(st?.returnOnClose);
+      const rt = st?.returnTo;
+      returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
+      handleOpenDetail(found);
+      navigate(location.pathname + location.search, { replace: true, state: null });
       return;
     }
 
-    try {
-      setLoading(true);
-      const data = await customerService.searchAsync(searchText);
-      setCustomers(data);
-    } catch (error) {
-      console.error('Search error:', error);
-    } finally {
-      setLoading(false);
-    }
-  };
+    if (loading || !hadFirstLoadRef.current) return;
+    if (fetchingOpenCustomerByIdRef.current === idNum) return;
 
-  const handleAddNew = () => {
-    setSelectedCustomer(null);
-    setIsNewCustomer(true);
-    setIsModalOpen(true);
-  };
-
-  const handleOpenDetail = (customer: Customer) => {
-    setSelectedCustomer(customer);
-    setIsNewCustomer(false);
-    setIsModalOpen(true);
-  };
+    fetchingOpenCustomerByIdRef.current = idNum;
+    void customerService
+      .getByIdAsync(idNum)
+      .then((c) => {
+        fetchingOpenCustomerByIdRef.current = null;
+        if (consumedOpenCustomerIdRef.current === idNum) return;
+        consumedOpenCustomerIdRef.current = idNum;
+        returnOnCloseRef.current = Boolean(st?.returnOnClose);
+        const rt = st?.returnTo;
+        returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
+        handleOpenDetail(c);
+        navigate(location.pathname + location.search, { replace: true, state: null });
+      })
+      .catch(() => {
+        fetchingOpenCustomerByIdRef.current = null;
+        consumedOpenCustomerIdRef.current = idNum;
+        toast.warning('Müşteri bulunamadı.');
+        navigate(location.pathname + location.search, { replace: true, state: null });
+      });
+  }, [customers, loading, location.pathname, location.search, location.state, navigate, handleOpenDetail]);
 
   const handleModalClose = () => {
     setIsModalOpen(false);
     setSelectedCustomer(null);
-    loadCustomers();
+    setStartInEditMode(false);
+    setInitialTab('info');
+    if (returnOnCloseRef.current) {
+      returnOnCloseRef.current = false;
+      const rt = returnToRef.current;
+      returnToRef.current = null;
+      if (rt?.path) {
+        navigate(rt.path, { replace: true, state: rt.state ?? null });
+      } else {
+        navigate(-1);
+      }
+      return;
+    }
+    loadCustomers(true);
   };
 
-  const letters = 'ABCÇDEFGĞHIİJKLMNOÖPRSŞTUÜVYZ'.split('');
+  const openCustomerContextMenu = (event: MouseEvent<HTMLTableRowElement>, customer: Customer) => {
+    event.preventDefault();
+    openContextMenu({
+      menuKey: 'customerRow',
+      x: event.clientX,
+      y: event.clientY,
+      target: {
+        entityType: 'customer',
+        entityId: customer.CustomerId,
+        itemName: customer.Name,
+        rawData: {
+          CustomerId: customer.CustomerId,
+          Name: customer.Name,
+          PhoneNumber: customer.PhoneNumber,
+          Email: customer.Email,
+          ContractCount: customer.Contracts?.length ?? 0,
+        },
+      },
+    });
+  };
 
-  const displayedCustomers =
-    selectedLetter == null
-      ? customers
-      : customers.filter((customer) =>
-          customer.Name
-            ?.toLocaleUpperCase('tr-TR')
-            .startsWith(selectedLetter.toLocaleUpperCase('tr-TR'))
-        );
+  useContextMenuHandlers(
+    'customerRow',
+    useMemo(
+      () => ({
+        'customer.detail': (target) => {
+          const row = target as CustomerRowTarget;
+          const customer = customers.find((entry) => entry.CustomerId === row.entityId);
+          if (!customer) {
+            toast.warning('Musteri kaydi bulunamadi.');
+            return;
+          }
+          handleOpenDetail(customer, { initialTab: 'info' });
+        },
+        'customer.edit': (target) => {
+          if (!canUpdate) return;
+          const row = target as CustomerRowTarget;
+          const customer = customers.find((entry) => entry.CustomerId === row.entityId);
+          if (!customer) {
+            toast.warning('Musteri kaydi bulunamadi.');
+            return;
+          }
+          handleOpenDetail(customer, { startInEditMode: true, initialTab: 'info' });
+        },
+        'customer.sites': (target) => {
+          if (!canUpdate) return;
+          const row = target as CustomerRowTarget;
+          const customer = customers.find((entry) => entry.CustomerId === row.entityId);
+          if (!customer) {
+            toast.warning('Musteri kaydi bulunamadi.');
+            return;
+          }
+          handleOpenDetail(customer, { initialTab: 'sites' });
+        },
+        'customer.copyPhone': async (target) => {
+          const row = target as CustomerRowTarget;
+          if (!row.rawData.PhoneNumber) {
+            toast.warning('Bu musteride telefon bilgisi yok.');
+            return;
+          }
+          await navigator.clipboard.writeText(row.rawData.PhoneNumber);
+          toast.success('Telefon numarasi kopyalandi.');
+        },
+        'customer.copyEmail': async (target) => {
+          const row = target as CustomerRowTarget;
+          if (!row.rawData.Email) {
+            toast.warning('Bu musteride e-posta bilgisi yok.');
+            return;
+          }
+          await navigator.clipboard.writeText(row.rawData.Email);
+          toast.success('E-posta adresi kopyalandi.');
+        },
+        'customer.delete': async (target) => {
+          if (!canDelete) return;
+          const row = target as CustomerRowTarget;
+          try {
+            await customerService.deleteAsync(row.entityId);
+            toast.success('Müşteri arşivlendi (listeden kaldırıldı).');
+            loadCustomers(true);
+          } catch (error) {
+            toast.error(getUserFacingErrorMessage(error, 'Arşivleme sırasında hata oluştu.'));
+          }
+        },
+      }),
+      [canDelete, canUpdate, customers, loadCustomers, handleOpenDetail]
+    )
+  );
 
-  if (loading) {
+  const displayedCustomers = customers
+    .slice()
+    .sort((a, b) => (a.Name || '').localeCompare(b.Name || '', 'tr-TR'));
+
+  const headerActions = useMemo(
+    () => (
+      <>
+        <button onClick={() => loadCustomers(true)} className="btn-secondary py-2 px-3 text-sm">
+          Yenile
+        </button>
+        <ExcelManager type="customers" onImportSuccess={() => void fetchCustomers(true)} />
+        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+          + Yeni Müşteri
+        </button>
+      </>
+    ),
+    [fetchCustomers, handleAddNew, loadCustomers]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
+
+  if (loading && !hadFirstLoad) {
     return (
       <div className="p-8 flex items-center justify-center">
         <div className="text-text-secondary">Yükleniyor...</div>
@@ -87,88 +272,15 @@ export default function CustomersPage() {
 
   return (
     <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Müşteriler</h1>
-        <div className="flex items-center gap-2">
-          <button onClick={loadCustomers} className="btn-secondary py-2 px-3 text-sm">
-            Yenile
-          </button>
-          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
-            + Yeni Müşteri
-          </button>
-        </div>
-      </div>
-
-      <div className="mb-3 rounded-panel border border-background-border bg-gradient-to-r from-[#111827] via-[#020617] to-[#111827] px-3 py-2 shadow-sm">
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div>
-            <div className="text-[11px] uppercase tracking-[0.16em] text-text-secondary/70">
-              Harfe göre filtrele
-            </div>
-            <div className="text-[11px] text-text-secondary/60">
-              Müşteri adının ilk harfine göre hızlı seçim
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setSelectedLetter(null)}
-              className={`px-2.5 py-1.5 text-[11px] rounded-full border transition-all duration-150 shadow-sm ${
-                selectedLetter == null
-                  ? 'bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(0,0,0,0.6)]'
-                  : 'bg-transparent text-text-secondary border-background-border hover:border-accent/70 hover:text-text-primary'
-              }`}
-            >
-              Tümü
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedLetter(null);
-                setSearchText('');
-                loadCustomers();
-              }}
-              className="px-2.5 py-1.5 text-[11px] rounded-full border border-background-border/80 text-text-secondary/80 hover:border-accent/70 hover:text-text-primary hover:bg-background-hover/40 transition-all duration-150"
-            >
-              Filtreleri Temizle
-            </button>
-          </div>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {letters.map((letter) => {
-            const isActive = selectedLetter === letter;
-            return (
-              <button
-                key={letter}
-                type="button"
-                onClick={() => setSelectedLetter(letter)}
-                className={`w-7 h-7 flex items-center justify-center text-[11px] rounded-full border transition-all duration-150 ${
-                  isActive
-                    ? 'bg-accent text-white border-accent shadow-[0_0_0_1px_rgba(0,0,0,0.7)] scale-105'
-                    : 'bg-[#020617] text-text-secondary/80 border-background-border hover:border-accent/60 hover:text-text-primary hover:bg-background-hover/40'
-                }`}
-              >
-                {letter}
-              </button>
-            );
-          })}
-        </div>
-      </div>
-
       <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
         <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-          placeholder="Müşteri adı, vergi no, e-posta, telefon..."
+          placeholder="Müşteri adı veya vergi no (sunucu araması, 300ms gecikme)…"
           className="input flex-1 min-w-[200px] py-2 px-3 text-sm"
         />
-        <button onClick={handleSearch} className="btn-secondary py-2 px-3 text-sm">
-          Ara
-        </button>
       </div>
 
       {displayedCustomers.length === 0 ? (
@@ -178,10 +290,12 @@ export default function CustomersPage() {
           description="Yeni müşteri eklemek için yukarıdaki butonu kullanın"
         />
       ) : (
-        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
+        <div
+          className={`border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col ${listLoading ? 'opacity-80' : ''}`}
+        >
           {/* Sabit yükseklik: viewport - üst alan (~200px). Satır ~20px → 1080p'de ~40, 768p'de ~25 satır görünür */}
           <div className="overflow-auto max-h-[calc(100vh-200px)] min-h-[320px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
@@ -205,14 +319,17 @@ export default function CustomersPage() {
                 </tr>
               </thead>
               <tbody>
-                {displayedCustomers.map((customer, index) => (
-                  <tr
-                    key={customer.CustomerId}
-                    className={`border-b border-background-border cursor-pointer hover:bg-background-hover ${
-                      index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'
-                    }`}
-                    onClick={() => handleOpenDetail(customer)}
-                  >
+                {displayedCustomers.map((customer, index) => {
+                  const preferredContact = getPreferredCustomerContact(customer);
+                  return (
+                    <tr
+                      key={customer.CustomerId}
+                      className={`border-b border-background-border cursor-pointer hover:bg-background-hover ${
+                        index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
+                      }`}
+                      onClick={() => handleOpenDetail(customer)}
+                      onContextMenu={(event) => openCustomerContextMenu(event, customer)}
+                    >
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
                       <span className="font-medium text-text-primary">{customer.Name}</span>
                       {customer.TaxId && (
@@ -226,10 +343,10 @@ export default function CustomersPage() {
                       {customer.Email || '-'}
                     </td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
-                      {customer.CenterAuthorizedPerson ? (
+                      {preferredContact?.Name ? (
                         <span>
-                          {customer.CenterAuthorizedPerson}
-                          {customer.CenterAuthorizedPhone ? ` • ${customer.CenterAuthorizedPhone}` : ''}
+                          {preferredContact.Name}
+                          {preferredContact.Phone ? ` • ${preferredContact.Phone}` : ''}
                         </span>
                       ) : (
                         <span className="text-text-secondary">-</span>
@@ -241,22 +358,35 @@ export default function CustomersPage() {
                     <td className="py-0.5 px-2 align-middle text-text-secondary">
                       {customer.CreatedByUserFullName || customer.CreatedByUserName || '-'} • {formatShortDateTime(customer.CreatedAt)}
                     </td>
-                  </tr>
-                ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
-            <span>Toplam: {displayedCustomers.length} müşteri</span>
+            <span className="flex items-center gap-2">
+              Toplam: {displayedCustomers.length} müşteri
+              {listLoading ? <span className="text-accent">Güncelleniyor…</span> : null}
+            </span>
             <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
       )}
 
+      <div className="mt-3 rounded border border-background-border bg-background-panel p-3 text-xs text-text-secondary space-y-1">
+        <div className="font-medium text-text-primary">Müşteri Excel Bilgilendirmesi</div>
+        <div>{CUSTOMERS_EXCEL_HELP.hint}</div>
+        <div className="text-text-secondary">{CUSTOMERS_EXCEL_HELP.taxIdNote}</div>
+        <div>Kontrol listesi: {CUSTOMERS_EXCEL_HELP.checklist}</div>
+      </div>
+
       {isModalOpen && (
         <CustomerDetailModal
           customer={selectedCustomer}
           isNew={isNewCustomer}
+          startInEditMode={startInEditMode}
+          initialTab={initialTab}
           onClose={handleModalClose}
         />
       )}
