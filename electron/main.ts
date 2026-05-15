@@ -66,26 +66,76 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // Auto-updater: Check for updates and notify
+  // --- Auto-updater Section ---
+  autoUpdater.autoDownload = false; // Kullanıcı onayı olmadan indirme yapmasın
+
   if (!isDev) {
-    autoUpdater.checkForUpdatesAndNotify();
+    log.info('Uygulama paketlenmiş modda, güncelleme kontrolü başlatılıyor...');
+    autoUpdater.checkForUpdates();
+  } else {
+    log.info('Uygulama geliştirme modunda, güncelleme kontrolü atlandı.');
   }
 
-  // Handle downloaded updates
-  autoUpdater.on('update-downloaded', () => {
-    dialog.showMessageBox({
-      type: 'info',
-      title: 'Güncelleme Hazır',
-      message: 'Yeni bir sürüm indirildi. Şimdi yükleyip uygulamayı yeniden başlatmak ister misiniz?',
-      buttons: ['Evet', 'Daha Sonra'],
-      defaultId: 0,
-      cancelId: 1
-    }).then((result) => {
-      if (result.response === 0) {
-        autoUpdater.quitAndInstall();
-      }
+  autoUpdater.on('checking-for-update', () => {
+    log.info('Güncelleme kontrol ediliyor...');
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('update-checking');
     });
   });
+
+  autoUpdater.on('update-available', (info: any) => {
+    log.info('Yeni bir güncelleme bulundu:', info.version);
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('update-available', info);
+    });
+  });
+
+  autoUpdater.on('update-not-available', (info: any) => {
+    log.info('Şu anki sürüm güncel:', info.version);
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('update-not-available', info);
+    });
+  });
+
+  autoUpdater.on('error', (err: Error) => {
+    log.error('Güncelleme sırasında hata oluştu:', err);
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('update-error', err.message);
+    });
+  });
+
+  autoUpdater.on('download-progress', (progressObj: any) => {
+    log.info(`İndirme ilerlemesi: %${progressObj.percent.toFixed(2)}`);
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('update-download-progress', progressObj);
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info: any) => {
+    log.info('Güncelleme başarıyla indirildi. Sürüm:', info.version);
+    BrowserWindow.getAllWindows().forEach(win => {
+      win.webContents.send('update-downloaded', info);
+    });
+  });
+
+  // Renderer'dan gelen sinyaller
+  const { ipcMain } = require('electron');
+  
+  ipcMain.on('start-download', () => {
+    log.info('Renderer: İndirme başlatılıyor...');
+    autoUpdater.downloadUpdate();
+  });
+
+  ipcMain.on('install-update', () => {
+    log.info('Renderer: Güncelleme yükleniyor ve yeniden başlatılıyor...');
+    autoUpdater.quitAndInstall();
+  });
+
+  ipcMain.on('check-for-updates', () => {
+    log.info('Renderer: Güncelleme kontrolü tetiklendi.');
+    autoUpdater.checkForUpdates();
+  });
+  // --- End Auto-updater Section ---
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

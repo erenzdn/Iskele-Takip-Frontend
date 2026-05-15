@@ -13,6 +13,7 @@ import { adminService } from '../services/adminService';
 import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
+import { useUpdateStore } from '../store/updateStore';
 
 type StatusMessage = { type: 'success' | 'error'; text: string } | null;
 
@@ -82,6 +83,23 @@ export default function SystemSettingsPage() {
     () => localStorage.getItem(LAST_AUTO_BACKUP_AT_KEY)
   );
 
+  const { 
+    isUpdateAvailable, 
+    isDownloading, 
+    isDownloaded, 
+    progress: updateProgress, 
+    updateInfo, 
+    error: updateError 
+  } = useUpdateStore();
+
+  const updateStatus = useMemo(() => {
+    if (updateError) return 'error';
+    if (isDownloaded) return 'downloaded';
+    if (isDownloading) return 'downloading';
+    if (isUpdateAvailable) return 'available';
+    return 'uptodate';
+  }, [isUpdateAvailable, isDownloading, isDownloaded, updateError]);
+
   const confirmMessage = useMemo(() => {
     return [
       'Bu işlem veritabanının tam yedeğini alır ve `.sql.gz` dosyası olarak indirir.',
@@ -91,10 +109,6 @@ export default function SystemSettingsPage() {
       'Devam etmek istiyor musunuz?',
     ].join('\n');
   }, []);
-
-  if (!isAdmin) {
-    return <Navigate to="/" replace />;
-  }
 
   useEffect(() => {
     let mounted = true;
@@ -112,11 +126,11 @@ export default function SystemSettingsPage() {
           localStorage.setItem(LAST_AUTO_BACKUP_AT_KEY, statusInfo.lastAutoBackupAt);
         }
       } catch (err) {
-        // Otomatik yedek bilgisi yardımcı bilgidir; başarısız olursa ekranı engelleme.
         console.warn('Backup status alınamadı:', err);
       }
     };
     fetchBackupStatus();
+
     return () => {
       mounted = false;
     };
@@ -140,11 +154,10 @@ export default function SystemSettingsPage() {
     const responseText: string | undefined = anyErr?.responseText;
     const message: string = anyErr?.message ?? '';
 
-    // Ağ / bağlantı kopması (tarafımızdan veya fetch'ten gelen teknik mesajı gizle)
     if (!statusCode && /Failed to fetch|NetworkError/i.test(message)) {
       return {
         type: 'error',
-        text: 'Yedek hazırlanırken sunucu ile bağlantı kesildi. (Backup preparation lost connection to the server.)',
+        text: 'Yedek hazırlanırken sunucu ile bağlantı kesildi.',
       };
     }
 
@@ -152,7 +165,7 @@ export default function SystemSettingsPage() {
       return { type: 'error', text: 'Bu işlem sadece admin yetkisine sahip kullanıcılar tarafından yapılabilir.' };
     }
     if (statusCode === 429) {
-      return { type: 'error', text: 'Saatte sadece 1 kez manuel yedek alabilirsiniz. Lütfen daha sonra tekrar deneyin.' };
+      return { type: 'error', text: 'Saatte sadece 1 kez manuel yedek alabilirsiniz.' };
     }
 
     if (responseText) {
@@ -183,12 +196,34 @@ export default function SystemSettingsPage() {
     }
   };
 
+  const handleCheckUpdates = () => {
+    if (window.electron) {
+      window.electron.updates.checkForUpdates();
+    }
+  };
+
+  const handleDownload = () => {
+    if (window.electron) {
+      window.electron.updates.startDownload();
+    }
+  };
+
+  const handleInstall = () => {
+    if (window.electron) {
+      window.electron.updates.installUpdate();
+    }
+  };
+
+  if (!isAdmin) {
+    return <Navigate to="/" replace />;
+  }
+
   return (
     <div className="p-8">
       <div className="mb-8">
         <h1 className="text-2xl font-semibold tracking-tight text-text-primary mb-1">Sistem Ayarları</h1>
         <p className="text-text-secondary text-sm">
-          Veritabanının anlık yedeğini `.sql.gz` olarak indirir. Bu alan sadece admin kullanıcılar içindir.
+          Uygulama tercihlerini, veritabanı yedeklerini ve yazılım güncellemelerini buradan yönetin.
         </p>
       </div>
 
@@ -203,6 +238,114 @@ export default function SystemSettingsPage() {
           {status.text}
         </div>
       )}
+
+      {/* Yazılım Güncelleme Bölümü */}
+      <div className={`card mb-6 overflow-hidden relative transition-all duration-500 ${
+        (updateStatus === 'available' || updateStatus === 'downloaded') 
+          ? 'border-error/50 shadow-[0_0_15px_rgba(239,68,68,0.1)] ring-1 ring-error/20' 
+          : ''
+      }`}>
+        {/* Arka plan süslemesi */}
+        <div className="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+          <ArrowClockwiseIcon size={120} />
+        </div>
+
+        <div className="flex items-start justify-between gap-6 flex-wrap relative z-10">
+          <div className="min-w-[260px] flex-1">
+            <div className="flex items-center gap-2 mb-2">
+              <ArrowClockwiseIcon size={18} className={(updateStatus === 'available' || updateStatus === 'downloaded') ? 'text-error animate-pulse' : 'text-primary'} />
+              <h2 className="text-lg font-semibold">Yazılım Güncelleme</h2>
+            </div>
+            <div className="space-y-3">
+              <div className="flex items-center gap-3">
+                <span className="text-text-secondary text-sm">Durum:</span>
+                <span className={`badge flex items-center gap-1.5 ${
+                  updateStatus === 'uptodate' ? 'bg-success/10 text-success' :
+                  updateStatus === 'available' ? 'bg-error/10 text-error animate-pulse' :
+                  updateStatus === 'downloaded' ? 'bg-primary/10 text-primary' :
+                  updateStatus === 'downloading' ? 'bg-info/10 text-info' :
+                  updateStatus === 'error' ? 'bg-error/10 text-error' :
+                  'bg-background-elevated text-text-secondary'
+                }`}>
+                  {(updateStatus === 'available' || updateStatus === 'error') && <WarningIcon size={14} />}
+                  {updateStatus === 'idle' && 'Hazır'}
+                  {updateStatus === 'checking' && 'Kontrol ediliyor...'}
+                  {updateStatus === 'uptodate' && 'Güncel'}
+                  {updateStatus === 'available' && 'Yeni Güncelleme Mevcut!'}
+                  {updateStatus === 'downloading' && 'İndiriliyor...'}
+                  {updateStatus === 'downloaded' && 'Yüklemeye Hazır'}
+                  {updateStatus === 'error' && 'Hata Oluştu'}
+                </span>
+              </div>
+
+              {updateInfo && (
+                <div className="text-sm">
+                  <span className="text-text-secondary">Yeni Sürüm:</span>{' '}
+                  <span className="text-text-primary font-mono font-bold">{updateInfo.version}</span>
+                </div>
+              )}
+
+              {updateError && (
+                <div className="text-error text-xs flex items-center gap-1">
+                  <WarningIcon size={14} />
+                  <span>{updateError}</span>
+                </div>
+              )}
+
+              {updateStatus === 'downloading' && (
+                <div className="w-full max-w-md mt-4">
+                  <div className="flex justify-between items-center mb-1.5">
+                    <span className="text-xs font-medium text-text-secondary">İndirme İlerlemesi</span>
+                    <span className="text-xs font-bold text-primary">%{updateProgress.toFixed(0)}</span>
+                  </div>
+                  <div className="w-full bg-background-elevated rounded-full h-2 overflow-hidden border border-background-border-muted">
+                    <div 
+                      className="bg-primary h-full transition-all duration-300 ease-out shadow-[0_0_8px_rgba(15,118,110,0.5)]" 
+                      style={{ width: `${updateProgress}%` }}
+                    ></div>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-3 items-center">
+            {updateStatus === 'uptodate' || updateStatus === 'idle' || updateStatus === 'error' ? (
+              <button
+                type="button"
+                onClick={handleCheckUpdates}
+                disabled={updateStatus === 'checking'}
+                className="btn-secondary flex items-center gap-2"
+              >
+                <ArrowClockwiseIcon size={18} className={updateStatus === 'checking' ? 'animate-spin' : ''} />
+                {updateStatus === 'checking' ? 'Kontrol Ediliyor' : 'Güncellemeleri Denetle'}
+              </button>
+            ) : null}
+
+            {updateStatus === 'available' && (
+              <button
+                type="button"
+                onClick={handleDownload}
+                className="btn-primary flex items-center gap-2 shadow-lg shadow-primary/20"
+              >
+                <DownloadSimpleIcon size={18} />
+                Güncellemeyi Şimdi İndir
+              </button>
+            )}
+
+            {updateStatus === 'downloaded' && (
+              <button
+                type="button"
+                onClick={handleInstall}
+                className="btn-success flex items-center gap-2 shadow-lg shadow-success/20"
+              >
+                <ArrowClockwiseIcon size={18} />
+                Yükle ve Yeniden Başlat
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
 
       <div className="card mb-6">
         <div className="flex items-start justify-between gap-6 flex-wrap">
