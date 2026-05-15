@@ -24,9 +24,9 @@ export default {
     // installerIcon: 'assets/icon.ico',
     // uninstallerIcon: 'assets/icon.ico',
     // Kısayollar
-    createDesktopShortcut: 'always',
+    createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    shortcutName: 'İskeleTakip',
+    shortcutName: 'İskele Takip',
     // Lisans metni (kurulum sırasında kabul ekranı gösterir)
     license: 'LICENSE.txt',
   },
