@@ -14,6 +14,7 @@ import { useAuthStore } from '../store/authStore';
 import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
 import { useUpdateStore } from '../store/updateStore';
+import { toast } from '../hooks/useToast';
 
 type StatusMessage = { type: 'success' | 'error'; text: string } | null;
 
@@ -198,6 +199,7 @@ export default function SystemSettingsPage() {
 
   const handleCheckUpdates = () => {
     if (window.electron) {
+      toast.info('Güncelleme kontrol ediliyor...');
       window.electron.updates.checkForUpdates();
     }
   };
