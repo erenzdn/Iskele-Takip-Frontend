@@ -1,4 +1,4 @@
-import { app, BrowserWindow, session, dialog } from 'electron';
+import { app, BrowserWindow, session, dialog, ipcMain } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
@@ -41,6 +41,11 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Windows için AppID set etmek şart (Bildirimler ve Updater için)
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.iskeletakip.app');
+  }
+
   // Content Security Policy ayarları
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     if (isDev) {
@@ -69,13 +74,7 @@ app.whenReady().then(() => {
   // --- Auto-updater Section ---
   autoUpdater.autoDownload = false; // Kullanıcı onayı olmadan indirme yapmasın
 
-  if (!isDev) {
-    log.info('Uygulama paketlenmiş modda, güncelleme kontrolü başlatılıyor...');
-    autoUpdater.checkForUpdates();
-  } else {
-    log.info('Uygulama geliştirme modunda, güncelleme kontrolü atlandı.');
-  }
-
+  // ÖNEMLİ: Dinleyicileri (on) kontrolü başlatmadan ÖNCE tanımla
   autoUpdater.on('checking-for-update', () => {
     log.info('Güncelleme kontrol ediliyor...');
     BrowserWindow.getAllWindows().forEach(win => {
@@ -85,15 +84,18 @@ app.whenReady().then(() => {
 
   autoUpdater.on('update-available', (info: any) => {
     log.info('Yeni bir güncelleme bulundu:', info.version);
-    BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('update-available', info);
+    const windows = BrowserWindow.getAllWindows();
+    log.info(`Sinyal gönderiliyor: update-available (Pencere sayısı: ${windows.length})`);
+    windows.forEach(win => {
+      // info nesnesini serileştirilebilir hale getirmek için deep copy yapıyoruz
+      win.webContents.send('update-available', JSON.parse(JSON.stringify(info)));
     });
   });
 
   autoUpdater.on('update-not-available', (info: any) => {
     log.info('Şu anki sürüm güncel:', info.version);
     BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('update-not-available', info);
+      win.webContents.send('update-not-available', JSON.parse(JSON.stringify(info)));
     });
   });
 
@@ -114,21 +116,43 @@ app.whenReady().then(() => {
   autoUpdater.on('update-downloaded', (info: any) => {
     log.info('Güncelleme başarıyla indirildi. Sürüm:', info.version);
     BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('update-downloaded', info);
+      win.webContents.send('update-downloaded', JSON.parse(JSON.stringify(info)));
     });
   });
 
+  // Dinleyiciler hazır olduktan sonra kontrolü başlat
+  if (!isDev) {
+    log.info('Uygulama paketlenmiş modda, güncelleme kontrolü başlatılıyor...');
+    autoUpdater.checkForUpdates();
+  } else {
+    log.info('Uygulama geliştirme modunda, güncelleme kontrolü atlandı.');
+  }
+
   // Renderer'dan gelen sinyaller
-  const { ipcMain } = require('electron');
+  
   
   ipcMain.on('start-download', () => {
     log.info('Renderer: İndirme başlatılıyor...');
     autoUpdater.downloadUpdate();
   });
 
+  let isUpdating = false;
+
   ipcMain.on('install-update', () => {
     log.info('Renderer: Güncelleme yükleniyor ve yeniden başlatılıyor...');
-    autoUpdater.quitAndInstall();
+    isUpdating = true;
+    
+    // Uygulamanın kapanmasını engelleyen bir durum varsa zorla kapatıp güncelle
+    // quitAndInstall(isSilent, isForceRunAfter)
+    setTimeout(() => {
+      autoUpdater.quitAndInstall(false, true);
+    }, 500);
+  });
+
+  app.on('before-quit', (e) => {
+    if (isUpdating) {
+      log.info('Güncelleme yükleniyor, çıkış işlemi engellenmiyor.');
+    }
   });
 
   ipcMain.on('check-for-updates', () => {

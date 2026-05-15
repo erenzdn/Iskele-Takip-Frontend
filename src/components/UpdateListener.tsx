@@ -53,7 +53,7 @@ export default function UpdateListener() {
       unsubs.forEach((unsub) => unsub());
       clearTimeout(silenceTimer);
     };
-  }, [setUpdateAvailable, setDownloading, setDownloaded, setError]);
+  }, [setUpdateAvailable, setDownloading, setDownloaded, setError, setChecking]);
 
   return null;
 }

@@ -85,6 +85,7 @@ export default function SystemSettingsPage() {
   const [lastAutoBackupAt, setLastAutoBackupAt] = useState<string | null>(
     () => localStorage.getItem(LAST_AUTO_BACKUP_AT_KEY)
   );
+  const [isInstalling, setIsInstalling] = useState(false);
 
   const { 
     isUpdateAvailable, 
@@ -216,6 +217,7 @@ export default function SystemSettingsPage() {
 
   const handleInstall = () => {
     if (window.electron) {
+      setIsInstalling(true);
       window.electron.updates.installUpdate();
     }
   };
@@ -358,14 +360,26 @@ export default function SystemSettingsPage() {
             )}
 
             {updateStatus === 'downloaded' && (
-              <button
-                type="button"
-                onClick={handleInstall}
-                className="btn-success flex items-center gap-2 shadow-lg shadow-success/20"
-              >
-                <ArrowClockwiseIcon size={18} />
-                Yükle ve Yeniden Başlat
-              </button>
+              <div className="flex flex-col items-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleInstall}
+                  disabled={isInstalling}
+                  className="btn-success flex items-center gap-2 shadow-lg shadow-success/20"
+                >
+                  {isInstalling ? (
+                    <CircleNotchIcon size={18} className="animate-spin" />
+                  ) : (
+                    <ArrowClockwiseIcon size={18} />
+                  )}
+                  {isInstalling ? 'Hazırlanıyor...' : 'Yükle ve Yeniden Başlat'}
+                </button>
+                {isInstalling && (
+                  <p className="text-xs text-success font-medium animate-pulse">
+                    Uygulama saniyeler içinde güncellenip yeniden başlatılacak...
+                  </p>
+                )}
+              </div>
             )}
           </div>
         </div>
