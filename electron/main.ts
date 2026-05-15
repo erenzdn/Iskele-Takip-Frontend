@@ -1,7 +1,13 @@
-import { app, BrowserWindow, session } from 'electron';
+import { app, BrowserWindow, session, dialog } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
+import { autoUpdater } from 'electron-updater';
+import log from 'electron-log';
+
+// Logger configuration
+log.transports.file.level = 'info';
+autoUpdater.logger = log;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -56,6 +62,27 @@ app.whenReady().then(() => {
   });
 
   createWindow();
+
+  // Auto-updater: Check for updates and notify
+  if (!isDev) {
+    autoUpdater.checkForUpdatesAndNotify();
+  }
+
+  // Handle downloaded updates
+  autoUpdater.on('update-downloaded', () => {
+    dialog.showMessageBox({
+      type: 'info',
+      title: 'Güncelleme Hazır',
+      message: 'Yeni bir sürüm indirildi. Şimdi yükleyip uygulamayı yeniden başlatmak ister misiniz?',
+      buttons: ['Evet', 'Daha Sonra'],
+      defaultId: 0,
+      cancelId: 1
+    }).then((result) => {
+      if (result.response === 0) {
+        autoUpdater.quitAndInstall();
+      }
+    });
+  });
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

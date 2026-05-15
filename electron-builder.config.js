@@ -1,9 +1,16 @@
 export default {
-  appId: 'com.iskeletakip.desktop',
-  productName: 'İskeleTakip',
+  appId: 'com.iskeletakip.app',
+  productName: 'IskeleTakip',
   directories: {
     output: 'release',
   },
+  publish: [
+    {
+      provider: 'github',
+      owner: 'erenzdn',
+      repo: 'Iskele-Takip-Frontend',
+    },
+  ],
   files: ['dist-web/**/*', 'dist-electron/**/*', 'package.json', 'LICENSE.txt'],
   win: {
     target: ['nsis'],
