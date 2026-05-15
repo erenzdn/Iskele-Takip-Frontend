@@ -1,5 +1,18 @@
 import { apiClient } from './apiClient';
+import { toast } from '../hooks/useToast';
 import { Check, CheckFilters } from '../models';
+
+export type CheckUpdatePayload = Partial<Check> & {
+  cash_account_id?: string;
+  reason?: string;
+};
+
+export type CheckUpdateResponse = Check & {
+  FinanceAction?: string;
+  financeAction?: string;
+  Message?: string;
+  message?: string;
+};
 
 function buildQueryString(filters: CheckFilters): string {
   const params = new URLSearchParams();
@@ -35,8 +48,8 @@ export const checkService = {
     return apiClient.post<Check>('/checks', payload);
   },
 
-  async updateAsync(id: number, partial: Partial<Check>): Promise<Check> {
-    return apiClient.patch<Check>(`/checks/${id}`, partial);
+  async updateAsync(id: number, partial: CheckUpdatePayload): Promise<CheckUpdateResponse> {
+    return apiClient.patch<CheckUpdateResponse>(`/checks/${id}`, partial);
   },
 
   async deleteAsync(id: number): Promise<void> {
@@ -47,7 +60,7 @@ export const checkService = {
     const blob = await apiClient.getBlob(`/checks/${id}/pdf`);
 
     if (blob.size === 0) {
-      alert('PDF indirilemedi (sunucu boş yanıt döndü).');
+      toast.error('PDF indirilemedi (sunucu boş yanıt döndü).');
       return;
     }
 
@@ -56,9 +69,9 @@ export const checkService = {
       const text = await blob.text();
       try {
         const j = JSON.parse(text);
-        alert('PDF hatası: ' + (j.message || text.slice(0, 200)));
+        toast.error('PDF hatası: ' + (j.message || text.slice(0, 200)));
       } catch {
-        alert('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
+        toast.error('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
       }
       return;
     }

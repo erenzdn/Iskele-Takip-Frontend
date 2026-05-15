@@ -119,7 +119,7 @@ export default function PurchaseInvoicesPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Fatura No</th>
@@ -139,7 +139,7 @@ export default function PurchaseInvoicesPage() {
                 {invoices.map((invoice, index) => (
                   <tr
                     key={invoice.InvoiceId}
-                    className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
+                    className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
                     onClick={() => handleOpenDetail(invoice)}
                   >
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">

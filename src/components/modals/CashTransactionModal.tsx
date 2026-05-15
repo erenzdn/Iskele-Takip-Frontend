@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { XIcon } from '@phosphor-icons/react';
-import { CashAccount, CashTransaction, CreateCashTransactionDto } from '../../models';
+import { CashAccount, CashTransaction, CreateCashTransactionDto, Customer } from '../../models';
 import { cashService } from '../../services/cashService';
-import { getUserFacingErrorMessage } from '../../utils/apiError';
+import { customerService } from '../../services/customerService';
+import { getApiFieldErrors, getUserFacingErrorMessage } from '../../utils/apiError';
+import CustomerSearchField from '../CustomerSearchField';
 import {
   firstValidationError,
   normalizeText,
@@ -43,7 +45,12 @@ export default function CashTransactionModal({
     new Date().toISOString().slice(0, 10)
   );
   const [description, setDescription] = useState('');
+  const [relatedEntityType, setRelatedEntityType] = useState<CashTransaction['related_entity_type']>(null);
+  const [relatedEntityId, setRelatedEntityId] = useState('');
+  const [customers, setCustomers] = useState<Customer[]>([]);
+  const [customersLoading, setCustomersLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [fieldErrors, setFieldErrors] = useState<{ related_entity_id?: string }>({});
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -57,26 +64,38 @@ export default function CashTransactionModal({
     setExchangeRateStr('1');
     setTransactionDate(new Date().toISOString().slice(0, 10));
     setDescription('');
+    setRelatedEntityType(null);
+    setRelatedEntityId('');
+    setCustomers([]);
+    setCustomersLoading(false);
     setError(null);
+    setFieldErrors({});
     setBusy(false);
 
     let cancelled = false;
-    const loadAccounts = async () => {
+    const loadInitialData = async () => {
       try {
-        const list = await cashService.listAccountsAsync();
+        setCustomersLoading(true);
+        const [list, customerList] = await Promise.all([
+          cashService.listAccountsAsync(),
+          customerService.getAllAsync(),
+        ]);
         if (cancelled) return;
         setAccounts(Array.isArray(list) ? list : []);
+        setCustomers(Array.isArray(customerList) ? customerList : []);
       } catch (e: unknown) {
         if (cancelled) return;
         console.error('Load cash accounts error:', e);
         setAccounts([]);
+        setCustomers([]);
       } finally {
         if (cancelled) return;
         setAccountsLoading(false);
+        setCustomersLoading(false);
       }
     };
 
-    void loadAccounts();
+    void loadInitialData();
 
     return () => {
       cancelled = true;
@@ -86,9 +105,11 @@ export default function CashTransactionModal({
   const handleSave = async () => {
     try {
       setError(null);
+      setFieldErrors({});
       setBusy(true);
 
       const cashAccountIdTrimmed = normalizeText(cashAccountId);
+      const relatedEntityIdTrimmed = normalizeText(relatedEntityId);
       const validationError = firstValidationError([
         validateRequired(cashAccountIdTrimmed, 'Kasa / Banka Hesabı'),
         validateNumber(amountStr, 'Tutar', { required: true, min: 0.01 }),
@@ -100,6 +121,11 @@ export default function CashTransactionModal({
       ]);
       if (validationError) {
         setError(validationError);
+        return;
+      }
+
+      if (relatedEntityType === 'CUSTOMER' && !relatedEntityIdTrimmed) {
+        setFieldErrors({ related_entity_id: 'Müşteri seçimi zorunludur.' });
         return;
       }
 
@@ -122,6 +148,8 @@ export default function CashTransactionModal({
         dto.exchange_rate = exchangeRate;
       }
 
+      if (relatedEntityType) dto.related_entity_type = relatedEntityType;
+      if (relatedEntityIdTrimmed) dto.related_entity_id = relatedEntityIdTrimmed;
       if (normalizeText(description)) dto.description = normalizeText(description);
 
       // input[type="date"] genelde "YYYY-MM-DD" döner; backend'in parse edebilmesi için olduğu haliyle gönderiyoruz.
@@ -131,6 +159,7 @@ export default function CashTransactionModal({
       await onCreated?.();
       onClose();
     } catch (e: unknown) {
+      setFieldErrors(getApiFieldErrors(e, ['related_entity_id']));
       setError(getUserFacingErrorMessage(e, 'Kayıt hatası'));
     } finally {
       setBusy(false);
@@ -277,6 +306,54 @@ export default function CashTransactionModal({
               className="input w-full h-24 resize-none py-2 px-3 text-sm"
               placeholder="Opsiyonel kısa açıklama"
             />
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label className="block text-xs font-medium text-text-primary">İlgili Varlık Türü</label>
+              <select
+                value={relatedEntityType ?? ''}
+                onChange={(e) => {
+                  const value = e.target.value as CashTransaction['related_entity_type'] | '';
+                  setRelatedEntityType(value || null);
+                  if (value !== 'CUSTOMER') {
+                    setRelatedEntityId('');
+                    setFieldErrors((prev) => ({ ...prev, related_entity_id: undefined }));
+                  }
+                  if (error) setError(null);
+                }}
+                className="input w-full py-2 px-3 text-sm"
+                disabled={busy}
+              >
+                <option value="">Seçin...</option>
+                <option value="CUSTOMER">Müşteri</option>
+                <option value="SUPPLIER">Tedarikçi</option>
+                <option value="STAFF">Personel</option>
+                <option value="OTHER">Diğer</option>
+              </select>
+            </div>
+
+            {relatedEntityType === 'CUSTOMER' && (
+              <div className="space-y-1">
+                <label className="block text-xs font-medium text-text-primary">Müşteri *</label>
+                <CustomerSearchField
+                  customers={customers}
+                  value={relatedEntityId ? Number(relatedEntityId) : ''}
+                  onChange={(customerId) => {
+                    setRelatedEntityId(customerId === '' ? '' : String(customerId));
+                    if (fieldErrors.related_entity_id) {
+                      setFieldErrors((prev) => ({ ...prev, related_entity_id: undefined }));
+                    }
+                    if (error) setError(null);
+                  }}
+                  disabled={busy || customersLoading}
+                  id="cash-transaction-customer-search"
+                />
+                {fieldErrors.related_entity_id && (
+                  <p className="text-xs text-red-400">{fieldErrors.related_entity_id}</p>
+                )}
+              </div>
+            )}
           </div>
 
           {error && (

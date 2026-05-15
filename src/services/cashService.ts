@@ -12,6 +12,8 @@ type CreateCashAccountDto = {
   type: 'CASH' | 'BANK';
   currency: 'TRY' | 'USD' | 'EUR' | 'GBP';
   allow_negative_balance: boolean;
+  branch_name?: string;
+  account_no?: string;
 };
 
 type UpdateCashAccountDto = Partial<CreateCashAccountDto> & {

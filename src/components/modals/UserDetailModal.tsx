@@ -4,6 +4,7 @@ import { userService } from '../../services/userService';
 import { permissionService } from '../../services/permissionService';
 import { useAuthStore } from '../../store/authStore';
 import ConfirmModal from './ConfirmModal';
+import { toast } from '../../hooks/useToast';
 
 interface UserDetailModalProps {
   user: User | null;
@@ -132,17 +133,17 @@ export default function UserDetailModal({
 
   const handleSave = async () => {
     if (!username.trim()) {
-      alert('Kullanıcı adı zorunludur');
+      toast.warning('Kullanıcı adı zorunludur');
       return;
     }
 
     if (!fullName.trim()) {
-      alert('Ad soyad zorunludur');
+      toast.warning('Ad soyad zorunludur');
       return;
     }
 
     if (isNew && !password.trim()) {
-      alert('Yeni kullanıcı için şifre zorunludur');
+      toast.warning('Yeni kullanıcı için şifre zorunludur');
       return;
     }
 
@@ -169,7 +170,7 @@ export default function UserDetailModal({
       onClose();
     } catch (error) {
       console.error('Save user error:', error);
-      alert('Kaydetme hatası');
+      toast.error('Kaydetme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -177,8 +178,8 @@ export default function UserDetailModal({
 
   const handleDeleteClick = () => {
     if (!user) return;
-    if (currentUser && currentUser.UserId === user.UserId) {
-      alert('Kendi hesabınızı silemezsiniz');
+    if (currentUser && currentUser.userId === user.UserId) {
+      toast.warning('Kendi hesabınızı silemezsiniz');
       return;
     }
     setShowDeleteConfirm(true);
@@ -193,7 +194,7 @@ export default function UserDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete user error:', error);
-      alert('Silme hatası');
+      toast.error('Silme hatası');
     } finally {
       setIsBusy(false);
     }

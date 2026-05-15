@@ -10,6 +10,7 @@ import { Underline } from '@tiptap/extension-underline';
 import { ReportTemplate } from '../../models';
 import { reportTemplateService } from '../../services/reportTemplateService';
 import { getApiErrorMessage } from '../../utils/apiError';
+import { toast } from '../../hooks/useToast';
 import PdfPreviewModal from './PdfPreviewModal';
 
 interface ReportTemplateEditorModalProps {
@@ -89,7 +90,7 @@ export default function ReportTemplateEditorModal({
 
   const handleSave = async () => {
     if (!templateName.trim()) {
-      alert('Şablon adı gereklidir');
+      toast.warning('Şablon adı gereklidir');
       return;
     }
 
@@ -108,19 +109,19 @@ export default function ReportTemplateEditorModal({
         if (onSave) {
           onSave(response.TemplateId);
         }
-        alert('Rapor şablonu başarıyla oluşturuldu!');
+        toast.success('Rapor şablonu başarıyla oluşturuldu!');
       } else if (template) {
         await reportTemplateService.updateAsync(template.TemplateId, {
           TemplateName: templateName,
           Content: content,
         });
-        alert('Rapor şablonu başarıyla güncellendi!');
+        toast.success('Rapor şablonu başarıyla güncellendi!');
       }
 
       onClose();
     } catch (error) {
       console.error('Save template error:', error);
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -135,7 +136,7 @@ export default function ReportTemplateEditorModal({
       const blob = await reportTemplateService.previewContentAsync(content);
 
       if (blob.size === 0) {
-        alert('PDF önizlemesi oluşturulamadı (sunucu boş yanıt döndü).');
+        toast.error('PDF önizlemesi oluşturulamadı (sunucu boş yanıt döndü).');
         return;
       }
       const isPdf = blob.type === 'application/pdf' || blob.type === '';
@@ -143,9 +144,9 @@ export default function ReportTemplateEditorModal({
         const text = await blob.text();
         try {
           const j = JSON.parse(text);
-          alert('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
+          toast.error('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
         } catch {
-          alert('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
+          toast.error('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
         }
         return;
       }
@@ -155,7 +156,7 @@ export default function ReportTemplateEditorModal({
       setShowPdfPreview(true);
     } catch (error) {
       console.error('Preview error:', error);
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     } finally {
       setIsBusy(false);
     }

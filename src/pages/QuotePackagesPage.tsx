@@ -4,6 +4,7 @@ import { quoteService } from '../services/quoteService';
 import { inventoryService } from '../services/inventoryService';
 import { QuotePackage, QuotePackageDetail, Inventory, Quote } from '../models';
 import { getApiErrorMessage } from '../utils/apiError';
+import { toast } from '../hooks/useToast';
 
 type CreateMode = 'sourceQuote' | 'manual';
 
@@ -44,7 +45,7 @@ export default function QuotePackagesPage() {
       setQuotes(quoteData);
       setInventoryItems(itemData);
     } catch (error) {
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     } finally {
       setLoading(false);
     }
@@ -59,7 +60,7 @@ export default function QuotePackagesPage() {
       const detail = await packageService.getByIdAsync(packageId);
       setSelectedPackage(detail);
     } catch (error) {
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     }
   };
 
@@ -74,17 +75,17 @@ export default function QuotePackagesPage() {
 
   const handleCreate = async () => {
     if (!packageName.trim()) {
-      alert('Paket adı zorunludur.');
+      toast.warning('Paket adı zorunludur.');
       return;
     }
     if (createMode === 'sourceQuote' && !sourceQuoteId) {
-      alert('Tekliften oluşturma için bir teklif seçin.');
+      toast.warning('Tekliften oluşturma için bir teklif seçin.');
       return;
     }
     if (createMode === 'manual') {
       const validItems = manualItems.filter((i) => i.productId && i.quantity > 0);
       if (validItems.length === 0) {
-        alert('Manuel paket için en az bir ürün ekleyin.');
+        toast.warning('Manuel paket için en az bir ürün ekleyin.');
         return;
       }
     }
@@ -105,9 +106,9 @@ export default function QuotePackagesPage() {
       });
       resetForm();
       await loadData();
-      alert('Paket oluşturuldu.');
+      toast.success('Paket oluşturuldu.');
     } catch (error) {
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     } finally {
       setSaving(false);
     }
@@ -120,7 +121,7 @@ export default function QuotePackagesPage() {
       if (selectedPackage?.PackageId === packageId) setSelectedPackage(null);
       await loadData();
     } catch (error) {
-      alert(getApiErrorMessage(error));
+      toast.error(getApiErrorMessage(error));
     }
   };
 

@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react';
 import { XIcon } from '@phosphor-icons/react';
 import { firstValidationError, normalizeText, validateNumber, validateRequired } from '../../utils/validation';
+import { toast } from '../../hooks/useToast';
 
 interface ManualLineItemModalProps {
   open: boolean;
   mode: 'quote' | 'contract';
-  currency: 'TRY' | 'EUR';
+  currency: 'TRY' | 'EUR' | 'USD';
   onClose: () => void;
   onAdd: (data: { Description: string; Quantity: number; DailyPrice: number }) => void;
 }
@@ -41,7 +42,7 @@ export default function ManualLineItemModal({
 
   const qty = Math.max(1, parseInt(quantityStr, 10) || 1);
   const price = Math.max(0, parseFloat(dailyPriceStr) || 0);
-  const symbol = currency === 'EUR' ? '€' : '₺';
+  const symbol = currency === 'EUR' ? '€' : currency === 'USD' ? '$' : '₺';
 
   const submit = () => {
     const validationError = firstValidationError([
@@ -50,7 +51,7 @@ export default function ManualLineItemModal({
       validateNumber(dailyPriceStr, mode === 'quote' ? 'Birim fiyat' : 'Günlük fiyat', { min: 0 }),
     ]);
     if (validationError) {
-      alert(validationError);
+      toast.warning(validationError);
       return;
     }
     onAdd({ Description: normalizeText(description), Quantity: qty, DailyPrice: price });

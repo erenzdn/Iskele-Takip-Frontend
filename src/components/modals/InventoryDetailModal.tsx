@@ -1,9 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { XIcon } from '@phosphor-icons/react';
 import { AuditLog, Inventory, MaterialCategory, SubCategory, Warehouse } from '../../models';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { subcategoryService } from '../../services/subcategoryService';
+import { getApiErrorMessage, isDuplicateInventoryItemNameEnError } from '../../utils/apiError';
+import { toast } from '../../hooks/useToast';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 
@@ -11,6 +13,7 @@ interface InventoryDetailModalProps {
   item: Inventory | null;
   categories: MaterialCategory[];
   isNew: boolean;
+  startInEditMode?: boolean;
   onClose: () => void;
 }
 
@@ -24,26 +27,32 @@ export default function InventoryDetailModal({
   item,
   categories,
   isNew,
+  startInEditMode = false,
   onClose,
 }: InventoryDetailModalProps) {
-  const [isReadOnly, setIsReadOnly] = useState(!isNew);
+  const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
   const [itemCode, setItemCode] = useState('');
   const [itemName, setItemName] = useState('');
+  const [itemNameEn, setItemNameEn] = useState('');
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [totalStock, setTotalStock] = useState<number | ''>(0);
   const [onRent, setOnRent] = useState(0);
-  const [dailyPrice, setDailyPrice] = useState(0);
-  const [purchasePrice, setPurchasePrice] = useState(0);
   const [monthlyListPrice, setMonthlyListPrice] = useState<number | ''>(0);
   const [unitPrice, setUnitPrice] = useState<number | ''>(0);
   const [monthlyListPriceEur, setMonthlyListPriceEur] = useState<number | ''>(0);
   const [unitPriceEur, setUnitPriceEur] = useState<number | ''>(0);
+  const [monthlyListPriceUsd, setMonthlyListPriceUsd] = useState<number | ''>('');
+  const [unitPriceUsd, setUnitPriceUsd] = useState<number | ''>('');
   const [isBusy, setIsBusy] = useState(false);
 
   // Alt kategori seçimi için state'ler
   const [allSubCategories, setAllSubCategories] = useState<SubCategory[]>([]);
   const [selectedSubCategoryIds, setSelectedSubCategoryIds] = useState<number[]>([]);
   const [loadingSubCategories, setLoadingSubCategories] = useState(false);
+  const [categoryQuery, setCategoryQuery] = useState('');
+  const [subCategoryQuery, setSubCategoryQuery] = useState('');
+  const [showAllSelectedChips, setShowAllSelectedChips] = useState(false);
+  const [collapsedSubCategoryGroups, setCollapsedSubCategoryGroups] = useState<Set<string>>(() => new Set());
 
   // Depo seçimi için state'ler
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -54,25 +63,29 @@ export default function InventoryDetailModal({
   const [itemLogsLoading, setItemLogsLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
 
+
   useEffect(() => {
+    setIsReadOnly(!isNew && !startInEditMode);
     if (item) {
       setItemCode(item.ItemCode ?? '');
       setItemName(item.ItemName);
+      setItemNameEn(item.ItemNameEn?.trim() ? item.ItemNameEn : '');
       setSelectedCategoryIds(item.Categories?.map((c) => c.CategoryId) ?? []);
       setTotalStock(item.TotalStock);
       setOnRent(item.OnRent);
-      setDailyPrice(item.DailyPrice);
-      setPurchasePrice(item.PurchasePrice);
       setMonthlyListPrice(item.MonthlyListPrice ?? 0);
       setUnitPrice(item.UnitPrice ?? 0);
       setMonthlyListPriceEur(item.MonthlyListPriceEur ?? 0);
       setUnitPriceEur(item.UnitPriceEur ?? 0);
+      setMonthlyListPriceUsd(item.MonthlyListPriceUsd ?? '');
+      setUnitPriceUsd(item.UnitPriceUsd ?? '');
       setSelectedSubCategoryIds(
         item.SubCategories?.map((sc) => sc.SubCategoryId) ?? []
       );
     } else {
       setItemCode('');
       setItemName('');
+      setItemNameEn('');
       setSelectedCategoryIds([]);
       setTotalStock(0);
       setOnRent(0);
@@ -80,9 +93,17 @@ export default function InventoryDetailModal({
       setUnitPrice(0);
       setMonthlyListPriceEur(0);
       setUnitPriceEur(0);
+      setMonthlyListPriceUsd('');
+      setUnitPriceUsd('');
       setSelectedSubCategoryIds([]);
     }
-  }, [item]);
+  }, [item, isNew, startInEditMode]);
+
+  const toOptionalNumber = (v: number | ''): number | undefined => {
+    if (v === '') return undefined;
+    const n = Number(v);
+    return Number.isFinite(n) ? n : undefined;
+  };
 
   // Alt kategorileri yükle
   useEffect(() => {
@@ -203,7 +224,7 @@ export default function InventoryDetailModal({
 
   const handleSave = async () => {
     if (!itemName.trim() || selectedCategoryIds.length === 0) {
-      alert('Malzeme adı ve en az bir kategori zorunludur');
+      toast.warning('Ürün adı ve en az bir kategori zorunludur');
       return;
     }
 
@@ -211,7 +232,7 @@ export default function InventoryDetailModal({
     if (isNew) {
       const validStocks = warehouseStocks.filter(ws => Number(ws.quantity) > 0);
       if (validStocks.length === 0) {
-        alert('En az bir depoya miktar girmelisiniz');
+        toast.warning('En az bir depoya miktar girmelisiniz');
         return;
       }
     }
@@ -224,12 +245,15 @@ export default function InventoryDetailModal({
           ItemCode: itemCode.trim() || undefined,
           CategoryIds: selectedCategoryIds,
           ItemName: itemName,
+          ItemNameEn: itemNameEn.trim() || undefined,
           TotalStock: Number(totalStock),
           OnRent: 0,
           MonthlyListPrice: Number(monthlyListPrice),
           UnitPrice: Number(unitPrice),
-          MonthlyListPriceEur: Number(monthlyListPriceEur) || undefined,
-          UnitPriceEur: Number(unitPriceEur) || undefined,
+          MonthlyListPriceEur: toOptionalNumber(monthlyListPriceEur),
+          UnitPriceEur: toOptionalNumber(unitPriceEur),
+          MonthlyListPriceUsd: toOptionalNumber(monthlyListPriceUsd),
+          UnitPriceUsd: toOptionalNumber(unitPriceUsd),
           SubCategoryIds: selectedSubCategoryIds.length > 0 ? selectedSubCategoryIds : undefined,
         });
 
@@ -246,19 +270,26 @@ export default function InventoryDetailModal({
           ItemCode: itemCode.trim() || undefined,
           CategoryIds: selectedCategoryIds,
           ItemName: itemName,
+          ItemNameEn: itemNameEn.trim(),
           TotalStock: Number(totalStock),
           OnRent: onRent,
           MonthlyListPrice: Number(monthlyListPrice),
           UnitPrice: Number(unitPrice),
-          MonthlyListPriceEur: Number(monthlyListPriceEur) || undefined,
-          UnitPriceEur: Number(unitPriceEur) || undefined,
+          MonthlyListPriceEur: toOptionalNumber(monthlyListPriceEur),
+          UnitPriceEur: toOptionalNumber(unitPriceEur),
+          MonthlyListPriceUsd: toOptionalNumber(monthlyListPriceUsd),
+          UnitPriceUsd: toOptionalNumber(unitPriceUsd),
           SubCategoryIds: selectedSubCategoryIds,
         });
       }
       onClose();
     } catch (error) {
       console.error('Save inventory error:', error);
-      alert('Kaydetme hatası');
+      toast.error(
+        isDuplicateInventoryItemNameEnError(error)
+          ? 'Bu İngilizce isim zaten başka bir üründe tanımlı.'
+          : getApiErrorMessage(error)
+      );
     } finally {
       setIsBusy(false);
     }
@@ -278,7 +309,7 @@ export default function InventoryDetailModal({
       onClose();
     } catch (error) {
       console.error('Delete inventory error:', error);
-      alert('Silme hatası');
+      toast.error('Silme hatası');
     } finally {
       setIsBusy(false);
     }
@@ -286,151 +317,470 @@ export default function InventoryDetailModal({
 
   const availableStock = Number(totalStock) - onRent;
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-background-panel rounded-panel w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-4">
-          {isNew ? 'Yeni Malzeme' : 'Malzeme Detayı'}
-        </h2>
+  const visibleSubCategories = useMemo(() => {
+    if (selectedCategoryIds.length === 0) return allSubCategories;
+    return allSubCategories.filter((sc) => selectedCategoryIds.includes(sc.CategoryId));
+  }, [allSubCategories, selectedCategoryIds]);
 
-        {!isNew && (
-          <div className="flex gap-2 mb-4 border-b border-background-border">
+  const filteredCategories = useMemo(() => {
+    const q = categoryQuery.trim().toLocaleLowerCase('tr-TR');
+    if (!q) return categories;
+    return categories.filter((c) => (c.CategoryName ?? '').toLocaleLowerCase('tr-TR').includes(q));
+  }, [categories, categoryQuery]);
+
+  const filteredVisibleSubCategories = useMemo(() => {
+    const q = subCategoryQuery.trim().toLocaleLowerCase('tr-TR');
+    if (!q) return visibleSubCategories;
+    return visibleSubCategories.filter((sc) =>
+      (sc.SubCategoryName ?? '').toLocaleLowerCase('tr-TR').includes(q)
+    );
+  }, [visibleSubCategories, subCategoryQuery]);
+
+  const selectedCategoryChips = useMemo(() => {
+    if (selectedCategoryIds.length === 0) return [];
+    const map = new Map(categories.map((c) => [c.CategoryId, c.CategoryName] as const));
+    return selectedCategoryIds
+      .map((id) => ({ id, name: map.get(id) ?? `Kategori #${id}` }))
+      .sort((a, b) => a.name.localeCompare(b.name, 'tr-TR'));
+  }, [categories, selectedCategoryIds]);
+
+  const selectedSubCategoryChips = useMemo(() => {
+    if (selectedSubCategoryIds.length === 0) return [];
+    const map = new Map(allSubCategories.map((s) => [s.SubCategoryId, s] as const));
+    return selectedSubCategoryIds
+      .map((id) => {
+        const sc = map.get(id);
+        return {
+          id,
+          name: sc?.SubCategoryName ?? `Alt Kategori #${id}`,
+          categoryName: sc?.CategoryName ?? '',
+        };
+      })
+      .sort((a, b) => a.name.localeCompare(b.name, 'tr-TR'));
+  }, [allSubCategories, selectedSubCategoryIds]);
+
+  const MAX_OPTIONS_RENDER = 200;
+  const categoryOptions = filteredCategories.slice(0, MAX_OPTIONS_RENDER);
+  const hasMoreCategoryOptions = filteredCategories.length > MAX_OPTIONS_RENDER;
+  const subCategoryOptions = filteredVisibleSubCategories.slice(0, MAX_OPTIONS_RENDER);
+  const hasMoreSubCategoryOptions = filteredVisibleSubCategories.length > MAX_OPTIONS_RENDER;
+
+  const groupedSubCategoryOptions = useMemo(() => {
+    const map = new Map<string, SubCategory[]>();
+    for (const sc of subCategoryOptions) {
+      const key = (sc.CategoryName || `Kategori ${sc.CategoryId}` || 'Diğer').trim();
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(sc);
+    }
+    return Array.from(map.entries()).map(([groupName, list]) => {
+      const sorted = [...list].sort((a, b) =>
+        (a.SubCategoryName ?? '').localeCompare((b.SubCategoryName ?? ''), 'tr-TR')
+      );
+      const selectedCount = sorted.reduce(
+        (acc, s) => acc + (selectedSubCategoryIds.includes(s.SubCategoryId) ? 1 : 0),
+        0
+      );
+      return { groupName, items: sorted, selectedCount };
+    }).sort((a, b) => a.groupName.localeCompare(b.groupName, 'tr-TR'));
+  }, [subCategoryOptions, selectedSubCategoryIds]);
+
+  const MAX_SELECTED_CHIPS = 10;
+  const selectedChipsCollapsed =
+    !showAllSelectedChips &&
+    (selectedCategoryChips.length + selectedSubCategoryChips.length > MAX_SELECTED_CHIPS);
+  const selectedCategoryChipsVisible = selectedChipsCollapsed
+    ? selectedCategoryChips.slice(0, Math.min(selectedCategoryChips.length, Math.max(0, MAX_SELECTED_CHIPS - 2)))
+    : selectedCategoryChips;
+  const remainingForSubs = MAX_SELECTED_CHIPS - selectedCategoryChipsVisible.length;
+  const selectedSubCategoryChipsVisible = selectedChipsCollapsed
+    ? selectedSubCategoryChips.slice(0, Math.max(0, remainingForSubs))
+    : selectedSubCategoryChips;
+  const hiddenSelectedCount =
+    selectedCategoryChips.length +
+    selectedSubCategoryChips.length -
+    (selectedCategoryChipsVisible.length + selectedSubCategoryChipsVisible.length);
+
+  return (
+    <div className="fixed inset-0 z-50 bg-background-panel overflow-hidden">
+      <div className="w-full h-screen p-2 sm:p-3 flex flex-col">
+        <div className="shrink-0 flex items-center justify-between gap-2 bg-background-panel py-1.5 mb-1.5 border-b border-background-border">
+          <h2 className="text-lg font-bold shrink-0">{isNew ? 'Yeni Malzeme' : 'Malzeme Detayı'}</h2>
+          <div className="ml-auto flex items-center gap-2 shrink-0 min-w-0">
+            {!isNew && item && (
+              <div className="hidden md:flex items-end gap-2 text-[11px] whitespace-nowrap">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-text-secondary">Toplam</span>
+                  <span className="text-sm font-bold text-blue-400 leading-tight">{Number(totalStock)}</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-text-secondary">Kirada</span>
+                  <span className="text-sm font-bold text-warning leading-tight">{onRent}</span>
+                </div>
+                <div className="flex items-baseline gap-1">
+                  <span className="text-text-secondary">Müsait</span>
+                  <span className="text-sm font-bold text-green-500 leading-tight">{availableStock}</span>
+                </div>
+              </div>
+            )}
             <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg hover:bg-background-hover text-text-primary shrink-0"
+              aria-label="Kapat"
+            >
+              <XIcon size={24} weight="regular" aria-hidden />
+            </button>
+          </div>
+        </div>
+
+        <div className="container mx-auto max-w-screen-2xl w-full flex-1 min-h-0 px-0 sm:px-1">
+        <div className="h-full flex flex-col min-h-0">
+        {!isNew && (
+          <div className="mb-2 flex gap-1 border-b border-background-border">
+            <button
+              type="button"
               onClick={() => setActiveTab('info')}
-              className={`px-4 py-2 font-medium transition-colors ${
+              className={`px-2 py-1 text-xs font-medium border-b-2 ${
                 activeTab === 'info'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
               }`}
             >
               Bilgiler
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('history')}
-              className={`px-4 py-2 font-medium transition-colors ${
+              className={`px-2 py-1 text-xs font-medium border-b-2 ${
                 activeTab === 'history'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
+                  ? 'border-accent text-accent'
+                  : 'border-transparent text-text-secondary hover:text-text-primary'
               }`}
             >
-              Geçmiş
+              Aktivite Geçmişi
             </button>
           </div>
         )}
 
-        {activeTab === 'history' && !isNew && (
-          <>
-            <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
+        {activeTab === 'history' && !isNew ? (
+          <div className="border border-background-border rounded-lg p-2 min-h-0 flex-1 overflow-auto">
+            <h3 className="text-sm font-semibold mb-1.5">Aktivite Geçmişi</h3>
             <AuditLogTimeline logs={itemLogs} loading={itemLogsLoading} />
-            <div className="flex gap-3 mt-6">
-              <button onClick={onClose} className="btn-secondary flex-1">
-                Kapat
-              </button>
-            </div>
-          </>
-        )}
-
-        {(activeTab === 'info' || isNew) && (
-        <>
+          </div>
+        ) : (
+          <>
         {isReadOnly && !isNew && item && item.ItemCode && (
-          <div className="mb-4 flex items-center gap-2">
-            <span className="text-sm text-text-secondary">Ürün Kodu:</span>
-            <span className="font-mono font-bold text-accent bg-accent/10 px-3 py-1 rounded text-lg">
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="text-xs text-text-secondary">Ürün Kodu:</span>
+            <span className="font-mono font-bold text-accent bg-accent/10 px-2 py-0.5 rounded text-sm">
               {item.ItemCode}
             </span>
           </div>
         )}
 
-        {isReadOnly && !isNew && item && (
-          <div className="mb-6 card bg-blue-900 p-4">
-            <div className="grid grid-cols-3 gap-4 text-sm">
-              <div>
-                <div className="text-text-secondary mb-1">Toplam</div>
-                <div className="text-xl font-bold text-blue-400">{item.TotalStock}</div>
-              </div>
-              <div>
-                <div className="text-text-secondary mb-1">Kirada</div>
-                <div className="text-xl font-bold text-warning">{item.OnRent}</div>
-              </div>
-              <div>
-                <div className="text-text-secondary mb-1">Müsait</div>
-                <div className="text-xl font-bold text-green-500">{availableStock}</div>
-              </div>
-            </div>
+        <div className="mb-2 grid grid-cols-1 lg:grid-cols-3 gap-2">
+          <div>
+            <label className="block text-xs font-medium mb-1">Ürün Kodu</label>
+            <input
+              type="text"
+              value={itemCode}
+              onChange={(e) => {
+                const val = e.target.value.replace(/[^a-zA-Z0-9\-_.]/g, '');
+                if (val.length <= 50) setItemCode(val);
+              }}
+              disabled={isReadOnly}
+              placeholder="Örn: BRU2M001"
+              className="input w-full uppercase"
+              maxLength={50}
+            />
           </div>
-        )}
-
-        <div className="space-y-4">
-          <div className="grid grid-cols-3 gap-4">
-            <div className="col-span-1">
-              <label className="block text-sm font-medium mb-2">Ürün Kodu</label>
-              <input
-                type="text"
-                value={itemCode}
-                onChange={(e) => {
-                  const val = e.target.value.replace(/[^a-zA-Z0-9\-_.]/g, '');
-                  if (val.length <= 50) setItemCode(val);
-                }}
-                disabled={isReadOnly}
-                placeholder="Örn: BRU2M001"
-                className="input w-full uppercase"
-                maxLength={50}
-              />
-              <p className="text-xs text-text-secondary mt-1">Harf, rakam, tire, nokta ve alt çizgi kullanılabilir (maks 50 karakter)</p>
-            </div>
-            <div className="col-span-2">
-              <label className="block text-sm font-medium mb-2">Malzeme Adı *</label>
-              <input
-                type="text"
-                value={itemName}
-                onChange={(e) => setItemName(e.target.value)}
-                disabled={isReadOnly}
-                placeholder="Örn: Cephe İskelesi 1.5m"
-                className="input w-full"
-                required
-              />
-            </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Ürün Adı *</label>
+            <input
+              type="text"
+              value={itemName}
+              onChange={(e) => {
+                setItemName(e.target.value);
+              }}
+              disabled={isReadOnly}
+              placeholder="Örn: Çelik Boru"
+              className="input w-full"
+              required
+            />
           </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">İngilizce Ürün Adı</label>
+            <input
+              type="text"
+              value={itemNameEn}
+              onChange={(e) => {
+                const v = e.target.value;
+                if (v.length <= 200) setItemNameEn(v);
+              }}
+              disabled={isReadOnly}
+              placeholder="e.g., Steel Pipe"
+              className="input w-full"
+              maxLength={200}
+            />
+          </div>
+        </div>
 
-          <div className="border border-background-border rounded-lg p-4">
-            <label className="block text-sm font-medium mb-3">Kategoriler *</label>
-            {categories.length === 0 ? (
-              <div className="text-text-secondary text-sm">
-                Henüz kategori tanımlanmamış. Envanter sayfasındaki kategori yönetiminden ekleyebilirsiniz.
+        <div
+          className={`grid gap-2 flex-1 min-h-0 overflow-y-auto pr-1 ${
+            isNew ? 'grid-cols-1 xl:grid-cols-12' : 'grid-cols-1 xl:grid-cols-12'
+          }`}
+        >
+          <div
+            className={`border border-background-border rounded-lg p-2 min-h-0 overflow-auto flex flex-col ${
+              isNew ? 'xl:col-span-7' : 'xl:col-span-6 xl:min-h-[360px]'
+            }`}
+          >
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-xs font-medium">Kategori & Alt Kategori</div>
+              <div className="text-xs text-text-secondary">
+                Seçili: <span className="font-medium text-text-primary">{selectedCategoryIds.length}</span> kategori
+                {' · '}
+                <span className="font-medium text-text-primary">{selectedSubCategoryIds.length}</span> alt kategori
               </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-1">
-                {categories.map((cat) => (
-                  <label
-                    key={cat.CategoryId}
-                    className={`flex items-center gap-2 text-sm py-1 ${
-                      isReadOnly ? 'cursor-default' : 'cursor-pointer'
-                    }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedCategoryIds.includes(cat.CategoryId)}
-                      onChange={() => handleCategoryToggle(cat.CategoryId)}
+            </div>
+
+            {(selectedCategoryChips.length > 0 || selectedSubCategoryChips.length > 0) && (
+              <div className="mb-2 rounded-lg border border-background-border bg-background-secondary/20 p-2">
+                <div className="flex items-center justify-between">
+                  <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Seçilenler</div>
+                  <div className="flex items-center gap-3">
+                    {hiddenSelectedCount > 0 && (
+                      <button
+                        type="button"
+                        onClick={() => setShowAllSelectedChips((v) => !v)}
+                        className={`text-xs ${isReadOnly ? 'text-text-secondary cursor-not-allowed' : 'text-text-primary hover:underline'}`}
+                        disabled={isReadOnly}
+                      >
+                        {showAllSelectedChips ? 'Daha az göster' : `+${hiddenSelectedCount} daha`}
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isReadOnly) return;
+                        setSelectedCategoryIds([]);
+                        setSelectedSubCategoryIds([]);
+                      }}
+                      className={`text-xs ${isReadOnly ? 'text-text-secondary cursor-not-allowed' : 'text-accent hover:underline'}`}
                       disabled={isReadOnly}
-                      className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800"
-                    />
-                    <span className="text-text-secondary">{cat.CategoryName}</span>
-                  </label>
-                ))}
+                    >
+                      Hepsini Temizle
+                    </button>
+                  </div>
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {selectedCategoryChipsVisible.map((c) => (
+                    <button
+                      key={`cat-${c.id}`}
+                      type="button"
+                      onClick={() => handleCategoryToggle(c.id)}
+                      disabled={isReadOnly}
+                      className={`px-2 py-1 rounded-full text-xs border ${
+                        isReadOnly
+                          ? 'border-background-border text-text-secondary'
+                          : 'border-accent/30 bg-accent/10 text-accent hover:bg-accent/15'
+                      }`}
+                      title="Kategoriyi kaldır"
+                    >
+                      {c.name}
+                    </button>
+                  ))}
+                  {selectedSubCategoryChipsVisible.map((s) => (
+                    <button
+                      key={`sub-${s.id}`}
+                      type="button"
+                      onClick={() => handleSubCategoryToggle(s.id)}
+                      disabled={isReadOnly}
+                      className={`px-2 py-1 rounded-full text-xs border ${
+                        isReadOnly
+                          ? 'border-background-border text-text-secondary'
+                          : 'border-background-border bg-background-panel text-text-primary hover:bg-background-hover'
+                      }`}
+                      title="Alt kategoriyi kaldır"
+                    >
+                      {s.name}
+                      {s.categoryName ? <span className="text-text-secondary"> · {s.categoryName}</span> : null}
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
-            {selectedCategoryIds.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-background-border text-sm text-text-secondary">
-                Seçili: <span className="font-medium text-white">{selectedCategoryIds.length}</span> kategori
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2 flex-1 min-h-0">
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Kategoriler *</div>
+                  {selectedCategoryIds.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isReadOnly) return;
+                        setSelectedCategoryIds([]);
+                        setSelectedSubCategoryIds([]);
+                      }}
+                      className={`text-xs ${isReadOnly ? 'text-text-secondary cursor-not-allowed' : 'text-accent hover:underline'}`}
+                      disabled={isReadOnly}
+                    >
+                      Temizle
+                    </button>
+                  ) : null}
+                </div>
+                <input
+                  type="text"
+                  value={categoryQuery}
+                  onChange={(e) => setCategoryQuery(e.target.value)}
+                  disabled={isReadOnly}
+                  placeholder="Kategori ara…"
+                  className="input w-full mb-1.5"
+                />
+                {categories.length === 0 ? (
+                  <div className="text-text-secondary text-sm">
+                    Henüz kategori tanımlanmamış. Envanter sayfasındaki kategori yönetiminden ekleyebilirsiniz.
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-background-border bg-background-panel max-h-[120px] overflow-y-auto">
+                    {categoryOptions.length === 0 ? (
+                      <div className="px-3 py-3 text-sm text-text-secondary">Aramaya uygun kategori yok.</div>
+                    ) : (
+                      categoryOptions.map((cat) => {
+                        const active = selectedCategoryIds.includes(cat.CategoryId);
+                        return (
+                          <button
+                            key={cat.CategoryId}
+                            type="button"
+                            onClick={() => handleCategoryToggle(cat.CategoryId)}
+                            disabled={isReadOnly}
+                            className={`w-full text-left px-2 py-1.5 text-xs border-b border-background-border last:border-b-0 ${
+                              isReadOnly ? 'cursor-not-allowed opacity-70' : 'hover:bg-background-hover'
+                            } ${active ? 'bg-accent/10' : ''}`}
+                          >
+                            <span className={`font-medium ${active ? 'text-accent' : 'text-text-primary'}`}>
+                              {cat.CategoryName}
+                            </span>
+                            {active ? <span className="ml-2 text-xs text-text-secondary">(seçili)</span> : null}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] text-text-secondary">
+                  Alt kategoriler, seçtiğiniz kategorilere göre filtrelenir.
+                  {hasMoreCategoryOptions ? ' Çok sonuç var; aramayı daraltın.' : ''}
+                </div>
               </div>
-            )}
+
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">Alt Kategoriler</div>
+                  {selectedSubCategoryIds.length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (isReadOnly) return;
+                        setSelectedSubCategoryIds([]);
+                      }}
+                      className={`text-xs ${isReadOnly ? 'text-text-secondary cursor-not-allowed' : 'text-accent hover:underline'}`}
+                      disabled={isReadOnly}
+                    >
+                      Temizle
+                    </button>
+                  ) : null}
+                </div>
+                <input
+                  type="text"
+                  value={subCategoryQuery}
+                  onChange={(e) => setSubCategoryQuery(e.target.value)}
+                  disabled={isReadOnly}
+                  placeholder="Alt kategori ara…"
+                  className="input w-full mb-1.5"
+                />
+                {loadingSubCategories ? (
+                  <div className="text-text-secondary text-sm">Alt kategoriler yükleniyor...</div>
+                ) : filteredVisibleSubCategories.length === 0 ? (
+                  <div className="text-text-secondary text-sm">
+                    {selectedCategoryIds.length === 0
+                      ? 'Alt kategori listesi boş.'
+                      : 'Seçili kategorilere ait alt kategori bulunamadı.'}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-background-border bg-background-panel max-h-[120px] overflow-y-auto">
+                    {groupedSubCategoryOptions.map((g) => {
+                      const isCollapsed = collapsedSubCategoryGroups.has(g.groupName);
+                      return (
+                        <div key={g.groupName} className="border-b border-background-border last:border-b-0">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setCollapsedSubCategoryGroups((prev) => {
+                                const next = new Set(prev);
+                                if (next.has(g.groupName)) next.delete(g.groupName);
+                                else next.add(g.groupName);
+                                return next;
+                              });
+                            }}
+                            className={`w-full flex items-center justify-between px-2 py-1.5 text-left ${
+                              isReadOnly ? 'cursor-default' : 'hover:bg-background-hover'
+                            }`}
+                            aria-expanded={!isCollapsed}
+                          >
+                            <span className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                              {g.groupName}
+                            </span>
+                            <span className="text-xs text-text-secondary">
+                              {g.selectedCount > 0 ? (
+                                <span className="text-primary font-medium">{g.selectedCount} seçili</span>
+                              ) : (
+                                `${g.items.length} öğe`
+                              )}
+                              <span className="ml-2">{isCollapsed ? '▸' : '▾'}</span>
+                            </span>
+                          </button>
+                          {!isCollapsed && (
+                            <div>
+                              {g.items.map((sc) => {
+                                const active = selectedSubCategoryIds.includes(sc.SubCategoryId);
+                                return (
+                                  <button
+                                    key={sc.SubCategoryId}
+                                    type="button"
+                                    onClick={() => handleSubCategoryToggle(sc.SubCategoryId)}
+                                    disabled={isReadOnly}
+                                    className={`w-full text-left px-2 py-1.5 text-xs border-t border-background-border ${
+                                      isReadOnly ? 'cursor-not-allowed opacity-70' : 'hover:bg-background-hover'
+                                    } ${active ? 'bg-primary/10' : ''}`}
+                                  >
+                                    <span className={`font-medium ${active ? 'text-primary' : 'text-text-primary'}`}>
+                                      {sc.SubCategoryName}
+                                    </span>
+                                    {active ? <span className="ml-2 text-xs text-text-secondary">(seçili)</span> : null}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+                <div className="mt-1 text-[10px] text-text-secondary">
+                  {hasMoreSubCategoryOptions ? 'Çok sonuç var; aramayı daraltın.' : ''}
+                </div>
+              </div>
+            </div>
           </div>
 
           {/* Yeni malzeme için depo seçimi */}
           {isNew && (
-            <div className="border border-background-border rounded-lg p-4">
-              <div className="flex items-center justify-between mb-3">
-                <label className="block text-sm font-medium">Depo ve Miktar *</label>
+            <div className="border border-background-border rounded-lg p-2 xl:col-span-5 min-h-0 overflow-auto">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-xs font-medium">Depo ve Miktar *</label>
                 {warehouseStocks.length < warehouses.length && (
                   <button
                     type="button"
@@ -449,7 +799,7 @@ export default function InventoryDetailModal({
                   Henüz depo tanımlanmamış. Önce Depolar sayfasından bir depo ekleyin.
                 </div>
               ) : (
-                <div className="space-y-3">
+                <div className="space-y-2">
                   {warehouseStocks.map((ws, index) => {
                     const usedWarehouseIds = warehouseStocks
                       .filter((_, i) => i !== index)
@@ -459,7 +809,7 @@ export default function InventoryDetailModal({
                     );
 
                     return (
-                      <div key={index} className="flex gap-3 items-end">
+                      <div key={index} className="flex gap-2 items-end">
                         <div className="flex-1">
                           <label className="block text-xs text-text-secondary mb-1">Depo</label>
                           <select
@@ -474,7 +824,7 @@ export default function InventoryDetailModal({
                             ))}
                           </select>
                         </div>
-                        <div className="w-32">
+                        <div className="w-28">
                           <label className="block text-xs text-text-secondary mb-1">Miktar</label>
                           <input
                             type="text"
@@ -506,7 +856,7 @@ export default function InventoryDetailModal({
               )}
               
               {warehouseStocks.length > 0 && (
-                <div className="mt-3 pt-3 border-t border-background-border flex justify-between text-sm">
+                <div className="mt-2 pt-2 border-t border-background-border flex justify-between text-xs">
                   <span className="text-text-secondary">Toplam Stok:</span>
                   <span className="font-bold text-green-500">{calculateTotalFromWarehouses()}</span>
                 </div>
@@ -517,9 +867,88 @@ export default function InventoryDetailModal({
           {/* Mevcut malzeme için stok bilgileri */}
           {!isNew && (
             <>
-              <div className="grid grid-cols-3 gap-4">
+              <div className="border border-background-border rounded-lg p-2 xl:col-span-6 xl:min-h-[360px]">
+                <label className="block text-xs font-medium mb-2">Fiyatlandırma (TL + EUR + USD)</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                  <div>
+                    <label className="block text-[11px] text-text-secondary mb-1">Aylık Liste (TL)</label>
+                    <input
+                      type="number"
+                      value={monthlyListPrice}
+                      onChange={(e) => setMonthlyListPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-text-secondary mb-1">Birim (TL)</label>
+                    <input
+                      type="number"
+                      value={unitPrice}
+                      onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-text-secondary mb-1">Aylık Liste (EUR)</label>
+                    <input
+                      type="number"
+                      value={monthlyListPriceEur}
+                      onChange={(e) => setMonthlyListPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-text-secondary mb-1">Birim (EUR)</label>
+                    <input
+                      type="number"
+                      value={unitPriceEur}
+                      onChange={(e) => setUnitPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-text-secondary mb-1">Aylık Liste (USD)</label>
+                    <input
+                      type="number"
+                      value={monthlyListPriceUsd}
+                      onChange={(e) => setMonthlyListPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-[11px] text-text-secondary mb-1">Birim (USD)</label>
+                    <input
+                      type="number"
+                      value={unitPriceUsd}
+                      onChange={(e) => setUnitPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="border border-background-border rounded-lg p-2 xl:col-span-12">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                 <div>
-                  <label className="block text-sm font-medium mb-2">Toplam Stok</label>
+                  <label className="block text-xs font-medium mb-1">Toplam Stok</label>
                   <input
                     type="number"
                     value={totalStock}
@@ -530,7 +959,7 @@ export default function InventoryDetailModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">
+                  <label className="block text-xs font-medium mb-1">
                     Kirada Olan
                     <span className="text-xs text-text-secondary ml-1">(Otomatik)</span>
                   </label>
@@ -543,7 +972,7 @@ export default function InventoryDetailModal({
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-2">Müsait Stok</label>
+                  <label className="block text-xs font-medium mb-1">Müsait Stok</label>
                   <div className={`input w-full flex items-center justify-center font-bold ${
                     availableStock > 0 ? 'text-green-500' : 'text-red-500'
                   } bg-background-secondary`}>
@@ -551,173 +980,125 @@ export default function InventoryDetailModal({
                   </div>
                 </div>
               </div>
-              
-              <div className="text-xs text-text-secondary bg-background-secondary p-3 rounded-lg">
-                <strong>Not:</strong> "Kirada Olan" değeri sözleşmeler oluşturulduğunda otomatik artar, 
-                sözleşme tamamlandığında veya ürün iadesi yapıldığında otomatik azalır.
+
+              {!isReadOnly && (
+                <div className="mt-2 text-[11px] text-text-secondary bg-background-secondary p-2 rounded-lg">
+                  <strong>Not:</strong> "Kirada Olan" değeri sözleşmelerle otomatik yönetilir.
+                </div>
+              )}
               </div>
             </>
           )}
 
-          <div className="border border-background-border rounded-lg p-4">
-            <label className="block text-sm font-medium mb-3">Fiyatlandırma (TL)</label>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı *</label>
-                <input
-                  type="number"
-                  value={monthlyListPrice}
-                  onChange={(e) => setMonthlyListPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                  disabled={isReadOnly}
-                  min="0"
-                  step="0.01"
-                  className="input w-full"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">Birim Fiyat</label>
-                <input
-                  type="number"
-                  value={unitPrice}
-                  onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                  disabled={isReadOnly}
-                  min="0"
-                  step="0.01"
-                  className="input w-full"
-                />
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-4 mt-3">
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">
-                  Günlük Kira
-                  <span className="text-xs text-text-secondary ml-1">(Otomatik: Aylık/30)</span>
-                </label>
-                <input
-                  type="number"
-                  value={Number(monthlyListPrice) > 0 ? Number((Number(monthlyListPrice) / 30).toFixed(2)) : dailyPrice}
-                  disabled={true}
-                  min="0"
-                  step="0.01"
-                  className="input w-full bg-background-secondary cursor-not-allowed"
-                  title="Aylık Liste Fiyatı / 30 olarak otomatik hesaplanır"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">
-                  Alış Fiyatı
-                  <span className="text-xs text-text-secondary ml-1">(Salt okunur)</span>
-                </label>
-                <input
-                  type="number"
-                  value={purchasePrice}
-                  disabled={true}
-                  min="0"
-                  step="0.01"
-                  className="input w-full bg-background-secondary cursor-not-allowed"
-                  title="Bu alan artık salt okunurdur. Birim Fiyat alanını kullanın."
-                />
-              </div>
-            </div>
-          </div>
-
-          <div className="border border-background-border rounded-lg p-4">
-            <label className="block text-sm font-medium mb-3">Fiyatlandırma (EUR)</label>
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı (EUR)</label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={monthlyListPriceEur}
-                    onChange={(e) => setMonthlyListPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
-                    disabled={isReadOnly}
-                    min="0"
-                    step="0.01"
-                    className="input w-full pr-8"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
+          {isNew ? (
+            <>
+              <div className="border border-background-border rounded-lg p-2 xl:col-span-4">
+                <label className="block text-xs font-medium mb-2">Fiyatlandırma (TL)</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı *</label>
+                    <input
+                      type="number"
+                      value={monthlyListPrice}
+                      onChange={(e) => setMonthlyListPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">Birim Fiyat</label>
+                    <input
+                      type="number"
+                      value={unitPrice}
+                      onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                      disabled={isReadOnly}
+                      min="0"
+                      step="0.01"
+                      className="input w-full"
+                    />
+                  </div>
                 </div>
               </div>
-              <div>
-                <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (EUR)</label>
-                <div className="relative">
-                  <input
-                    type="number"
-                    value={unitPriceEur}
-                    onChange={(e) => setUnitPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
-                    disabled={isReadOnly}
-                    min="0"
-                    step="0.01"
-                    className="input w-full pr-8"
-                  />
-                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
-                </div>
-              </div>
-            </div>
-            {Number(monthlyListPriceEur) > 0 && (
-              <div className="mt-3 pt-3 border-t border-background-border text-sm text-text-secondary">
-                Günlük Kira (EUR): <span className="font-medium text-white">€{(Number(monthlyListPriceEur) / 30).toFixed(2)}</span>
-              </div>
-            )}
-          </div>
-
-          {/* Alt Kategori Seçimi */}
-          <div className="border border-background-border rounded-lg p-4">
-            <label className="block text-sm font-medium mb-3">Alt Kategoriler</label>
-            {loadingSubCategories ? (
-              <div className="text-text-secondary text-sm">Alt kategoriler yükleniyor...</div>
-            ) : allSubCategories.length === 0 ? (
-              <div className="text-text-secondary text-sm">
-                Henüz alt kategori tanımlanmamış. Envanter sayfasındaki kategori yönetiminden ekleyebilirsiniz.
-              </div>
-            ) : (
-              <div className="space-y-2 max-h-[200px] overflow-y-auto pr-1">
-                {/* Kategoriye göre grupla */}
-                {Array.from(
-                  allSubCategories.reduce((map, sc) => {
-                    const catName = sc.CategoryName || `Kategori ${sc.CategoryId}`;
-                    if (!map.has(catName)) map.set(catName, []);
-                    map.get(catName)!.push(sc);
-                    return map;
-                  }, new Map<string, SubCategory[]>())
-                ).map(([categoryName, subCats]) => (
-                  <div key={categoryName} className="mb-2">
-                    <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-1">
-                      {categoryName}
-                    </div>
-                    <div className="grid grid-cols-2 gap-1 ml-2">
-                      {subCats.map((sc) => (
-                        <label
-                          key={sc.SubCategoryId}
-                          className={`flex items-center gap-2 text-sm py-1 ${
-                            isReadOnly ? 'cursor-default' : 'cursor-pointer'
-                          }`}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={selectedSubCategoryIds.includes(sc.SubCategoryId)}
-                            onChange={() => handleSubCategoryToggle(sc.SubCategoryId)}
-                            disabled={isReadOnly}
-                            className="w-3.5 h-3.5 rounded border-gray-600 bg-gray-700 text-blue-600 focus:ring-blue-500 focus:ring-offset-gray-800"
-                          />
-                          <span className="text-text-secondary">{sc.SubCategoryName}</span>
-                        </label>
-                      ))}
+              <div className="border border-background-border rounded-lg p-2 xl:col-span-4">
+                <label className="block text-xs font-medium mb-2">Fiyatlandırma (EUR)</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı (EUR)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={monthlyListPriceEur}
+                        onChange={(e) => setMonthlyListPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
+                        disabled={isReadOnly}
+                        min="0"
+                        step="0.01"
+                        className="input w-full pr-8"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
                     </div>
                   </div>
-                ))}
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (EUR)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={unitPriceEur}
+                        onChange={(e) => setUnitPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
+                        disabled={isReadOnly}
+                        min="0"
+                        step="0.01"
+                        className="input w-full pr-8"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
-            {selectedSubCategoryIds.length > 0 && (
-              <div className="mt-2 pt-2 border-t border-background-border text-sm text-text-secondary">
-                Seçili: <span className="font-medium text-white">{selectedSubCategoryIds.length}</span> alt kategori
+              <div className="border border-background-border rounded-lg p-2 xl:col-span-4">
+                <label className="block text-xs font-medium mb-2">Fiyatlandırma (USD)</label>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı (USD)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={monthlyListPriceUsd}
+                        onChange={(e) => setMonthlyListPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
+                        disabled={isReadOnly}
+                        min="0"
+                        step="0.01"
+                        className="input w-full pr-8"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">$</span>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (USD)</label>
+                    <div className="relative">
+                      <input
+                        type="number"
+                        value={unitPriceUsd}
+                        onChange={(e) => setUnitPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
+                        disabled={isReadOnly}
+                        min="0"
+                        step="0.01"
+                        className="input w-full pr-8"
+                      />
+                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">$</span>
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
-          </div>
-        </div>
+            </>
+          ) : null}
 
-        <div className="flex gap-3 mt-6">
+        </div>
+          </>
+        )}
+
+        <div className="flex gap-2 mt-2 pt-2 border-t border-background-border bg-background-panel shrink-0">
           {!isNew && isReadOnly && (
             <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
               Düzenle
@@ -752,8 +1133,8 @@ export default function InventoryDetailModal({
             </button>
           )}
         </div>
-        </>
-        )}
+        </div>
+        </div>
       </div>
       <ConfirmModal
         open={showDeleteConfirm}

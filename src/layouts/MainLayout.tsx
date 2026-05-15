@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   CaretDownIcon,
@@ -14,6 +14,7 @@ import {
   SignOutIcon,
   ScrollIcon,
   ShieldCheckIcon,
+  ShoppingCartIcon,
   UserIcon,
   UsersIcon,
   VaultIcon,
@@ -22,13 +23,18 @@ import {
 import { useAuthStore } from '../store/authStore';
 import { isAdminUser } from '../utils/authHelpers';
 import { normalizeText } from '../utils/validation';
+import { HeaderActionsContext } from './HeaderActionsContext';
 
 interface MainLayoutProps {
   children: React.ReactNode;
 }
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'layout_sidebar_collapsed';
+const SIDEBAR_WIDTH_STORAGE_KEY = 'layout_sidebar_width';
 const MENU_SECTIONS_STORAGE_KEY = 'layout_menu_sections';
+const SIDEBAR_DEFAULT_WIDTH = 288;
+const SIDEBAR_MIN_WIDTH = 220;
+const SIDEBAR_MAX_WIDTH = 360;
 
 type SectionState = {
   main: boolean;
@@ -51,7 +57,8 @@ const mainMenuItems: MenuItem[] = [
   { path: '/customers', label: 'Müşteriler', icon: <UsersIcon {...iconProps} />, requiredPermission: 'customers_view' },
   { path: '/inventory', label: 'Envanter', icon: <PackageIcon {...iconProps} />, requiredPermission: 'inventory_view' },
   { path: '/warehouses', label: 'Depolar', icon: <WarehouseIcon {...iconProps} />, requiredPermission: 'warehouses_view' },
-  { path: '/contracts', label: 'Sözleşmeler', icon: <ClipboardIcon {...iconProps} />, requiredPermission: 'contracts_view' },
+  { path: '/contracts/rental', label: 'Kiralama teklifleri', icon: <ClipboardIcon {...iconProps} />, requiredPermission: 'contracts_view' },
+  { path: '/contracts/sale', label: 'Satış teklifleri', icon: <ShoppingCartIcon {...iconProps} />, requiredPermission: 'contracts_view' },
   { path: '/purchase-invoices', label: 'Alış Faturaları', icon: <ReceiptIcon {...iconProps} />, requiredPermission: 'purchaseInvoices_view' },
   { path: '/stock-receipts', label: 'Stok Fişleri', icon: <ReceiptIcon {...iconProps} /> },
   { path: '/checks', label: 'Çekler', icon: <ReceiptIcon {...iconProps} />, requiredPermission: 'checks_view' },
@@ -146,7 +153,7 @@ function NavLink({
       }`}
     >
       <span className={`flex h-11 items-center ${collapsed ? 'w-full justify-center' : 'w-11 justify-center'}`}>
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-white/5 group-hover:bg-white/10 [&_svg]:size-5">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background-elevated group-hover:bg-background-hover [&_svg]:size-5">
           {item.icon}
         </span>
       </span>
@@ -157,9 +164,16 @@ function NavLink({
 
 export default function MainLayout({ children }: MainLayoutProps) {
   const location = useLocation();
+  const isResizingRef = useRef(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
     const raw = localStorage.getItem(SIDEBAR_COLLAPSED_STORAGE_KEY);
     return raw === 'true';
+  });
+  const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    const parsed = raw ? Number(raw) : NaN;
+    if (Number.isNaN(parsed)) return SIDEBAR_DEFAULT_WIDTH;
+    return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, parsed));
   });
   const [menuQuery, setMenuQuery] = useState('');
   const [openSections, setOpenSections] = useState<SectionState>(() => {
@@ -176,9 +190,10 @@ export default function MainLayout({ children }: MainLayoutProps) {
       return defaultSectionState;
     }
   });
+  const [headerActions, setHeaderActions] = useState<ReactNode>(null);
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
-  const permissions = user?.Permissions ?? [];
+  const permissions = user?.permissions ?? [];
   const visibleMainBase = filterByPermission(mainMenuItems, permissions);
   const visibleReportingBase = filterByPermission(reportingMenuItems, permissions);
   const visibleAdministrationBase = filterByPermission(administrationMenuItems, permissions).filter((item) => {
@@ -209,7 +224,9 @@ export default function MainLayout({ children }: MainLayoutProps) {
       '/customers': 'Müşteri kayıtları, iletişim ve ilişki yönetimi',
       '/inventory': 'Ürün kartları, stok durumu ve fiyat bilgileri',
       '/warehouses': 'Depo listesi ve stok dağılımı yönetimi',
-      '/contracts': 'Aktif ve tamamlanan kiralama sözleşmeleri',
+      '/contracts/rental': 'Kiralama teklifleri, sözleşmeler ve kapalı kayıtlar',
+      '/contracts/sale': 'Satış teklifleri, sözleşmeler ve kapalı kayıtlar',
+      '/offer-management': 'Kategori, şablon ve paket işlemlerini tek merkezden yönetin',
       '/purchase-invoices': 'Alış faturaları ve mali kayıt süreçleri',
       '/stock-receipts': 'Stok giriş, çıkış ve transfer fişleri',
       '/checks': 'Çek portföyü, tahsilat ve iade takibi',
@@ -236,7 +253,10 @@ export default function MainLayout({ children }: MainLayoutProps) {
     if (inAdmin) return [root, { label: 'Yönetim', path: inAdmin.path }, { label: inAdmin.label, path: inAdmin.path }];
     return [root, { label: pageTitle, path: location.pathname }];
   }, [location.pathname, pageTitle]);
-  const displayName = user?.FullName?.trim() || user?.Username || 'Kullanıcı';
+  const displayName = user?.fullName?.trim() || user?.username || 'Kullanıcı';
+  const handleSetHeaderActions = useCallback((actions: ReactNode) => {
+    setHeaderActions(actions);
+  }, []);
 
   useEffect(() => {
     // Mouse scroll ile number input degerinin degismesini engelle
@@ -273,16 +293,50 @@ export default function MainLayout({ children }: MainLayoutProps) {
   }, [isSidebarCollapsed]);
 
   useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(sidebarWidth));
+  }, [sidebarWidth]);
+
+  useEffect(() => {
     localStorage.setItem(MENU_SECTIONS_STORAGE_KEY, JSON.stringify(openSections));
   }, [openSections]);
+
+  useEffect(() => {
+    const handleMouseMove = (event: MouseEvent) => {
+      if (!isResizingRef.current || isSidebarCollapsed) return;
+      const nextWidth = Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, event.clientX));
+      setSidebarWidth(nextWidth);
+    };
+
+    const stopResizing = () => {
+      isResizingRef.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', stopResizing);
+
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [isSidebarCollapsed]);
+
+  const startResizingSidebar = () => {
+    if (isSidebarCollapsed) return;
+    isResizingRef.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  };
 
   return (
     <div className="flex h-screen bg-background-main text-text-primary">
       {/* Sidebar */}
       <aside
         className={`relative bg-background-sidebar/95 border-r border-background-border flex flex-col transition-all duration-300 ${
-          isSidebarCollapsed ? 'w-24' : 'w-72'
+          isSidebarCollapsed ? 'w-24' : ''
         }`}
+        style={!isSidebarCollapsed ? { width: `${sidebarWidth}px` } : undefined}
       >
         <div className="p-4 border-b border-background-border">
           <div className="flex items-center justify-between gap-2">
@@ -366,11 +420,20 @@ export default function MainLayout({ children }: MainLayoutProps) {
             {!isSidebarCollapsed && 'Çıkış Yap'}
           </button>
         </div>
+        {!isSidebarCollapsed && (
+          <button
+            type="button"
+            onMouseDown={startResizingSidebar}
+            className="absolute right-0 top-0 h-full w-1 translate-x-1/2 cursor-col-resize bg-transparent hover:bg-primary/20"
+            aria-label="Menü genişliğini ayarla"
+            title="Menü genişliğini ayarla"
+          />
+        )}
       </aside>
 
       {/* Main Content */}
       <main className="flex-1 overflow-hidden bg-background-main">
-        <header className="h-16 border-b border-background-border bg-background-main/95 backdrop-blur px-6 flex items-center justify-between">
+        <header className="h-16 border-b border-background-border bg-background-main/95 backdrop-blur px-6 flex items-center justify-between gap-4">
           <div>
             <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-text-secondary">
               {breadcrumb.map((item, index) => (
@@ -383,14 +446,19 @@ export default function MainLayout({ children }: MainLayoutProps) {
             <h2 className="text-lg font-semibold leading-tight">{pageTitle}</h2>
             <p className="text-xs text-text-secondary">{pageDescription}</p>
           </div>
-          <div className="text-right">
-            <div className="text-sm font-medium text-text-primary truncate max-w-[240px]">{displayName}</div>
-            <div className="text-xs text-text-secondary truncate max-w-[240px]">{user?.RoleName || 'Kullanıcı'}</div>
+          <div className="flex items-center gap-3">
+            {headerActions ? <div className="flex items-center gap-2">{headerActions}</div> : null}
+            <div className="text-right">
+              <div className="text-sm font-medium text-text-primary truncate max-w-[240px]">{displayName}</div>
+              <div className="text-xs text-text-secondary truncate max-w-[240px]">{user?.roleName || 'Kullanıcı'}</div>
+            </div>
           </div>
         </header>
 
         <div className="h-[calc(100vh-4rem)] overflow-auto p-6">
-          {children}
+          <HeaderActionsContext.Provider value={{ setActions: handleSetHeaderActions }}>
+            {children}
+          </HeaderActionsContext.Provider>
         </div>
       </main>
     </div>

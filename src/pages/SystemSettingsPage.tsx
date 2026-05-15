@@ -1,9 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Navigate } from 'react-router-dom';
-import { ArrowClockwiseIcon, DownloadSimpleIcon, InfoIcon, WarningIcon } from '@phosphor-icons/react';
+import { Link, Navigate } from 'react-router-dom';
+import {
+  ArrowClockwiseIcon,
+  DownloadSimpleIcon,
+  InfoIcon,
+  MoonIcon,
+  SunIcon,
+  WarningIcon,
+} from '@phosphor-icons/react';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import { adminService } from '../services/adminService';
 import { useAuthStore } from '../store/authStore';
+import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
 
 type StatusMessage = { type: 'success' | 'error'; text: string } | null;
@@ -61,6 +69,8 @@ function formatTrDateTime(raw?: unknown) {
 export default function SystemSettingsPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = isAdminUser(user);
+  const theme = useThemeStore((state) => state.theme);
+  const setTheme = useThemeStore((state) => state.setTheme);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -193,6 +203,58 @@ export default function SystemSettingsPage() {
           {status.text}
         </div>
       )}
+
+      <div className="card mb-6">
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="min-w-[260px]">
+            <div className="flex items-center gap-2 mb-2">
+              <SunIcon size={18} className="text-primary" />
+              <h2 className="text-lg font-semibold">Görünüm</h2>
+            </div>
+            <p className="text-text-secondary text-sm">Arayüz temasını buradan değiştirebilirsiniz.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="button"
+              onClick={() => setTheme('light')}
+              className={`btn-secondary flex items-center gap-2 ${theme === 'light' ? '!bg-primary !text-white' : ''}`}
+            >
+              <SunIcon size={16} />
+              Aydınlık
+            </button>
+            <button
+              type="button"
+              onClick={() => setTheme('dark')}
+              className={`btn-secondary flex items-center gap-2 ${theme === 'dark' ? '!bg-primary !text-white' : ''}`}
+            >
+              <MoonIcon size={16} />
+              Koyu
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="card mb-6">
+        <div className="flex items-start justify-between gap-6 flex-wrap">
+          <div className="min-w-[260px]">
+            <div className="flex items-center gap-2 mb-2">
+              <InfoIcon size={18} className="text-primary" />
+              <h2 className="text-lg font-semibold">Teklif ve Kategori Yönetimi</h2>
+            </div>
+            <p className="text-text-secondary text-sm">
+              Teklif yönetimi ve kategori işlemlerine ayarlar ekranından hızlı erişim sağlayın.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Link to="/offer-management?tab=templates" className="btn-secondary">
+              Teklif Yönetimi
+            </Link>
+            <Link to="/offer-management?tab=categories" className="btn-secondary">
+              Kategori Yönetimi
+            </Link>
+          </div>
+        </div>
+      </div>
 
       <div className="card">
         <div className="flex items-start justify-between gap-6 flex-wrap">

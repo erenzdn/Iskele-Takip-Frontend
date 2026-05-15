@@ -5,6 +5,19 @@
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>İskeleTakip Desktop</title>
+    <script>
+      (function () {
+        var THEME_KEY = 'ui_theme';
+        var defaultTheme = 'dark';
+        try {
+          var storedTheme = localStorage.getItem(THEME_KEY);
+          var nextTheme = storedTheme === 'light' || storedTheme === 'dark' ? storedTheme : defaultTheme;
+          document.documentElement.setAttribute('data-theme', nextTheme);
+        } catch (_error) {
+          document.documentElement.setAttribute('data-theme', defaultTheme);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

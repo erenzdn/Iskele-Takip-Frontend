@@ -1,5 +1,12 @@
 import { apiClient } from './apiClient';
-import { AuditLog, Inventory, InventorySubCategory, MaterialCategory, WarehouseStock } from '../models';
+import {
+  AuditLog,
+  Inventory,
+  InventoryItemMovementsResponse,
+  InventorySubCategory,
+  MaterialCategory,
+  WarehouseStock,
+} from '../models';
 
 export interface CreateCategoryRequest {
   CategoryName: string;
@@ -16,12 +23,15 @@ export interface CreateInventoryRequest {
   ItemCode?: string;
   CategoryIds?: number[];
   ItemName: string;
+  ItemNameEn?: string;
   TotalStock: number;
   OnRent: number;
   MonthlyListPrice?: number;
   UnitPrice?: number;
   MonthlyListPriceEur?: number;
   UnitPriceEur?: number;
+  MonthlyListPriceUsd?: number;
+  UnitPriceUsd?: number;
   SubCategoryIds?: number[];
 }
 
@@ -29,12 +39,15 @@ export interface UpdateInventoryRequest {
   ItemCode?: string;
   CategoryIds?: number[];
   ItemName?: string;
+  ItemNameEn?: string;
   TotalStock?: number;
   OnRent?: number;
   MonthlyListPrice?: number;
   UnitPrice?: number;
   MonthlyListPriceEur?: number;
   UnitPriceEur?: number;
+  MonthlyListPriceUsd?: number;
+  UnitPriceUsd?: number;
   SubCategoryIds?: number[];
 }
 
@@ -65,8 +78,12 @@ export const inventoryService = {
   },
 
   // Inventory Items
-  async getAllAsync(): Promise<Inventory[]> {
-    return apiClient.get<Inventory[]>('/inventory');
+  async getAllAsync(params?: { categoryId?: number; search?: string }): Promise<Inventory[]> {
+    const sp = new URLSearchParams();
+    if (params?.categoryId != null) sp.set('categoryId', String(params.categoryId));
+    if (params?.search != null && params.search.trim() !== '') sp.set('search', params.search.trim());
+    const qs = sp.toString();
+    return apiClient.get<Inventory[]>(qs ? `/inventory?${qs}` : '/inventory');
   },
 
   async getByIdAsync(id: number): Promise<Inventory> {
@@ -74,11 +91,7 @@ export const inventoryService = {
   },
 
   async getByCategoryAsync(categoryId: number): Promise<Inventory[]> {
-    // API'de by-category endpoint yok, tüm envanteri alıp filtreliyoruz
-    const allInventory = await apiClient.get<Inventory[]>('/inventory');
-    return allInventory.filter((item) =>
-      item.Categories?.some((c) => c.CategoryId === categoryId)
-    );
+    return this.getAllAsync({ categoryId });
   },
 
   async createAsync(data: CreateInventoryRequest): Promise<CreateInventoryResponse> {
@@ -107,6 +120,26 @@ export const inventoryService = {
 
   async getAuditLogsByItemAsync(itemId: number): Promise<AuditLog[]> {
     return apiClient.get<AuditLog[]>(`/inventory/${itemId}/audit-logs`);
+  },
+
+  async getItemMovementsAsync(
+    itemId: number,
+    params?: {
+      warehouseId?: number;
+      dateFrom?: string;
+      dateTo?: string;
+      includeCompleted?: boolean;
+    }
+  ): Promise<InventoryItemMovementsResponse> {
+    const sp = new URLSearchParams();
+    if (params?.warehouseId != null) sp.set('warehouseId', String(params.warehouseId));
+    if (params?.dateFrom) sp.set('dateFrom', params.dateFrom);
+    if (params?.dateTo) sp.set('dateTo', params.dateTo);
+    if (params?.includeCompleted != null) sp.set('includeCompleted', String(params.includeCompleted));
+    const qs = sp.toString();
+    return apiClient.get<InventoryItemMovementsResponse>(
+      qs ? `/inventory/${itemId}/movements?${qs}` : `/inventory/${itemId}/movements`
+    );
   },
 };
 

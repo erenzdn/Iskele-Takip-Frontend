@@ -36,7 +36,7 @@ function toDatetimeLocal(d: Date): string {
 
 export default function AuditLogsPage() {
   const user = useAuthStore((state) => state.user);
-  const hasPermission = user?.Permissions?.includes('auditLogs_view');
+  const hasPermission = user?.permissions?.includes('auditLogs_view');
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [users, setUsers] = useState<User[]>([]);
@@ -286,7 +286,7 @@ export default function AuditLogsPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-420px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tarih</th>
@@ -301,7 +301,7 @@ export default function AuditLogsPage() {
                 {logs.map((log, index) => (
                   <tr
                     key={log.LogId}
-                    className={`border-b border-background-border hover:bg-background-hover ${index % 2 === 0 ? 'bg-background-panel' : 'bg-[#16162e]'}`}
+                    className={`border-b border-background-border hover:bg-background-hover ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
                   >
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary whitespace-nowrap">{formatDateTime(log.Timestamp)}</td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">

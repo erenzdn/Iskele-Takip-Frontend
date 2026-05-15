@@ -2,6 +2,78 @@
 @tailwind components;
 @tailwind utilities;
 
+:root {
+  color-scheme: light;
+  --color-bg-main: #f3f6fb;
+  --color-bg-surface: #f8fafc;
+  --color-bg-panel: #ffffff;
+  --color-bg-sidebar: #eef2f7;
+  --color-bg-elevated: #f8fafc;
+  --color-bg-hover: #e2e8f0;
+  --color-border: #cbd5e1;
+  --color-border-muted: #d8e1ec;
+  --color-border-strong: #94a3b8;
+  --color-primary: #0f766e;
+  --color-primary-hover: #115e59;
+  --color-success: #15803d;
+  --color-warning: #b45309;
+  --color-error: #b91c1c;
+  --color-info: #0e7490;
+  --color-purple: #7e22ce;
+  --color-text-primary: #0f172a;
+  --color-text-secondary: #475569;
+  --color-text-inverse: #f8fafc;
+  --color-ring: rgba(15, 118, 110, 0.35);
+  --color-toast-success-bg: rgba(20, 83, 45, 0.9);
+  --color-toast-success-border: rgba(34, 197, 94, 0.45);
+  --color-toast-success-icon: #4ade80;
+  --color-toast-error-bg: rgba(127, 29, 29, 0.9);
+  --color-toast-error-border: rgba(239, 68, 68, 0.45);
+  --color-toast-error-icon: #f87171;
+  --color-toast-warning-bg: rgba(120, 53, 15, 0.9);
+  --color-toast-warning-border: rgba(245, 158, 11, 0.45);
+  --color-toast-warning-icon: #fbbf24;
+  --color-toast-info-bg: rgba(8, 47, 73, 0.9);
+  --color-toast-info-border: rgba(56, 189, 248, 0.45);
+  --color-toast-info-icon: #38bdf8;
+}
+
+[data-theme='dark'] {
+  color-scheme: dark;
+  --color-bg-main: #0f172a;
+  --color-bg-surface: #162234;
+  --color-bg-panel: #172033;
+  --color-bg-sidebar: #131d2f;
+  --color-bg-elevated: #1e293b;
+  --color-bg-hover: #25324a;
+  --color-border: #334155;
+  --color-border-muted: #2d3c54;
+  --color-border-strong: #475569;
+  --color-primary: #14b8a6;
+  --color-primary-hover: #0d9488;
+  --color-success: #22c55e;
+  --color-warning: #f59e0b;
+  --color-error: #ef4444;
+  --color-info: #38bdf8;
+  --color-purple: #a78bfa;
+  --color-text-primary: #e2e8f0;
+  --color-text-secondary: #94a3b8;
+  --color-text-inverse: #f8fafc;
+  --color-ring: rgba(20, 184, 166, 0.4);
+  --color-toast-success-bg: rgba(20, 83, 45, 0.9);
+  --color-toast-success-border: rgba(34, 197, 94, 0.5);
+  --color-toast-success-icon: #4ade80;
+  --color-toast-error-bg: rgba(127, 29, 29, 0.9);
+  --color-toast-error-border: rgba(248, 113, 113, 0.5);
+  --color-toast-error-icon: #f87171;
+  --color-toast-warning-bg: rgba(120, 53, 15, 0.9);
+  --color-toast-warning-border: rgba(245, 158, 11, 0.5);
+  --color-toast-warning-icon: #fbbf24;
+  --color-toast-info-bg: rgba(8, 47, 73, 0.9);
+  --color-toast-info-border: rgba(56, 189, 248, 0.5);
+  --color-toast-info-icon: #38bdf8;
+}
+
 @layer base {
   body {
     @apply bg-background-main text-text-primary;
@@ -14,24 +86,27 @@
 
   * {
     @apply border-background-border;
+    transition-property: background-color, border-color, color, fill, stroke;
+    transition-duration: 0.3s;
+    transition-timing-function: ease;
   }
 }
 
 @layer components {
   .btn-primary {
-    @apply bg-primary hover:bg-blue-600 text-white font-semibold py-4 px-5 rounded-button transition-colors;
+    @apply bg-primary hover:bg-primary-hover text-text-inverse font-semibold py-4 px-5 rounded-button transition-colors;
   }
 
   .btn-secondary {
-    @apply bg-gray-700 hover:bg-gray-600 text-white font-semibold py-3 px-4 rounded-button transition-colors;
+    @apply bg-background-elevated hover:bg-background-hover text-text-primary font-semibold py-3 px-4 rounded-button transition-colors border border-background-border;
   }
 
   .btn-danger {
-    @apply bg-error hover:bg-red-700 text-white font-semibold py-3 px-4 rounded-button transition-colors;
+    @apply bg-error hover:opacity-90 text-text-inverse font-semibold py-3 px-4 rounded-button transition-colors;
   }
 
   .btn-success {
-    @apply bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-4 rounded-button transition-colors;
+    @apply bg-success hover:opacity-90 text-text-inverse font-semibold py-3 px-4 rounded-button transition-colors;
   }
 
   .card {
@@ -43,7 +118,7 @@
   }
 
   .input {
-    @apply bg-background-panel border border-background-border rounded-input px-4 py-3 text-text-primary placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-primary;
+    @apply bg-background-panel border border-background-border rounded-input px-4 py-3 text-text-primary placeholder:text-text-secondary focus:outline-none focus:ring-2 focus:ring-primary;
   }
 
   /* Number input spinner butonlarini gizle */
@@ -85,16 +160,16 @@
   }
 
   .ProseMirror table {
-    @apply border-collapse border border-background-border w-full my-4;
+    @apply border-collapse border border-background-border-muted w-full my-4;
   }
 
   .ProseMirror table td,
   .ProseMirror table th {
-    @apply border border-background-border px-4 py-2;
+    @apply border border-background-border-muted px-4 py-2;
   }
 
   .ProseMirror table th {
-    @apply bg-background-secondary font-semibold;
+    @apply bg-background-elevated font-semibold;
   }
 
   .ProseMirror ul,
@@ -115,11 +190,11 @@
   }
 
   .ProseMirror code {
-    @apply bg-background-secondary px-2 py-1 rounded text-sm;
+    @apply bg-background-elevated px-2 py-1 rounded text-sm;
   }
 
   .ProseMirror pre {
-    @apply bg-background-secondary p-4 rounded my-4 overflow-x-auto;
+    @apply bg-background-elevated p-4 rounded my-4 overflow-x-auto;
   }
 
   .ProseMirror pre code {

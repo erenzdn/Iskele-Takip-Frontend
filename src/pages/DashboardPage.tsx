@@ -156,6 +156,7 @@ export default function DashboardPage() {
       const alerts: ContractAlert[] = [];
 
       for (const contract of activeContracts) {
+        if (!contract.PlannedEndDate) continue;
         const plannedEnd = new Date(contract.PlannedEndDate);
         plannedEnd.setHours(0, 0, 0, 0);
         const daysRemaining = Math.floor(
@@ -239,21 +240,30 @@ export default function DashboardPage() {
 
   const contractStatusData = useMemo(
     () => [
-      { name: 'Aktif', value: activeContractsCount, color: '#3b82f6' },
-      { name: 'Tamamlanan', value: completedContractsCount, color: '#22c55e' },
+      { name: 'Aktif', value: activeContractsCount, color: 'var(--color-primary)' },
+      { name: 'Tamamlanan', value: completedContractsCount, color: 'var(--color-success)' },
     ],
     [activeContractsCount, completedContractsCount]
   );
 
   const stockChartData = useMemo(
     () => [
-      { name: 'Kirada', value: itemsOnRentCount, color: '#3b82f6' },
-      { name: 'Müsait', value: Math.max(0, totalStockSum - itemsOnRentCount), color: '#22c55e' },
+      { name: 'Kirada', value: itemsOnRentCount, color: 'var(--color-primary)' },
+      { name: 'Müsait', value: Math.max(0, totalStockSum - itemsOnRentCount), color: 'var(--color-success)' },
     ],
     [itemsOnRentCount, totalStockSum]
   );
 
-  const chartColors = { primary: '#3b82f6', success: '#22c55e', warning: '#f59e0b' };
+  const chartColors = {
+    primary: 'var(--color-primary)',
+    success: 'var(--color-success)',
+    warning: 'var(--color-warning)',
+    grid: 'var(--color-border-muted)',
+    axis: 'var(--color-border)',
+    textPrimary: 'var(--color-text-primary)',
+    textSecondary: 'var(--color-text-secondary)',
+    panel: 'var(--color-bg-panel)',
+  };
 
   if (loading) {
     return (
@@ -332,26 +342,27 @@ export default function DashboardPage() {
           <div className="h-[260px] w-full min-w-0">
             <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
               <BarChart data={monthlyRevenueData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#1e1e3a" vertical={false} />
+                <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
                 <XAxis
                   dataKey="ay"
-                  tick={{ fill: '#a0a0a0', fontSize: 12 }}
-                  axisLine={{ stroke: '#1e1e3a' }}
+                  tick={{ fill: chartColors.textSecondary, fontSize: 12 }}
+                  axisLine={{ stroke: chartColors.axis }}
                   tickLine={false}
                 />
                 <YAxis
-                  tick={{ fill: '#a0a0a0', fontSize: 12 }}
+                  tick={{ fill: chartColors.textSecondary, fontSize: 12 }}
                   axisLine={false}
                   tickLine={false}
                   tickFormatter={(v) => (v >= 1000 ? `${v / 1000}K` : String(v))}
                 />
                 <Tooltip
                   contentStyle={{
-                    backgroundColor: '#1a1a2e',
-                    border: '1px solid #1e1e3a',
+                    backgroundColor: chartColors.panel,
+                    border: `1px solid ${chartColors.axis}`,
                     borderRadius: '8px',
                   }}
-                  labelStyle={{ color: '#fff' }}
+                  labelStyle={{ color: chartColors.textPrimary }}
+                  itemStyle={{ color: chartColors.textPrimary }}
                   formatter={(value: number | undefined) => [value != null ? formatCurrency(value) : '0', 'Gelir']}
                   labelFormatter={(label) => label}
                 />
@@ -478,8 +489,11 @@ export default function DashboardPage() {
                   className="py-3 border-b border-background-border last:border-0"
                 >
                   <div className="font-medium text-sm mb-1">{alert.Contract.Customer?.Name}</div>
-                  <div className="text-xs text-text-secondary mb-2">
-                    {formatDate(alert.Contract.PlannedEndDate)}
+                  <div
+                    className="text-xs text-text-secondary mb-2"
+                    title={alert.Contract.Type === 'SALE' ? 'Satışlarda planlanan bitiş tarihi kullanılmaz.' : undefined}
+                  >
+                    {alert.Contract.Type === 'SALE' ? '—' : alert.Contract.PlannedEndDate ? formatDate(alert.Contract.PlannedEndDate) : '—'}
                   </div>
                   <span className={`badge ${getAlertColor(alert.AlertType)} text-white text-xs`}>
                     {alert.AlertMessage}
@@ -510,7 +524,9 @@ export default function DashboardPage() {
                   <div>
                     <div className="font-medium text-sm">{contract.Customer?.Name}</div>
                     <div className="text-xs text-text-secondary mt-0.5">
-                      {formatDate(contract.StartDate)} – {formatDate(contract.PlannedEndDate)}
+                      {contract.Type === 'SALE'
+                        ? `${formatDate(contract.StartDate)}`
+                        : `${formatDate(contract.StartDate)} – ${contract.PlannedEndDate ? formatDate(contract.PlannedEndDate) : '—'}`}
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">

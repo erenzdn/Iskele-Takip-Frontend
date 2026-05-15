@@ -7,16 +7,40 @@ export interface Customer {
   PhoneNumber?: string;
   Email?: string;
   Address?: string;
-  CenterAuthorizedPerson?: string;
-  CenterAuthorizedPhone?: string;
+  /** Arşiv (soft delete). Doluysa müşteri listede görünmez; GET /customers/:id ile detay alınabilir. */
+  DeletedAt?: string | null;
+  deletedAt?: string | null;
   CreatedAt?: string;
   CreatedByUserFullName?: string;
   CreatedByUserName?: string;
   LastModifiedAt?: string | null;
   LastModifiedByUserFullName?: string | null;
   LastModifiedByUserName?: string | null;
+  AuthorizedContacts?: AuthorizedContact[];
   Contracts?: Contract[];
   Sites?: ConstructionSite[];
+}
+
+/** Silinmiş / arşivlenmiş müşteri (DeletedAt dolu). */
+export function pickCustomerDeletedAt(
+  c: Pick<Customer, 'DeletedAt' | 'deletedAt'>
+): string | null | undefined {
+  return c.DeletedAt ?? c.deletedAt;
+}
+
+export function isCustomerArchived(c: Pick<Customer, 'DeletedAt' | 'deletedAt'>): boolean {
+  const v = pickCustomerDeletedAt(c);
+  return v != null && String(v).trim() !== '';
+}
+
+export interface AuthorizedContact {
+  CustomerAuthorizedContactId?: number;
+  Name: string;
+  Phone?: string | null;
+  Email?: string | null;
+  Title?: string | null;
+  IsPrimary?: boolean;
+  OrderNo?: number;
 }
 
 export interface ConstructionSite {
@@ -55,14 +79,19 @@ export interface Inventory {
   ItemId: number;
   ItemCode?: string;
   ItemName: string;
+  ItemNameEn?: string | null;
   TotalStock: number;
   OnRent: number;
   DailyPrice: number;
+  DailyPriceEur?: number | null;
+  DailyPriceUsd?: number | null;
   PurchasePrice: number;
   MonthlyListPrice?: number;
   UnitPrice?: number;
   MonthlyListPriceEur?: number;
   UnitPriceEur?: number;
+  MonthlyListPriceUsd?: number | null;
+  UnitPriceUsd?: number | null;
   Categories?: MaterialCategory[];
   SubCategories?: SubCategory[];
   CreatedAt?: string;
@@ -75,7 +104,115 @@ export interface Inventory {
   ContractDetails?: ContractDetail[];
 }
 
-export type CurrencyCode = 'TRY' | 'EUR';
+// Inventory - Item Movements (GET /inventory/:itemId/movements)
+export interface InventoryItemMovementItemInfo {
+  ItemId: number;
+  ItemName: string;
+  ItemCode?: string | null;
+}
+
+export interface InventoryItemMovementFilters {
+  warehouseId?: number | null;
+  dateFrom?: string | null; // YYYY-MM-DD or ISO 8601
+  dateTo?: string | null; // YYYY-MM-DD or ISO 8601
+  includeCompleted?: boolean | null;
+}
+
+export interface InventoryItemMovementContractCustomer {
+  CustomerId: number;
+  CustomerName: string;
+}
+
+export interface InventoryItemMovementContractSite {
+  SiteId: number;
+  SiteName: string;
+}
+
+export interface InventoryItemMovementDispatch {
+  detailId: number;
+  sourceWarehouseId: number;
+  sourceWarehouseName: string;
+  dispatchDate: string; // ISO 8601
+  plannedEndDate?: string | null; // ISO 8601
+  actualEndDate?: string | null; // ISO 8601
+  rentedQuantity: number;
+}
+
+export interface InventoryItemMovementReturn {
+  ReturnId: number;
+  ReturnDate: string; // ISO 8601
+  ReturnQuantity: number;
+  returnWarehouseId?: number | null;
+  returnWarehouseName?: string | null;
+  LateDays?: number | null;
+  LateFee?: number | null;
+}
+
+export interface InventoryItemMovementTotals {
+  rented: number;
+  returned: number;
+  stillOut: number;
+}
+
+export interface InventoryItemMovementContractRow {
+  ContractId: number;
+  ContractCode?: string | null;
+  Type?: ContractQuoteType | string | null;
+  customer: InventoryItemMovementContractCustomer;
+  site?: InventoryItemMovementContractSite | null;
+  dispatch: InventoryItemMovementDispatch;
+  returns: InventoryItemMovementReturn[];
+  totals: InventoryItemMovementTotals;
+  isCompleted: boolean;
+}
+
+export interface InventoryItemMovementSummary {
+  totalContracts: number;
+  totalDispatched: number;
+  totalReturned: number;
+  currentlyOnRent: number;
+}
+
+export interface InventoryItemMovementsResponse {
+  item: InventoryItemMovementItemInfo;
+  filters: InventoryItemMovementFilters;
+  contracts: InventoryItemMovementContractRow[];
+  summary: InventoryItemMovementSummary;
+}
+
+export type CurrencyCode = 'TRY' | 'EUR' | 'USD';
+
+/** Teklif / sözleşme tipi (backend `Type`: RENTAL | SALE) */
+export type ContractQuoteType = 'RENTAL' | 'SALE';
+
+/** Kalem fiyat birimi (backend: DAY | EACH) */
+export type PriceUnit = 'DAY' | 'EACH';
+
+/** Fiyatın kaynağı (backend: INVENTORY | OVERRIDE | MANUAL) */
+export type PriceSource = 'INVENTORY' | 'OVERRIDE' | 'MANUAL';
+
+export function normalizeContractQuoteType(v: unknown): ContractQuoteType {
+  const s = typeof v === 'string' ? v.toUpperCase() : '';
+  return s === 'SALE' ? 'SALE' : 'RENTAL';
+}
+
+/** Liste/detay yanıtında PascalCase `Type` veya camelCase `type` gelebilir (ör. ASP.NET JSON). */
+export function resolveContractQuoteType(row: unknown): ContractQuoteType {
+  if (!row || typeof row !== 'object') return 'RENTAL';
+  const o = row as Record<string, unknown>;
+  return normalizeContractQuoteType(o.Type ?? o.type);
+}
+
+/** Alan yoksa veya boşsa `undefined` — UI state fallback için. */
+export function tryResolveContractQuoteType(row: unknown): ContractQuoteType | undefined {
+  if (!row || typeof row !== 'object') return undefined;
+  const o = row as Record<string, unknown>;
+  const raw = o.Type ?? o.type;
+  if (raw === undefined || raw === null || (typeof raw === 'string' && raw.trim() === '')) {
+    return undefined;
+  }
+  return normalizeContractQuoteType(raw);
+}
 
 // Çek (Check) Modelleri
 export type CheckStatus = 'PORTFOLIO' | 'CASHED' | 'RETURNED' | 'CANCELLED';
@@ -111,15 +248,21 @@ export interface Contract {
   ContractId: number;
   ContractCode?: string;
   CustomerId: number;
+  CustomerAuthorizedContactId?: number | null;
   SiteId?: number; // Şantiye ID (opsiyonel)
   StartDate: string; // ISO 8601 format
-  PlannedEndDate: string; // ISO 8601 format
+  /** Kiralama için dolu; satış sözleşmesinde backend null döner. */
+  PlannedEndDate: string | null; // ISO 8601 format
   ActualEndDate?: string; // ISO 8601 format
   InitialTotalPrice: number;
   FinalCalculatedPrice?: number;
+  NetTotal?: number;
   Iskonto?: number;  // yüzde
   VatRate?: number;  // yüzde
   Currency?: CurrencyCode;
+  Type?: ContractQuoteType;
+  /** Liste yanıtında API'den (GET /contracts) */
+  CustomerName?: string;
   IsCompleted: boolean;
   CreatedAt?: string;
   CreatedByUserFullName?: string;
@@ -139,7 +282,14 @@ export interface ContractDetail {
   WarehouseId?: number;
   RentedQuantity: number;
   ReturnedQuantity: number;
-  DailyPriceAtRent: number;
+  /** Hesaplamada kullanılan snapshot birim fiyat (DAY/EACH ile birlikte) */
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  /** Sadece RENTAL: kullanıcının girdiği aylık override (varsa) */
+  MonthlyPriceOverride?: number | null;
+  PriceSource: PriceSource;
+  /** Kiralama sözleşmesinde satır bazlı ücret başlangıç tarihi (ISO 8601) */
+  EffectiveStartDate?: string;
   Contract?: Contract;
   Item?: Inventory;
 }
@@ -181,16 +331,15 @@ export interface LoginRequest {
 }
 
 export interface LoginUserDto {
-  UserId: number;
-  Username: string;
-  FullName?: string;
-  Email?: string;
-  RoleId?: number;
-  RoleName?: string;
-  /** Backend tarafında alternatif alan adlarıyla gelebilir (örn. JWT payload -> role/roleId). */
-  role?: string;
+  userId: number;
+  username: string;
+  fullName?: string;
+  email?: string;
   roleId?: number;
-  Permissions: string[];
+  roleName?: string;
+  /** Backend tarafında alternatif alan adlarıyla gelebilir (örn. JWT payload). */
+  role?: string;
+  permissions: string[];
 }
 
 export interface LoginResponse {
@@ -303,8 +452,12 @@ export interface ContractDetailItem {
   WarehouseName?: string;
   RentedQuantity: number;
   ReturnedQuantity: number;
-  DailyPriceAtRent: number;
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  MonthlyPriceOverride?: number | null;
+  PriceSource: PriceSource;
   ItemName: string;
+  ItemNameEn?: string | null;
 }
 
 // Manuel kalem destekli satır tipleri (UI için)
@@ -319,8 +472,14 @@ export interface InventoryContractLineItem {
   WarehouseName?: string;
   RentedQuantity: number;
   ReturnedQuantity: number;
-  DailyPriceAtRent: number;
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  MonthlyPriceOverride?: number | null;
+  PriceSource: PriceSource;
+  /** Backend'den gelirse UI'da gösterilir (ISO 8601) */
+  EffectiveStartDate?: string;
   ItemName: string;
+  ItemNameEn?: string | null;
 }
 
 export interface ManualContractLineItem {
@@ -331,7 +490,9 @@ export interface ManualContractLineItem {
   IsManual: true;
   Description: string;
   RentedQuantity: number;
-  DailyPriceAtRent: number;
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  PriceSource: PriceSource;
 }
 
 export interface PricingRuleTypeItem {
@@ -366,6 +527,20 @@ export interface ContractReturn {
   LateDays: number;
   LateFee: number;
   CreatedAt: string;
+  IsNonPhysicalSettlement?: boolean;
+  SettlementReason?: string | null;
+  SettlementCharge?: number;
+  InventoryUnitPriceSnapshot?: number | null;
+  PriceBasis?: string | null;
+}
+
+export interface SettleNonReturnRequest {
+  itemId: number;
+  returnQuantity: number;
+  settlementReason: 'SALE' | 'DEFECT';
+  priceBasis: 'TRY' | 'USD' | 'EUR';
+  warehouseId?: number;
+  settlementChargeOverride?: number | string;
 }
 
 // Sözleşme Fiyat Hesaplama
@@ -446,6 +621,93 @@ export interface WarehouseStockResponse {
   stock: WarehouseStock[];
 }
 
+// Warehouse Movements (GET /warehouses/:warehouseId/movements)
+export interface WarehouseMovementWarehouseInfo {
+  WarehouseId: number;
+  WarehouseName: string;
+  Address?: string | null;
+}
+
+export interface WarehouseMovementFilters {
+  itemId?: number | null;
+  dateFrom?: string | null; // YYYY-MM-DD or ISO 8601
+  dateTo?: string | null; // YYYY-MM-DD or ISO 8601
+  includeCompleted?: boolean | null;
+}
+
+export interface WarehouseMovementItemInfo {
+  ItemId: number;
+  ItemName: string;
+  ItemCode?: string | null;
+}
+
+export interface WarehouseMovementContractInfo {
+  ContractId: number;
+  ContractCode?: string | null;
+  Type?: ContractQuoteType | string | null;
+  isCompleted: boolean;
+}
+
+export interface WarehouseMovementCustomerInfo {
+  CustomerId: number;
+  CustomerName: string;
+}
+
+export interface WarehouseMovementSiteInfo {
+  SiteId: number;
+  SiteName: string;
+}
+
+export interface WarehouseMovementDispatchInfo {
+  dispatchDate: string; // ISO 8601
+  plannedEndDate?: string | null; // ISO 8601
+  actualEndDate?: string | null; // ISO 8601
+  rentedQuantity: number;
+}
+
+export interface WarehouseMovementReturnInfo {
+  ReturnId: number;
+  ReturnDate: string; // ISO 8601
+  ReturnQuantity: number;
+  returnWarehouseId?: number | null;
+  returnWarehouseName?: string | null;
+  LateDays?: number | null;
+  LateFee?: number | null;
+}
+
+export interface WarehouseMovementTotals {
+  rented: number;
+  returned: number;
+  stillOut: number;
+}
+
+export interface WarehouseMovementRow {
+  detailId: number;
+  item: WarehouseMovementItemInfo;
+  contract: WarehouseMovementContractInfo;
+  customer: WarehouseMovementCustomerInfo;
+  site?: WarehouseMovementSiteInfo | null;
+  dispatch: WarehouseMovementDispatchInfo;
+  returns: WarehouseMovementReturnInfo[];
+  totals: WarehouseMovementTotals;
+}
+
+export interface WarehouseMovementsSummary {
+  totalMovements: number;
+  uniqueItems: number;
+  uniqueCustomers: number;
+  totalDispatched: number;
+  totalReturned: number;
+  currentlyOut: number;
+}
+
+export interface WarehouseMovementsResponse {
+  warehouse: WarehouseMovementWarehouseInfo;
+  filters: WarehouseMovementFilters;
+  movements: WarehouseMovementRow[];
+  summary: WarehouseMovementsSummary;
+}
+
 // Teklif (Quote) Modelleri
 export enum QuoteStatus {
   Pending = 'pending',
@@ -456,19 +718,29 @@ export enum QuoteStatus {
 export interface Quote {
   QuoteId: number;
   QuoteCode?: string;
+  /** Teklif konusu (backend: Subject, nullable, max 255) */
+  Subject?: string | null;
   CustomerId: number;
+  CustomerAuthorizedContactId?: number | null;
   SiteId?: number;
-  StartDate: string; // ISO 8601 format
-  PlannedEndDate: string; // ISO 8601 format
+  /** Kiralama: ISO 8601; gün-only teklifte API null dönebilir */
+  StartDate?: string | null;
+  /** Kiralama için dolu; satış teklifinde API boş dönebilir; gün-only teklifte null olabilir */
+  PlannedEndDate?: string | null;
+  /** Kiralama (RENTAL): teklif süresi gün; GET listesi/detay */
+  RentalDurationDays?: number | null;
   TotalPrice: number;
+  NetTotal?: number;
   Status: QuoteStatus;
   Notes?: string;
   Iskonto?: number;  // yüzde
   VatRate?: number;  // yüzde
   Currency?: CurrencyCode;
+  Type?: ContractQuoteType;
   CreatedAt: string; // ISO 8601 format
   UpdatedAt: string; // ISO 8601 format
   ConvertedContractId?: number;
+  ConvertedAt?: string | null;
   CustomerName?: string;
   Customer?: Customer;
   Site?: ConstructionSite;
@@ -501,8 +773,14 @@ export interface QuoteDetail {
   QuoteId: number;
   ItemId: number;
   Quantity: number;
-  DailyPrice: number;
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  MonthlyPriceOverride?: number | null;
+  PriceSource: PriceSource;
   ItemName?: string;
+  /** Satır bazlı ürün adı override (envanter satırları için). */
+  ItemNameOverride?: string | null;
+  ItemNameEn?: string | null;
   CategoryId?: number;
 }
 
@@ -512,8 +790,13 @@ export interface QuoteDetailItem {
   Item?: Inventory;
   ItemId: number;
   Quantity: number;
-  DailyPrice: number;
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  MonthlyPriceOverride?: number | null;
+  PriceSource: PriceSource;
   ItemName: string;
+  ItemNameOverride?: string | null;
+  ItemNameEn?: string | null;
 }
 
 export type QuoteLineItem = InventoryQuoteLineItem | ManualQuoteLineItem;
@@ -524,8 +807,18 @@ export interface InventoryQuoteLineItem {
   Item?: Inventory;
   ItemId: number;
   Quantity: number;
-  DailyPrice: number;
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  MonthlyPriceOverride?: number | null;
+  PriceSource: PriceSource;
+  /** UI state: SALE için birim fiyat override */
+  OverrideUnitPrice?: number;
+  /** UI state: RENTAL için aylık fiyat override */
+  OverrideMonthlyPrice?: number;
   ItemName: string;
+  /** UI state: satır bazlı ürün adı override */
+  ItemNameOverride?: string | null;
+  ItemNameEn?: string | null;
 }
 
 export interface ManualQuoteLineItem {
@@ -536,7 +829,9 @@ export interface ManualQuoteLineItem {
   is_manual: true;
   Description: string;
   Quantity: number;
-  DailyPrice: number;
+  UnitPriceSnapshot: number;
+  PriceUnit: PriceUnit;
+  PriceSource: PriceSource;
 }
 
 // Sözleşme Şablon Modelleri
@@ -660,11 +955,9 @@ export interface StockReceiptDetail extends StockReceipt {
   items: StockReceiptItem[];
 }
 
-/** Envanter kalemi: ItemId + Quantity. Manuel kalem: IsManual + Description + Quantity (ItemId yok). */
 export interface CreateStockReceiptItemRequest {
-  ItemId?: number;
+  ItemId: number;
   Quantity: number;
-  IsManual?: boolean;
   Description?: string;
 }
 
@@ -681,6 +974,8 @@ export interface CashAccount {
   name: string;
   type: 'CASH' | 'BANK';
   currency: 'TRY' | 'USD' | 'EUR' | 'GBP';
+  branch_name: string | null;
+  account_no: string | null;
   current_balance: number;
   allow_negative_balance: boolean;
   is_active: boolean;
@@ -704,7 +999,8 @@ export interface CashTransaction {
   amount: number;
   exchange_rate: number;
   related_entity_type: 'CUSTOMER' | 'SUPPLIER' | 'STAFF' | 'OTHER' | null;
-  related_entity_id: string | null;
+  related_entity_id: string | number | null;
+  customer_name: string | null;
   transaction_date: string;
   description: string | null;
   receipt_pdf_path: string | null;
@@ -723,7 +1019,7 @@ export interface CreateCashTransactionDto {
   target_account_id?: string;
   exchange_rate?: number;
   related_entity_type?: CashTransaction['related_entity_type'];
-  related_entity_id?: string;
+  related_entity_id?: string | number;
   transaction_date?: string;
   description?: string;
 }

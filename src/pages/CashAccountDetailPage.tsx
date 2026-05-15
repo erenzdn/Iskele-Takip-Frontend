@@ -18,6 +18,7 @@ import CashAccountModal from '../components/modals/CashAccountModal';
 import EmptyState from '../components/EmptyState';
 import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
+import { toast } from '../hooks/useToast';
 
 const LIMIT = 20;
 
@@ -79,7 +80,7 @@ export default function CashAccountDetailPage() {
   const { accountId } = useParams<{ accountId: string }>();
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
-  const permissions = user?.Permissions ?? [];
+  const permissions = user?.permissions ?? [];
 
   const canCreate = permissions.includes('cash_create');
   const canApprove = permissions.includes('cash_approve');
@@ -188,7 +189,7 @@ export default function CashAccountDetailPage() {
       setDownloadBusyId(tx.id);
       const blob = await cashService.downloadReceiptAsync(tx.id);
       if (blob.size === 0) {
-        alert('PDF oluşturulamadı.');
+        toast.error('PDF oluşturulamadı.');
         return;
       }
       const url = window.URL.createObjectURL(blob);
@@ -199,7 +200,7 @@ export default function CashAccountDetailPage() {
       window.URL.revokeObjectURL(url);
     } catch (e: unknown) {
       console.error('Download receipt error:', e);
-      alert(getApiErrorMessage(e) || 'PDF indirme hatası');
+      toast.error(getApiErrorMessage(e) || 'PDF indirme hatası');
     } finally {
       setDownloadBusyId(null);
     }
@@ -219,7 +220,7 @@ export default function CashAccountDetailPage() {
       await refreshAll();
     } catch (e: unknown) {
       console.error('Approve error:', e);
-      alert(getApiErrorMessage(e) || 'Onaylama hatası');
+      toast.error(getApiErrorMessage(e) || 'Onaylama hatası');
     } finally {
       setApproveBusy(false);
     }
@@ -234,7 +235,7 @@ export default function CashAccountDetailPage() {
       await refreshAll();
     } catch (e: unknown) {
       console.error('Delete error:', e);
-      alert(getApiErrorMessage(e) || 'Silme hatası');
+      toast.error(getApiErrorMessage(e) || 'Silme hatası');
     } finally {
       setDeleteBusy(false);
     }
@@ -263,7 +264,7 @@ export default function CashAccountDetailPage() {
       await refreshAll();
     } catch (e: unknown) {
       console.error('Cancel error:', e);
-      alert(getApiErrorMessage(e) || 'İptal hatası');
+      toast.error(getApiErrorMessage(e) || 'İptal hatası');
     } finally {
       setCancelBusy(false);
     }
@@ -382,6 +383,20 @@ export default function CashAccountDetailPage() {
             Negatif bakiye: {account.allow_negative_balance ? 'İzinli' : 'İzinsiz'}
           </div>
         </div>
+        {account.type === 'BANK' && (
+          <div className="card p-4 sm:col-span-2 lg:col-span-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <div className="text-sm text-text-secondary mb-1">Şube</div>
+                <div className="font-medium">{account.branch_name || '-'}</div>
+              </div>
+              <div>
+                <div className="text-sm text-text-secondary mb-1">Hesap No / IBAN</div>
+                <div className="font-medium">{account.account_no || '-'}</div>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="rounded-panel border border-background-border bg-background-panel p-3 space-y-2">
@@ -459,7 +474,7 @@ export default function CashAccountDetailPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-320px)] min-h-[320px]">
-            <table className="w-full text-xs border-collapse">
+            <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
@@ -476,6 +491,9 @@ export default function CashAccountDetailPage() {
                   </th>
                   <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
                     Tarih
+                  </th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
+                    Müşteri
                   </th>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary">İşlemler</th>
                 </tr>
@@ -499,6 +517,11 @@ export default function CashAccountDetailPage() {
                     </td>
                     <td className="py-1 px-2 align-middle text-center border-r border-background-border/60 last:border-r-0">
                       <span className="text-xs text-text-secondary">{formatDate(tx.transaction_date)}</span>
+                    </td>
+                    <td className="py-1 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                      <span className="text-xs text-text-secondary">
+                        {tx.related_entity_type === 'CUSTOMER' ? tx.customer_name || '-' : '-'}
+                      </span>
                     </td>
                     <td className="py-1 px-2 align-middle">
                       <div className="flex flex-wrap items-center gap-1.5">

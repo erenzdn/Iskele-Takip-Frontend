@@ -13,6 +13,9 @@ export const adminService = {
   async getSystemBackupStatusAsync(): Promise<SystemBackupStatusResponse | null> {
     const candidateEndpoints = [
       '/api/v1/admin/system/backup/status',
+      // Backend dokümanı: Frontend alias'ları
+      '/backup-status',
+      '/backup-info',
       '/api/v1/admin/system/backup-status',
       '/api/v1/admin/system/backup/info',
     ];
