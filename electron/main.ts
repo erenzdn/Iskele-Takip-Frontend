@@ -168,6 +168,19 @@ app.whenReady().then(() => {
       autoUpdater.checkForUpdates();
     }
   });
+
+  ipcMain.on('get-app-version', (event) => {
+    if (isDev) {
+      try {
+        const pkg = require('../package.json');
+        event.returnValue = pkg.version;
+      } catch (e) {
+        event.returnValue = app.getVersion();
+      }
+    } else {
+      event.returnValue = app.getVersion();
+    }
+  });
   // --- End Auto-updater Section ---
 
   app.on('activate', () => {

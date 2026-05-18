@@ -2,7 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
-  appVersion: '1.4.5', // Bu değer paketleme sırasında dinamik olarak da alınabilir ancak şu an sabitliyoruz
+  appVersion: ipcRenderer.sendSync('get-app-version'),
   updates: {
     onUpdateChecking: (callback: () => void) => {
       const subscription = () => callback();
