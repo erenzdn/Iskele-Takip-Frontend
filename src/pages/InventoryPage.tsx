@@ -637,6 +637,8 @@ export default function InventoryPage() {
                   ) : null}
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Kodu</th>
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Adı</th>
+                  <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ağırlık</th>
+                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ana Birim</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Aylık Liste (₺)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (₺)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim ($)</th>
@@ -695,6 +697,12 @@ export default function InventoryPage() {
                         <div className="text-text-secondary text-[10px] mt-0.5">
                           Birim: {item.UnitPrice != null ? formatTry(item.UnitPrice) : formatTry(item.PurchasePrice ?? 0)}
                         </div>
+                      </td>
+                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums">
+                        {item.Weight != null ? item.Weight : '-'}
+                      </td>
+                      <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
+                        {item.UnitName ?? '-'}
                       </td>
                       <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-success tabular-nums">
                         {item.MonthlyListPrice != null ? formatTry(item.MonthlyListPrice) : '-'}

@@ -142,6 +142,7 @@ export default function QuoteDetailModal({
   const [quoteCode, setQuoteCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
   const [quoteType, setQuoteType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
+  const [language, setLanguage] = useState<'TR' | 'EN'>('TR');
 
   /**
    * Fiyat inputları: TR ondalık ayıracı (,) desteklemek için string tutulur.
@@ -311,6 +312,7 @@ export default function QuoteDetailModal({
       setVatRate(Number.isFinite(parsedVatRate) ? parsedVatRate : 20);
       setQuoteCode(source.QuoteCode ?? '');
       setCurrency(source.Currency === 'EUR' ? 'EUR' : source.Currency === 'USD' ? 'USD' : 'TRY');
+      setLanguage((source as any).Language === 'EN' ? 'EN' : 'TR');
       setQuoteType(resolveContractQuoteType(source));
 
       const details = (source as any).details ?? source.QuoteDetails ?? [];
@@ -877,7 +879,7 @@ export default function QuoteDetailModal({
   };
 
   const updateQuoteItemQuantity = (itemId: number, newQty: number) => {
-    const qty = Math.max(1, Math.floor(newQty));
+    const qty = Math.max(0, Math.floor(newQty));
     setQuoteItems((prev) =>
       prev.map((i) => (i.kind === 'inventory' && i.ItemId === itemId ? { ...i, Quantity: qty } : i))
     );
@@ -1003,6 +1005,7 @@ export default function QuoteDetailModal({
         Iskonto: iskonto,
         VatRate: vatRate,
         Currency: currency,
+        Language: language,
         details,
       };
       if (quoteType === 'RENTAL') {
@@ -1035,6 +1038,7 @@ export default function QuoteDetailModal({
           Iskonto: iskonto,
           VatRate: vatRate,
           Currency: currency,
+          Language: language,
           Subject: normalizeText(subject) ? normalizeText(subject) : null,
           Notes: normalizeText(notes) || undefined,
           // Kalem değişiklikleri (override fiyatlar dahil) PATCH ile de gitsin; aksi halde fiyat yeniden hesaplanmaz.
@@ -1884,6 +1888,19 @@ export default function QuoteDetailModal({
                 </select>
               </div>
 
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Dil</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TR">Türkçe</option>
+                  <option value="EN">English</option>
+                </select>
+              </div>
+
               {!isNew && (
                 <div className="space-y-0.5">
                   <label className="block text-xs font-medium text-text-primary">Durum</label>
@@ -2352,7 +2369,7 @@ export default function QuoteDetailModal({
                                 type="text"
                                 inputMode="numeric"
                                 pattern="[0-9.]*"
-                                value={formatThousandsTR(String(item.Quantity))}
+                                value={item.Quantity === 0 ? '' : formatThousandsTR(String(item.Quantity))}
                                 ref={(el) => {
                                   const key = `${rowIndex}-2`;
                                   if (el) quoteGridRefs.current.set(key, el);
@@ -2362,9 +2379,24 @@ export default function QuoteDetailModal({
                                   setActiveQuoteGridCell({ row: rowIndex, col: 2 });
                                   e.currentTarget.select();
                                 }}
+                                onBlur={() => {
+                                  if (item.Quantity === 0) {
+                                    if (item.kind === 'inventory') {
+                                      updateQuoteItemQuantity(item.ItemId, 1);
+                                    } else {
+                                      setQuoteItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'manual' && x.ClientId === item.ClientId
+                                            ? { ...x, Quantity: 1 }
+                                            : x
+                                        )
+                                      );
+                                    }
+                                  }
+                                }}
                                 onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 2)}
                                 onChange={(e) => {
-                                  const { numeric } = normalizeMaskedIntegerTR(e.target.value, { maxDigits: 9, min: 1 });
+                                  const { numeric } = normalizeMaskedIntegerTR(e.target.value, { maxDigits: 9, min: 0 });
                                   const v = numeric;
                                   if (item.kind === 'inventory') {
                                     updateQuoteItemQuantity(item.ItemId, v);
@@ -2372,7 +2404,7 @@ export default function QuoteDetailModal({
                                     setQuoteItems((prev) =>
                                       prev.map((x) =>
                                         x.kind === 'manual' && x.ClientId === item.ClientId
-                                          ? { ...x, Quantity: Math.max(1, Math.floor(v)) }
+                                          ? { ...x, Quantity: Math.max(0, Math.floor(v)) }
                                           : x
                                       )
                                     );

@@ -37,6 +37,7 @@ export interface CreateContractRequest {
   VatRate?: number;  // yüzde
   Currency?: 'TRY' | 'EUR';
   Type?: ContractQuoteType;
+  Language?: 'TR' | 'EN';
   /** Opsiyonel. Bir kalemde WarehouseId yoksa bu depo kullanılır; depo stoğu düşümü için her detayda WarehouseId veya bu alan gerekir. */
   defaultWarehouseId?: number;
   details: CreateContractDetailPayload[];
@@ -54,6 +55,7 @@ export interface UpdateContractRequest {
   StartDate?: string;
   /** Kiralama sözleşmesi planlanan bitiş (ISO 8601) */
   PlannedEndDate?: string;
+  Language?: 'TR' | 'EN';
 }
 
 export interface CreateContractResponse {

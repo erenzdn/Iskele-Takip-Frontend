@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
-import { ArrowLeftIcon, CopyIcon, PencilSimpleIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
+import { ArrowLeftIcon, CopyIcon, PencilSimpleIcon, PlusIcon, TrashIcon, PercentIcon } from '@phosphor-icons/react';
 import { MaterialCategory, QuoteTemplate } from '../models';
 import { inventoryService } from '../services/inventoryService';
 import { quoteTemplateService } from '../services/quoteTemplateService';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
+import CategoryDiscountModal from '../components/modals/CategoryDiscountModal';
 import QuoteTemplateEditorModal from '../components/modals/QuoteTemplateEditorModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import QuotePackagesPage from './QuotePackagesPage';
@@ -29,6 +30,8 @@ export default function OfferManagementPage() {
   const [categoriesLoading, setCategoriesLoading] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState<MaterialCategory | null>(null);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
+  const [selectedCategoryForDiscount, setSelectedCategoryForDiscount] = useState<MaterialCategory | null>(null);
+  const [isDiscountModalOpen, setIsDiscountModalOpen] = useState(false);
 
   const [templates, setTemplates] = useState<QuoteTemplate[]>([]);
   const [templatesLoading, setTemplatesLoading] = useState(false);
@@ -105,6 +108,16 @@ export default function OfferManagementPage() {
     setIsCategoryModalOpen(false);
     setSelectedCategory(null);
     void loadCategories();
+  };
+
+  const openDiscountModal = (category: MaterialCategory) => {
+    setSelectedCategoryForDiscount(category);
+    setIsDiscountModalOpen(true);
+  };
+
+  const closeDiscountModal = () => {
+    setIsDiscountModalOpen(false);
+    setSelectedCategoryForDiscount(null);
   };
 
   const openNewTemplateModal = () => {
@@ -216,17 +229,35 @@ export default function OfferManagementPage() {
           ) : (
             <div className="grid md:grid-cols-2 xl:grid-cols-3 gap-3">
               {categories.map((category) => (
-                <button
+                <div
                   key={category.CategoryId}
-                  type="button"
-                  onClick={() => openEditCategoryModal(category)}
-                  className="text-left rounded-lg border border-background-border bg-background-panel p-3 hover:bg-background-hover"
+                  className="rounded-lg border border-background-border bg-background-panel p-3 flex flex-col justify-between gap-3"
                 >
-                  <div className="font-medium text-text-primary">{category.CategoryName}</div>
-                  <div className="text-xs text-text-secondary">
-                    Kiralama birimi: {category.RentalUnit?.trim() ? category.RentalUnit : '-'}
+                  <div>
+                    <div className="font-medium text-text-primary">{category.CategoryName}</div>
+                    <div className="text-xs text-text-secondary">
+                      Kiralama birimi: {category.RentalUnit?.trim() ? category.RentalUnit : '-'}
+                    </div>
                   </div>
-                </button>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs px-2 py-1 flex items-center gap-1"
+                      onClick={() => openEditCategoryModal(category)}
+                    >
+                      <PencilSimpleIcon size={14} />
+                      Düzenle
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-primary text-xs px-2 py-1 flex items-center gap-1"
+                      onClick={() => openDiscountModal(category)}
+                    >
+                      <PercentIcon size={14} />
+                      İndirim Uygula
+                    </button>
+                  </div>
+                </div>
               ))}
             </div>
           )}
@@ -311,6 +342,14 @@ export default function OfferManagementPage() {
 
       {isCategoryModalOpen && (
         <CategoryDetailModal category={selectedCategory} categories={categories} onClose={closeCategoryModal} />
+      )}
+
+      {isDiscountModalOpen && selectedCategoryForDiscount && (
+        <CategoryDiscountModal
+          category={selectedCategoryForDiscount}
+          onClose={closeDiscountModal}
+          onSuccess={() => void loadCategories()}
+        />
       )}
 
       {isTemplateModalOpen && (

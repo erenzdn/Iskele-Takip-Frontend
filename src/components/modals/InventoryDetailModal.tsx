@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
 import { XIcon } from '@phosphor-icons/react';
-import { AuditLog, Inventory, MaterialCategory, SubCategory, Warehouse } from '../../models';
-import { inventoryService } from '../../services/inventoryService';
+import { AuditLog, Inventory, MaterialCategory, SubCategory, Warehouse, Unit } from '../../models';
+import { inventoryService, ExchangeRateResponse, PricingPresetResponse } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { subcategoryService } from '../../services/subcategoryService';
+import { unitService } from '../../services/unitService';
 import { getApiErrorMessage, isDuplicateInventoryItemNameEnError } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import AuditLogTimeline from '../AuditLogTimeline';
@@ -34,6 +35,9 @@ export default function InventoryDetailModal({
   const [itemCode, setItemCode] = useState('');
   const [itemName, setItemName] = useState('');
   const [itemNameEn, setItemNameEn] = useState('');
+  const [weight, setWeight] = useState<number | ''>('');
+  const [units, setUnits] = useState<Unit[]>([]);
+  const [selectedUnitId, setSelectedUnitId] = useState<number | ''>('');
   const [selectedCategoryIds, setSelectedCategoryIds] = useState<number[]>([]);
   const [totalStock, setTotalStock] = useState<number | ''>(0);
   const [onRent, setOnRent] = useState(0);
@@ -44,6 +48,11 @@ export default function InventoryDetailModal({
   const [monthlyListPriceUsd, setMonthlyListPriceUsd] = useState<number | ''>('');
   const [unitPriceUsd, setUnitPriceUsd] = useState<number | ''>('');
   const [isBusy, setIsBusy] = useState(false);
+
+  const [activeRates, setActiveRates] = useState<ExchangeRateResponse | null>(null);
+  const [activePreset, setActivePreset] = useState<PricingPresetResponse | null>(null);
+  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [isCalculating, setIsCalculating] = useState(false);
 
   // Alt kategori seçimi için state'ler
   const [allSubCategories, setAllSubCategories] = useState<SubCategory[]>([]);
@@ -65,11 +74,144 @@ export default function InventoryDetailModal({
 
 
   useEffect(() => {
+    const fetchRatesAndPresets = async () => {
+      try {
+        const rates = await inventoryService.getExchangeRatesAsync();
+        setActiveRates(rates);
+      } catch (err) {
+        console.warn('Döviz kurları alınamadı:', err);
+      }
+      try {
+        const preset = await inventoryService.getPricingPresetAsync();
+        setActivePreset(preset);
+      } catch (err) {
+        console.warn('Kiralama oranları alınamadı:', err);
+      }
+    };
+    fetchRatesAndPresets();
+  }, []);
+
+  useEffect(() => {
+    const loadUnits = async () => {
+      try {
+        const data = await unitService.getAllAsync();
+        setUnits(data);
+      } catch (error) {
+        console.error('Load units error:', error);
+      }
+    };
+    loadUnits();
+  }, []);
+
+  useEffect(() => {
+    if (!unitPrice || isReadOnly) return;
+
+    const timer = setTimeout(async () => {
+      try {
+        setIsCalculating(true);
+        const response = await inventoryService.getPricePreviewAsync({
+          UnitPrice: Number(unitPrice),
+          UsdRate: activeRates?.UsdRate,
+          EurRate: activeRates?.EurRate,
+          RentalRateTry: activePreset?.RentalRateTry,
+          RentalRateUsd: activePreset?.RentalRateUsd,
+          RentalRateEur: activePreset?.RentalRateEur,
+          MonthlyListPrice: overrides['MonthlyListPrice'] ? Number(monthlyListPrice) : undefined,
+          MonthlyListPriceUsd: overrides['MonthlyListPriceUsd'] ? Number(monthlyListPriceUsd) : undefined,
+          MonthlyListPriceEur: overrides['MonthlyListPriceEur'] ? Number(monthlyListPriceEur) : undefined,
+        });
+
+        if (!overrides['MonthlyListPrice']) setMonthlyListPrice(response.MonthlyListPrice);
+        if (!overrides['MonthlyListPriceUsd']) setMonthlyListPriceUsd(response.MonthlyListPriceUsd);
+        if (!overrides['MonthlyListPriceEur']) setMonthlyListPriceEur(response.MonthlyListPriceEur);
+        if (!overrides['UnitPriceUsd']) setUnitPriceUsd(response.UnitPriceUsd);
+        if (!overrides['UnitPriceEur']) setUnitPriceEur(response.UnitPriceEur);
+      } catch (err) {
+        console.error('Fiyat hesaplama hatası:', err);
+      } finally {
+        setIsCalculating(false);
+      }
+    }, 500);
+
+    return () => clearTimeout(timer);
+  }, [unitPrice, activeRates, activePreset, overrides]);
+
+  const handlePriceFieldChange = (field: string, val: number | '', setter: (v: number | '') => void) => {
+    setter(val);
+    setOverrides(prev => ({ ...prev, [field]: true }));
+  };
+
+  const handleResetOverride = (field: string, setter: (v: number | '') => void) => {
+    setOverrides(prev => {
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+    setter('');
+  };
+
+  const renderPriceInput = (
+    label: string,
+    value: number | '',
+    field: string,
+    setter: (v: number | '') => void,
+    currency: string = '₺',
+    isCalculated: boolean = false
+  ) => {
+    const isOverridden = overrides[field];
+    return (
+      <div>
+        <div className="flex justify-between items-center mb-1">
+          <label className="block text-xs text-text-secondary">{label}</label>
+          {isCalculated && isOverridden && (
+            <span className="text-[10px] bg-yellow-500/20 text-yellow-500 px-1 rounded flex items-center gap-1">
+              <span>manuel</span>
+              <button
+                type="button"
+                onClick={() => handleResetOverride(field, setter)}
+                className="text-text-primary hover:text-accent"
+              >
+                ×
+              </button>
+            </span>
+          )}
+          {isCalculated && !isOverridden && value !== '' && (
+            <span className="text-[10px] bg-green-500/20 text-green-500 px-1 rounded">
+              otomatik
+            </span>
+          )}
+        </div>
+        <div className="relative">
+          <input
+            type="number"
+            value={value}
+            onChange={(e) => {
+              const val = e.target.value === '' ? '' : Number(e.target.value);
+              if (isCalculated) {
+                handlePriceFieldChange(field, val, setter);
+              } else {
+                setter(val);
+              }
+            }}
+            disabled={isReadOnly}
+            min="0"
+            step="0.01"
+            className={`input w-full ${isCalculated && !isOverridden ? 'bg-background-secondary/50' : ''}`}
+          />
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">{currency}</span>
+        </div>
+      </div>
+    );
+  };
+
+  useEffect(() => {
     setIsReadOnly(!isNew && !startInEditMode);
     if (item) {
       setItemCode(item.ItemCode ?? '');
       setItemName(item.ItemName);
       setItemNameEn(item.ItemNameEn?.trim() ? item.ItemNameEn : '');
+      setWeight(item.Weight ?? '');
+      setSelectedUnitId(item.UnitId ?? '');
       setSelectedCategoryIds(item.Categories?.map((c) => c.CategoryId) ?? []);
       setTotalStock(item.TotalStock);
       setOnRent(item.OnRent);
@@ -86,6 +228,8 @@ export default function InventoryDetailModal({
       setItemCode('');
       setItemName('');
       setItemNameEn('');
+      setWeight('');
+      setSelectedUnitId('');
       setSelectedCategoryIds([]);
       setTotalStock(0);
       setOnRent(0);
@@ -255,6 +399,8 @@ export default function InventoryDetailModal({
           MonthlyListPriceUsd: toOptionalNumber(monthlyListPriceUsd),
           UnitPriceUsd: toOptionalNumber(unitPriceUsd),
           SubCategoryIds: selectedSubCategoryIds.length > 0 ? selectedSubCategoryIds : undefined,
+          Weight: toOptionalNumber(weight),
+          UnitId: selectedUnitId || undefined,
         });
 
         // 2. Sonra seçilen depolara stok ekle
@@ -280,6 +426,8 @@ export default function InventoryDetailModal({
           MonthlyListPriceUsd: toOptionalNumber(monthlyListPriceUsd),
           UnitPriceUsd: toOptionalNumber(unitPriceUsd),
           SubCategoryIds: selectedSubCategoryIds,
+          Weight: toOptionalNumber(weight),
+          UnitId: selectedUnitId || undefined,
         });
       }
       onClose();
@@ -522,6 +670,46 @@ export default function InventoryDetailModal({
               className="input w-full"
               maxLength={200}
             />
+          </div>
+        </div>
+
+        <div className="mb-2 grid grid-cols-1 lg:grid-cols-2 gap-2">
+          <div>
+            <label className="block text-xs font-medium mb-1">Ağırlık</label>
+            <div className="relative">
+              <input
+                type="number"
+                value={weight}
+                onChange={(e) => {
+                  const val = e.target.value === '' ? '' : Number(e.target.value);
+                  setWeight(val);
+                }}
+                disabled={isReadOnly}
+                min="0"
+                step="0.01"
+                placeholder="Örn: 10.5"
+                className="input w-full"
+              />
+              <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">
+                {units.find(u => u.UnitId === selectedUnitId)?.UnitName || 'kg'}
+              </span>
+            </div>
+          </div>
+          <div>
+            <label className="block text-xs font-medium mb-1">Ana Birim</label>
+            <select
+              value={selectedUnitId}
+              onChange={(e) => setSelectedUnitId(e.target.value === '' ? '' : Number(e.target.value))}
+              disabled={isReadOnly}
+              className="input w-full"
+            >
+              <option value="">Birim Seçin</option>
+              {units.map((unit) => (
+                <option key={unit.UnitId} value={unit.UnitId}>
+                  {unit.UnitName}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
 
@@ -867,80 +1055,55 @@ export default function InventoryDetailModal({
           {/* Mevcut malzeme için stok bilgileri */}
           {!isNew && (
             <>
-              <div className="border border-background-border rounded-lg p-2 xl:col-span-6 xl:min-h-[360px]">
-                <label className="block text-xs font-medium mb-2">Fiyatlandırma (TL + EUR + USD)</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
-                  <div>
-                    <label className="block text-[11px] text-text-secondary mb-1">Aylık Liste (TL)</label>
-                    <input
-                      type="number"
-                      value={monthlyListPrice}
-                      onChange={(e) => setMonthlyListPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
+              <div className="border border-background-border rounded-lg p-2 xl:col-span-12">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-medium">Fiyatlandırma</label>
+                  {activeRates && (
+                    <div className="text-xs text-text-secondary">
+                      Aktif Kur: $1 = ₺{activeRates.UsdRate.toFixed(2)} | €1 = ₺{activeRates.EurRate.toFixed(2)}
+                    </div>
+                  )}
+                </div>
+                
+                {isCalculating && (
+                  <div className="text-xs text-accent mb-2 animate-pulse">Hesaplanıyor...</div>
+                )}
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="border border-background-border rounded-lg p-2">
+                    <div className="text-xs font-semibold mb-2 text-text-secondary">TL Fiyatları</div>
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (TL) *</label>
+                        <input
+                          type="number"
+                          value={unitPrice}
+                          onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                          disabled={isReadOnly}
+                          min="0"
+                          step="0.01"
+                          className="input w-full"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      {renderPriceInput('Aylık Liste (TL)', monthlyListPrice, 'MonthlyListPrice', setMonthlyListPrice, '₺', true)}
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[11px] text-text-secondary mb-1">Birim (TL)</label>
-                    <input
-                      type="number"
-                      value={unitPrice}
-                      onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
+
+                  <div className="border border-background-border rounded-lg p-2">
+                    <div className="text-xs font-semibold mb-2 text-text-secondary">USD Fiyatları</div>
+                    <div className="space-y-2">
+                      {renderPriceInput('Birim Fiyat (USD)', unitPriceUsd, 'UnitPriceUsd', setUnitPriceUsd, '$', true)}
+                      {renderPriceInput('Aylık Liste (USD)', monthlyListPriceUsd, 'MonthlyListPriceUsd', setMonthlyListPriceUsd, '$', true)}
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-[11px] text-text-secondary mb-1">Aylık Liste (EUR)</label>
-                    <input
-                      type="number"
-                      value={monthlyListPriceEur}
-                      onChange={(e) => setMonthlyListPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-text-secondary mb-1">Birim (EUR)</label>
-                    <input
-                      type="number"
-                      value={unitPriceEur}
-                      onChange={(e) => setUnitPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-text-secondary mb-1">Aylık Liste (USD)</label>
-                    <input
-                      type="number"
-                      value={monthlyListPriceUsd}
-                      onChange={(e) => setMonthlyListPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-[11px] text-text-secondary mb-1">Birim (USD)</label>
-                    <input
-                      type="number"
-                      value={unitPriceUsd}
-                      onChange={(e) => setUnitPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
+
+                  <div className="border border-background-border rounded-lg p-2">
+                    <div className="text-xs font-semibold mb-2 text-text-secondary">EUR Fiyatları</div>
+                    <div className="space-y-2">
+                      {renderPriceInput('Birim Fiyat (EUR)', unitPriceEur, 'UnitPriceEur', setUnitPriceEur, '€', true)}
+                      {renderPriceInput('Aylık Liste (EUR)', monthlyListPriceEur, 'MonthlyListPriceEur', setMonthlyListPriceEur, '€', true)}
+                    </div>
                   </div>
                 </div>
               </div>
@@ -992,104 +1155,63 @@ export default function InventoryDetailModal({
 
           {isNew ? (
             <>
-              <div className="border border-background-border rounded-lg p-2 xl:col-span-4">
-                <label className="block text-xs font-medium mb-2">Fiyatlandırma (TL)</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı *</label>
-                    <input
-                      type="number"
-                      value={monthlyListPrice}
-                      onChange={(e) => setMonthlyListPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-text-secondary mb-1">Birim Fiyat</label>
-                    <input
-                      type="number"
-                      value={unitPrice}
-                      onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
-                      disabled={isReadOnly}
-                      min="0"
-                      step="0.01"
-                      className="input w-full"
-                    />
-                  </div>
+              <div className="border border-background-border rounded-lg p-2 xl:col-span-12">
+                <div className="flex items-center justify-between mb-2">
+                  <label className="block text-xs font-medium">Fiyatlandırma</label>
+                  {activeRates && (
+                    <div className="text-xs text-text-secondary">
+                      Aktif Kur: $1 = ₺{activeRates.UsdRate.toFixed(2)} | €1 = ₺{activeRates.EurRate.toFixed(2)}
+                    </div>
+                  )}
                 </div>
-              </div>
-              <div className="border border-background-border rounded-lg p-2 xl:col-span-4">
-                <label className="block text-xs font-medium mb-2">Fiyatlandırma (EUR)</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı (EUR)</label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={monthlyListPriceEur}
-                        onChange={(e) => setMonthlyListPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
-                        disabled={isReadOnly}
-                        min="0"
-                        step="0.01"
-                        className="input w-full pr-8"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
+                
+                {isCalculating && (
+                  <div className="text-xs text-accent mb-2 animate-pulse">Hesaplanıyor...</div>
+                )}
+                
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <div className="border border-background-border rounded-lg p-2">
+                    <div className="text-xs font-semibold mb-2 text-text-secondary">TL Fiyatları</div>
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (TL) *</label>
+                        <input
+                          type="number"
+                          value={unitPrice}
+                          onChange={(e) => setUnitPrice(e.target.value === '' ? '' : Number(e.target.value))}
+                          disabled={isReadOnly}
+                          min="0"
+                          step="0.01"
+                          className="input w-full"
+                          placeholder="0.00"
+                        />
+                      </div>
+                      {renderPriceInput('Aylık Liste (TL)', monthlyListPrice, 'MonthlyListPrice', setMonthlyListPrice, '₺', true)}
                     </div>
                   </div>
-                  <div>
-                    <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (EUR)</label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={unitPriceEur}
-                        onChange={(e) => setUnitPriceEur(e.target.value === '' ? '' : Number(e.target.value))}
-                        disabled={isReadOnly}
-                        min="0"
-                        step="0.01"
-                        className="input w-full pr-8"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">€</span>
+
+                  <div className="border border-background-border rounded-lg p-2">
+                    <div className="text-xs font-semibold mb-2 text-text-secondary">USD Fiyatları</div>
+                    <div className="space-y-2">
+                      {renderPriceInput('Birim Fiyat (USD)', unitPriceUsd, 'UnitPriceUsd', setUnitPriceUsd, '$', true)}
+                      {renderPriceInput('Aylık Liste (USD)', monthlyListPriceUsd, 'MonthlyListPriceUsd', setMonthlyListPriceUsd, '$', true)}
+                    </div>
+                  </div>
+
+                  <div className="border border-background-border rounded-lg p-2">
+                    <div className="text-xs font-semibold mb-2 text-text-secondary">EUR Fiyatları</div>
+                    <div className="space-y-2">
+                      {renderPriceInput('Birim Fiyat (EUR)', unitPriceEur, 'UnitPriceEur', setUnitPriceEur, '€', true)}
+                      {renderPriceInput('Aylık Liste (EUR)', monthlyListPriceEur, 'MonthlyListPriceEur', setMonthlyListPriceEur, '€', true)}
                     </div>
                   </div>
                 </div>
-              </div>
-              <div className="border border-background-border rounded-lg p-2 xl:col-span-4">
-                <label className="block text-xs font-medium mb-2">Fiyatlandırma (USD)</label>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                  <div>
-                    <label className="block text-xs text-text-secondary mb-1">Aylık Liste Fiyatı (USD)</label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={monthlyListPriceUsd}
-                        onChange={(e) => setMonthlyListPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
-                        disabled={isReadOnly}
-                        min="0"
-                        step="0.01"
-                        className="input w-full pr-8"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">$</span>
-                    </div>
+                
+                {!activePreset && (
+                  <div className="mt-2 text-xs text-yellow-500 bg-yellow-900/20 p-2 rounded">
+                    Kiralama oranı tanımlanmamış, lütfen aylık fiyatları manuel giriniz.
                   </div>
-                  <div>
-                    <label className="block text-xs text-text-secondary mb-1">Birim Fiyat (USD)</label>
-                    <div className="relative">
-                      <input
-                        type="number"
-                        value={unitPriceUsd}
-                        onChange={(e) => setUnitPriceUsd(e.target.value === '' ? '' : Number(e.target.value))}
-                        disabled={isReadOnly}
-                        min="0"
-                        step="0.01"
-                        className="input w-full pr-8"
-                      />
-                      <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-text-secondary pointer-events-none">$</span>
-                    </div>
-                  </div>
-                </div>
+                )}
               </div>
             </>
           ) : null}

@@ -75,6 +75,11 @@ export interface InventorySubCategory {
   CategoryName?: string;
 }
 
+export interface Unit {
+  UnitId: number;
+  UnitName: string;
+}
+
 export interface Inventory {
   ItemId: number;
   ItemCode?: string;
@@ -92,6 +97,9 @@ export interface Inventory {
   UnitPriceEur?: number;
   MonthlyListPriceUsd?: number | null;
   UnitPriceUsd?: number | null;
+  Weight?: number | null;
+  UnitId?: number | null;
+  UnitName?: string | null;
   Categories?: MaterialCategory[];
   SubCategories?: SubCategory[];
   CreatedAt?: string;
@@ -261,6 +269,8 @@ export interface Contract {
   VatRate?: number;  // yüzde
   Currency?: CurrencyCode;
   Type?: ContractQuoteType;
+  /** Dil seçeneği (TR/EN) */
+  Language?: 'TR' | 'EN';
   /** Liste yanıtında API'den (GET /contracts) */
   CustomerName?: string;
   IsCompleted: boolean;
@@ -737,6 +747,8 @@ export interface Quote {
   VatRate?: number;  // yüzde
   Currency?: CurrencyCode;
   Type?: ContractQuoteType;
+  /** Dil seçeneği (TR/EN) */
+  Language?: 'TR' | 'EN';
   CreatedAt: string; // ISO 8601 format
   UpdatedAt: string; // ISO 8601 format
   ConvertedContractId?: number;

@@ -37,6 +37,7 @@ export interface CreateQuoteRequest {
   VatRate?: number;
   Currency?: 'TRY' | 'EUR' | 'USD';
   Type?: ContractQuoteType;
+  Language?: 'TR' | 'EN';
   details: CreateQuoteDetailRequest[];
 }
 
@@ -56,6 +57,7 @@ export interface UpdateQuoteRequest {
   Iskonto?: number;
   VatRate?: number;
   Currency?: 'TRY' | 'EUR' | 'USD';
+  Language?: 'TR' | 'EN';
   /** Mevcut teklif güncellemede de kalemleri güncellemek için */
   details?: CreateQuoteDetailRequest[];
 }

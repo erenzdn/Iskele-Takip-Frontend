@@ -146,6 +146,7 @@ export default function ContractDetailModal({
   const [contractCode, setContractCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
   const [contractType, setContractType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
+  const [language, setLanguage] = useState<'TR' | 'EN'>('TR');
   const isRentalContract = contractType === 'RENTAL';
 
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
@@ -313,6 +314,7 @@ export default function ContractDetailModal({
       setVatRate((source as { VatRate?: number }).VatRate ?? 20);
       setContractCode((source as { ContractCode?: string }).ContractCode ?? '');
       setCurrency((source as { Currency?: string }).Currency === 'EUR' ? 'EUR' : (source as { Currency?: string }).Currency === 'USD' ? 'USD' : 'TRY');
+      setLanguage((source as any).Language === 'EN' ? 'EN' : 'TR');
       if (!isNew) {
         setContractType(resolveContractQuoteType(source as Contract));
       }
@@ -884,6 +886,7 @@ export default function ContractDetailModal({
           VatRate: vatRate,
           Currency: currency,
           Type: contractType,
+          Language: language,
           details,
         };
 
@@ -946,6 +949,11 @@ export default function ContractDetailModal({
               : 'TRY';
         if (originalCurrency !== currency) {
           updateBody.Currency = currency;
+        }
+
+        const originalLanguage = (source as any)?.Language || 'TR';
+        if (originalLanguage !== language) {
+          updateBody.Language = language;
         }
 
         const originalCode = normalizeText(String((source as { ContractCode?: string } | null | undefined)?.ContractCode ?? ''));
@@ -1889,6 +1897,19 @@ export default function ContractDetailModal({
                   <option value="TRY">TRY (TL)</option>
                   <option value="EUR">EUR (€)</option>
                   <option value="USD">USD ($)</option>
+                </select>
+              </div>
+
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Dil</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TR">Türkçe</option>
+                  <option value="EN">English</option>
                 </select>
               </div>
               <div className="space-y-0.5">
