@@ -39,6 +39,7 @@ export default function InventoryPage() {
   const debouncedSearch = useDebouncedValue(searchText, 300);
   const [minAvailable, setMinAvailable] = useState<number | ''>('');
   const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
+  const [selectedLanguage, setSelectedLanguage] = useState<'tr' | 'en'>('tr');
   const [listLoading, setListLoading] = useState(false);
   const [categoriesReady, setCategoriesReady] = useState(false);
   const [subCategoryOptions, setSubCategoryOptions] = useState<string[]>([]);
@@ -136,9 +137,11 @@ export default function InventoryPage() {
       const matchesMin = minAvailable === '' || availableStock >= minAvailable;
       const matchesMax = maxAvailable === '' || availableStock <= maxAvailable;
 
-      return matchesSubCategory && matchesMin && matchesMax;
+      const matchesLanguage = selectedLanguage === 'tr' || (selectedLanguage === 'en' && Boolean(item.ItemNameEn));
+
+      return matchesSubCategory && matchesMin && matchesMax && matchesLanguage;
     });
-  }, [allInventory, selectedSubCategories, minAvailable, maxAvailable]);
+  }, [allInventory, selectedSubCategories, minAvailable, maxAvailable, selectedLanguage]);
 
   const selectAllFiltered = useCallback(() => {
     setSelectionMode(true);
@@ -364,6 +367,10 @@ export default function InventoryPage() {
           }
           handleOpenItemDetail(item, { startInEditMode: true });
         },
+        'scaffold.movements': (target) => {
+          const row = target as ScaffoldRowTarget;
+          navigate(`/inventory/${row.entityId}/movements`);
+        },
         'scaffold.delete': async (target) => {
           if (!canDelete) return;
           await inventoryService.deleteAsync(target.entityId);
@@ -402,9 +409,17 @@ export default function InventoryPage() {
     )
   );
 
-  const formatTry = (amount: number) => formatMoney(amount, 'TRY');
-  const formatEur = (amount: number) => formatMoney(amount, 'EUR');
-  const formatUsd = (amount: number) => formatMoney(amount, 'USD');
+  const formatMoneyCustom = (amount: number, currency: 'TRY' | 'EUR' | 'USD') => {
+    const formatted = new Intl.NumberFormat('tr-TR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+    const symbols = { TRY: '₺', EUR: '€', USD: '$' };
+    return `${formatted} ${symbols[currency]}`;
+  };
+  const formatTry = (amount: number) => formatMoneyCustom(amount, 'TRY');
+  const formatEur = (amount: number) => formatMoneyCustom(amount, 'EUR');
+  const formatUsd = (amount: number) => formatMoneyCustom(amount, 'USD');
 
   useEffect(() => {
     let cancelled = false;
@@ -512,6 +527,7 @@ export default function InventoryPage() {
                 setSelectedSubCategories(Array.from({ length: 6 }, () => ''));
                 setMinAvailable('');
                 setMaxAvailable('');
+                setSelectedLanguage('tr');
               }}
               className="btn-secondary py-1.5 px-3 text-xs"
             >
@@ -560,7 +576,18 @@ export default function InventoryPage() {
             </select>
           </div>
 
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-2">
+            <select
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value as 'tr' | 'en')}
+              className="input py-2 px-3 text-sm w-full"
+            >
+              <option value="tr">Türkçe</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+
+          <div className="lg:col-span-2">
             <input
               type="number"
               className="input py-2 px-3 text-sm w-full"
@@ -571,7 +598,7 @@ export default function InventoryPage() {
             />
           </div>
 
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-2">
             <input
               type="number"
               className="input py-2 px-3 text-sm w-full"
@@ -638,14 +665,12 @@ export default function InventoryPage() {
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Kodu</th>
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Adı</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ağırlık</th>
-                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ana Birim</th>
+                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover w-16">Ana Birim</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Aylık Liste (₺)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (₺)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim ($)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (€)</th>
-                  <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                    Hareketler
-                  </th>
+
                   <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Bilgisi</th>
                 </tr>
@@ -692,14 +717,11 @@ export default function InventoryPage() {
                       </td>
                       <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
                         <div className="font-medium text-text-primary leading-tight">
-                          {formatInventoryBilingualLabel(item.ItemName, item.ItemNameEn)}
-                        </div>
-                        <div className="text-text-secondary text-[10px] mt-0.5">
-                          Birim: {item.UnitPrice != null ? formatTry(item.UnitPrice) : formatTry(item.PurchasePrice ?? 0)}
+                          {selectedLanguage === 'tr' ? item.ItemName : (item.ItemNameEn || item.ItemName)}
                         </div>
                       </td>
-                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums">
-                        {item.Weight != null ? item.Weight : '-'}
+                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums whitespace-nowrap">
+                        {item.Weight != null ? `${item.Weight} kg` : '-'}
                       </td>
                       <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
                         {item.UnitName ?? '-'}
@@ -716,19 +738,7 @@ export default function InventoryPage() {
                       <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums">
                         {item.UnitPriceEur != null ? formatEur(item.UnitPriceEur) : '-'}
                       </td>
-                      <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">
-                        <button
-                          type="button"
-                          className="btn-secondary py-1 px-2 text-[11px]"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/inventory/${item.ItemId}/movements`);
-                          }}
-                          title="Ürün hareket dökümü"
-                        >
-                          Hareketler
-                        </button>
-                      </td>
+
                       <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">{statusBadge}</td>
                       <td className="py-0 px-1.5 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">
                         {item.CreatedByUserFullName || item.CreatedByUserName || '-'} • {formatShortDateTime(item.CreatedAt)}

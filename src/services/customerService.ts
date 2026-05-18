@@ -101,6 +101,12 @@ export const customerService = {
     customerListCache.clear();
   },
 
+  async createContactAsync(customerId: number, data: { Name: string; Phone?: string; Email?: string; Title?: string; IsPrimary: boolean }): Promise<Customer> {
+    const updatedCustomer = await apiClient.post<Customer>(`/customers/${customerId}/contacts`, data);
+    customerListCache.clear();
+    return updatedCustomer;
+  },
+
   async getAuditLogsByCustomerAsync(customerId: number): Promise<AuditLog[]> {
     return apiClient.get<AuditLog[]>(`/customers/${customerId}/audit-logs`);
   },

@@ -175,9 +175,9 @@ export default function SystemSettingsPage() {
       try {
         const preset = await inventoryService.getPricingPresetAsync();
         setActivePreset(preset);
-        setRentalRateTry(preset.RentalRateTry);
-        setRentalRateUsd(preset.RentalRateUsd);
-        setRentalRateEur(preset.RentalRateEur);
+        setRentalRateTry(preset.RentalRateTry != null ? preset.RentalRateTry * 100 : '');
+        setRentalRateUsd(preset.RentalRateUsd != null ? preset.RentalRateUsd * 100 : '');
+        setRentalRateEur(preset.RentalRateEur != null ? preset.RentalRateEur * 100 : '');
         setPresetNotes(preset.Notes || '');
       } catch (err) {
         console.warn('Kiralama oranları alınamadı:', err);
@@ -313,9 +313,9 @@ export default function SystemSettingsPage() {
     try {
       setBusy(true);
       await inventoryService.updatePricingPresetAsync({
-        RentalRateTry: Number(rentalRateTry),
-        RentalRateUsd: Number(rentalRateUsd),
-        RentalRateEur: Number(rentalRateEur),
+        RentalRateTry: Number(rentalRateTry) / 100,
+        RentalRateUsd: Number(rentalRateUsd) / 100,
+        RentalRateEur: Number(rentalRateEur) / 100,
         Notes: presetNotes,
       });
       toast.success('Kiralama oranları güncellendi');
@@ -677,7 +677,7 @@ export default function SystemSettingsPage() {
                   step="0.001"
                   min="0"
                 />
-                <span className="text-xs text-text-secondary">%{((Number(rentalRateTry) || 0) * 100).toFixed(1)}</span>
+                <span className="text-xs text-text-secondary">%{Number(rentalRateTry) || 0}</span>
               </div>
               <div>
                 <label className="block text-xs font-medium mb-1">USD Oranı</label>
@@ -689,7 +689,7 @@ export default function SystemSettingsPage() {
                   step="0.001"
                   min="0"
                 />
-                <span className="text-xs text-text-secondary">%{((Number(rentalRateUsd) || 0) * 100).toFixed(1)}</span>
+                <span className="text-xs text-text-secondary">%{Number(rentalRateUsd) || 0}</span>
               </div>
               <div>
                 <label className="block text-xs font-medium mb-1">EUR Oranı</label>
@@ -701,7 +701,7 @@ export default function SystemSettingsPage() {
                   step="0.001"
                   min="0"
                 />
-                <span className="text-xs text-text-secondary">%{((Number(rentalRateEur) || 0) * 100).toFixed(1)}</span>
+                <span className="text-xs text-text-secondary">%{Number(rentalRateEur) || 0}</span>
               </div>
             </div>
             

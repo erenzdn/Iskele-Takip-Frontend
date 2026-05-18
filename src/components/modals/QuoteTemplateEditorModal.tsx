@@ -101,9 +101,43 @@ export default function QuoteTemplateEditorModal({
   useEffect(() => {
     if (template) {
       setTemplateName(template.TemplateName);
+      if (editor && template.Content) {
+        preprocessAndSetContent(template.Content);
+      }
     }
     loadImages();
-  }, [template]);
+  }, [template, editor]);
+
+  const preprocessAndSetContent = async (content: any) => {
+    if (!editor || !content) return;
+
+    const clonedContent = JSON.parse(JSON.stringify(content));
+
+    const processNodes = async (node: any) => {
+      if (node.type === 'image' && node.attrs && node.attrs.src) {
+        const src = node.attrs.src;
+        if (src.startsWith('image:')) {
+          const imageId = src.replace('image:', '');
+          try {
+            const blob = await templateImageService.getByIdAsync(Number(imageId));
+            const url = URL.createObjectURL(blob);
+            node.attrs.src = url;
+            node.attrs['data-image-id'] = imageId;
+          } catch (error) {
+            console.error(`Failed to load image ${imageId}:`, error);
+          }
+        }
+      }
+      if (node.content && Array.isArray(node.content)) {
+        for (const child of node.content) {
+          await processNodes(child);
+        }
+      }
+    };
+
+    await processNodes(clonedContent);
+    editor.commands.setContent(clonedContent);
+  };
 
   const loadImages = async () => {
     try {
@@ -138,7 +172,14 @@ export default function QuoteTemplateEditorModal({
       await loadImages();
 
       if (editor) {
-        editor.chain().focus().setImage({ src: `image:${response.ImageId}` }).run();
+        try {
+          const blob = await templateImageService.getByIdAsync(response.ImageId);
+          const url = URL.createObjectURL(blob);
+          editor.chain().focus().setImage({ src: url, 'data-image-id': response.ImageId.toString() }).run();
+        } catch (error) {
+          console.error('Failed to load uploaded image:', error);
+          editor.chain().focus().setImage({ src: `image:${response.ImageId}` }).run();
+        }
       }
 
       if (fileInputRef.current) {
@@ -151,9 +192,16 @@ export default function QuoteTemplateEditorModal({
     }
   };
 
-  const insertImage = (imageId: number) => {
+  const insertImage = async (imageId: number) => {
     if (!editor) return;
-    editor.chain().focus().setImage({ src: `image:${imageId}` }).run();
+    try {
+      const blob = await templateImageService.getByIdAsync(imageId);
+      const url = URL.createObjectURL(blob);
+      editor.chain().focus().setImage({ src: url, 'data-image-id': imageId.toString() }).run();
+    } catch (error) {
+      console.error('Failed to load image:', error);
+      editor.chain().focus().setImage({ src: `image:${imageId}` }).run();
+    }
     setSelectedImageId(null);
   };
 
@@ -168,11 +216,29 @@ export default function QuoteTemplateEditorModal({
     try {
       setIsBusy(true);
       const content = editor.getJSON();
+      
+      const postprocessNodes = (node: any) => {
+        if (node.type === 'image' && node.attrs) {
+          const imageId = node.attrs['data-image-id'];
+          if (imageId) {
+            node.attrs.src = `image:${imageId}`;
+            delete node.attrs['data-image-id'];
+          }
+        }
+        if (node.content && Array.isArray(node.content)) {
+          for (const child of node.content) {
+            postprocessNodes(child);
+          }
+        }
+      };
+
+      const clonedContent = JSON.parse(JSON.stringify(content));
+      postprocessNodes(clonedContent);
 
       if (isNew) {
         const response = await quoteTemplateService.createAsync({
           TemplateName: templateName,
-          Content: content,
+          Content: clonedContent,
           IsDefault: false,
         });
         if (onSave) {
@@ -182,7 +248,7 @@ export default function QuoteTemplateEditorModal({
       } else if (template) {
         await quoteTemplateService.updateAsync(template.TemplateId, {
           TemplateName: templateName,
-          Content: content,
+          Content: clonedContent,
         });
         toast.success('Teklif şablonu başarıyla güncellendi!');
       }
@@ -242,6 +308,8 @@ export default function QuoteTemplateEditorModal({
   if (!editor) {
     return null;
   }
+
+  const isTableActive = editor && editor.can().deleteTable();
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
@@ -434,6 +502,95 @@ export default function QuoteTemplateEditorModal({
                 Malzeme Tablosu
               </button>
             </div>
+
+            <div className="w-px bg-background-border mx-1" />
+
+            <button
+              onClick={() => editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run()}
+              className="btn-secondary text-sm px-3 py-1"
+              title="Boş Tablo Ekle"
+            >
+              ➕ Boş Tablo Ekle
+            </button>
+
+              <div className="flex flex-wrap gap-1 bg-background-elevated p-1 rounded-input border border-background-border">
+                <span className="text-xs text-text-secondary self-center px-1">Tablo:</span>
+                <button
+                  onClick={() => editor.chain().focus().addColumnBefore().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Sola Sütun Ekle"
+                >
+                  +Sütun (Sol)
+                </button>
+                <button
+                  onClick={() => editor.chain().focus().addColumnAfter().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Sağa Sütun Ekle"
+                >
+                  +Sütun (Sağ)
+                </button>
+                <button
+                  onClick={() => editor.chain().focus().addRowBefore().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Üste Satır Ekle"
+                >
+                  +Satır (Üst)
+                </button>
+                <button
+                  onClick={() => editor.chain().focus().addRowAfter().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Alta Satır Ekle"
+                >
+                  +Satır (Alt)
+                </button>
+                <div className="w-px bg-background-border mx-0.5" />
+                <button
+                  onClick={() => editor.chain().focus().deleteColumn().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 text-red-500 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Sütunu Sil"
+                >
+                  -Sütun
+                </button>
+                <button
+                  onClick={() => editor.chain().focus().deleteRow().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 text-red-500 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Satırı Sil"
+                >
+                  -Satır
+                </button>
+                <div className="w-px bg-background-border mx-0.5" />
+                <button
+                  onClick={() => editor.chain().focus().mergeCells().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Hücreleri Birleştir"
+                >
+                  Birleştir
+                </button>
+                <button
+                  onClick={() => editor.chain().focus().splitCell().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Hücreyi Ayrıştır"
+                >
+                  Ayrıştır
+                </button>
+                <div className="w-px bg-background-border mx-0.5" />
+                <button
+                  onClick={() => editor.chain().focus().deleteTable().run()}
+                  disabled={!isTableActive}
+                  className={`btn-secondary text-xs px-2 py-0.5 text-red-500 ${!isTableActive ? 'opacity-50 cursor-not-allowed' : ''}`}
+                  title="Tabloyu Sil"
+                >
+                  🗑️ Sil
+                </button>
+              </div>
           </div>
 
           <div className="card p-4 min-h-[400px]">

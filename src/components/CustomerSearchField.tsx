@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CaretDownIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
+import { CaretDownIcon, MagnifyingGlassIcon, XIcon } from '@phosphor-icons/react';
 import { Customer } from '../models';
 import { normalizeText } from '../utils/validation';
 
@@ -36,6 +36,7 @@ export default function CustomerSearchField({
 }: CustomerSearchFieldProps) {
   const [inputValue, setInputValue] = useState('');
   const [open, setOpen] = useState(false);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
   const rootRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const blurTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -104,6 +105,7 @@ export default function CustomerSearchField({
   const handleInputChange = (raw: string) => {
     const v = normalizeText(raw);
     setInputValue(v);
+    setFocusedIndex(-1); // Reset focus on search
     if (!v.trim()) {
       onChange('');
       return;
@@ -164,6 +166,21 @@ export default function CustomerSearchField({
       >
         <CaretDownIcon size={18} weight="bold" aria-hidden />
       </button>
+      {inputValue && (
+        <button
+          type="button"
+          tabIndex={-1}
+          className="absolute inset-y-0 right-8 z-[1] my-auto flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+          aria-label="Temizle"
+          onClick={() => {
+            setInputValue('');
+            onChange('');
+            setOpen(false);
+          }}
+        >
+          <XIcon size={16} weight="bold" aria-hidden />
+        </button>
+      )}
       <input
         ref={inputRef}
         id={id}
@@ -178,7 +195,35 @@ export default function CustomerSearchField({
         onBlur={() => {
           blurTimerRef.current = setTimeout(() => setOpen(false), 180);
         }}
-        className="input w-full pl-8 pr-10 text-sm py-1.5"
+        onKeyDown={(e) => {
+          if (!open) {
+            if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+              setOpen(true);
+            }
+            return;
+          }
+
+          switch (e.key) {
+            case 'ArrowDown':
+              e.preventDefault();
+              setFocusedIndex((prev) => (prev < listItems.length - 1 ? prev + 1 : prev));
+              break;
+            case 'ArrowUp':
+              e.preventDefault();
+              setFocusedIndex((prev) => (prev > 0 ? prev - 1 : 0));
+              break;
+            case 'Enter':
+              e.preventDefault();
+              if (focusedIndex >= 0 && focusedIndex < listItems.length) {
+                pickCustomer(listItems[focusedIndex]);
+              }
+              break;
+            case 'Escape':
+              setOpen(false);
+              break;
+          }
+        }}
+        className="input w-full pl-8 pr-16 text-sm py-1.5"
         placeholder="Listeyi açıp kaydırın veya yazarak filtreleyin…"
         aria-label="Müşteri ara"
         aria-expanded={showPanel}
@@ -200,11 +245,15 @@ export default function CustomerSearchField({
           {listItems.length === 0 ? (
             <li className="px-3 py-2 text-sm text-text-secondary">{emptyMessage}</li>
           ) : (
-            listItems.map((c) => (
-              <li key={c.CustomerId} role="option">
+            listItems.map((c, index) => (
+              <li key={c.CustomerId} role="option" aria-selected={focusedIndex === index}>
                 <button
                   type="button"
-                  className="w-full text-left px-3 py-2 text-sm hover:bg-primary/15 focus:bg-primary/15 focus:outline-none transition-colors"
+                  className={`w-full text-left py-2 text-sm focus:outline-none transition-colors ${
+                    focusedIndex === index
+                      ? 'bg-background-secondary text-text-primary border-l-4 border-primary pl-2'
+                      : 'hover:bg-primary/10 text-text-primary pl-3'
+                  }`}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => pickCustomer(c)}
                 >

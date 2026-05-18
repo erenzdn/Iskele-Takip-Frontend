@@ -12,7 +12,6 @@ export const CustomImage = Image.extend({
         parseHTML: (element) => {
           const src = element.getAttribute('src');
           const imageId = element.getAttribute('data-image-id');
-          // If it has data-image-id, return image:ImageId format
           if (imageId) {
             return `image:${imageId}`;
           }
@@ -23,12 +22,9 @@ export const CustomImage = Image.extend({
             return {};
           }
 
-          // If it's in image:ImageId format, convert to API URL with token
           if (attributes.src.startsWith('image:')) {
             const imageId = attributes.src.replace('image:', '');
             const token = localStorage.getItem('auth_token');
-            // Use token in URL as query parameter (backend should support this)
-            // Or use a data attribute and handle it with JavaScript
             const imageUrl = token
               ? `${BASE_URL}/template-images/${imageId}?token=${encodeURIComponent(token)}`
               : `${BASE_URL}/template-images/${imageId}`;
@@ -43,6 +39,18 @@ export const CustomImage = Image.extend({
           return {
             src: attributes.src,
             alt: attributes.alt || '',
+          };
+        },
+      },
+      'data-image-id': {
+        default: null,
+        parseHTML: (element) => element.getAttribute('data-image-id'),
+        renderHTML: (attributes) => {
+          if (!attributes['data-image-id']) {
+            return {};
+          }
+          return {
+            'data-image-id': attributes['data-image-id'],
           };
         },
       },

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { CheckIcon, ClipboardIcon, CopySimpleIcon, XIcon } from '@phosphor-icons/react';
+import { CheckIcon, ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -118,6 +118,14 @@ export default function QuoteDetailModal({
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
 
+  // Hızlı merkez yetkilisi oluşturma
+  const [showCreateContactModal, setShowCreateContactModal] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactPhone, setNewContactPhone] = useState('');
+  const [newContactEmail, setNewContactEmail] = useState('');
+  const [newContactTitle, setNewContactTitle] = useState('');
+  const [isCreatingContact, setIsCreatingContact] = useState(false);
+
   // Sözleşmeye dönüştürme — late binding: yalnızca varsayılan depo veya ürün bazlı atama (global mod kaldırıldı)
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -204,6 +212,51 @@ export default function QuoteDetailModal({
     setSelectedCustomerId(value);
     setSelectedAuthorizedContactId('');
     setAuthorizedContactError(null);
+  };
+
+  const handleCreateContact = async () => {
+    if (!selectedCustomerId) return;
+    if (!newContactName.trim()) {
+      toast.error('Ad Soyad zorunludur.');
+      return;
+    }
+
+    try {
+      setIsCreatingContact(true);
+      const updatedCustomer = await customerService.createContactAsync(Number(selectedCustomerId), {
+        Name: newContactName.trim(),
+        Phone: newContactPhone.trim() || undefined,
+        Email: newContactEmail.trim() || undefined,
+        Title: newContactTitle.trim() || undefined,
+        IsPrimary: true,
+      });
+
+      // State'i güncelle
+      setCustomers((prev) =>
+        prev.map((c) => (c.CustomerId === updatedCustomer.CustomerId ? updatedCustomer : c))
+      );
+
+      // Yeni yetkiliyi otomatik seç
+      const newContact = updatedCustomer.AuthorizedContacts?.find(
+        (c) => c.Name === newContactName.trim() && c.IsPrimary
+      );
+      if (newContact) {
+        setSelectedAuthorizedContactId(newContact.CustomerAuthorizedContactId ?? '');
+      }
+
+      toast.success('Merkez yetkilisi başarıyla oluşturuldu.');
+      setShowCreateContactModal(false);
+      // Formu temizle
+      setNewContactName('');
+      setNewContactPhone('');
+      setNewContactEmail('');
+      setNewContactTitle('');
+    } catch (error) {
+      console.error('Create contact error:', error);
+      toast.error(getApiErrorMessage(error) || 'Yetkili oluşturulamadı.');
+    } finally {
+      setIsCreatingContact(false);
+    }
   };
 
 
@@ -1723,33 +1776,45 @@ export default function QuoteDetailModal({
                   <label className="block text-xs font-medium text-text-primary">
                     Merkez Yetkili *
                   </label>
-                  {authorizedContactsLoading ? (
-                    <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
-                  ) : authorizedContacts.length > 0 ? (
-                    <select
-                      value={selectedAuthorizedContactId}
-                      onChange={(e) => {
-                        setSelectedAuthorizedContactId(Number(e.target.value) || '');
-                        setAuthorizedContactError(null);
-                      }}
-                      disabled={isReadOnly}
-                      className="input w-full text-sm py-1.5"
-                    >
-                      <option value="">Yetkili seçin</option>
-                      {authorizedContacts.map((contact) => (
-                        <option
-                          key={contact.CustomerAuthorizedContactId}
-                          value={contact.CustomerAuthorizedContactId}
-                        >
-                          {formatAuthorizedContactLabel(contact)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="input w-full text-red-300 bg-background-secondary text-sm py-2">
-                      Bu müşteri için yetkili tanımlı değil
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {authorizedContactsLoading ? (
+                      <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
+                    ) : authorizedContacts.length > 0 ? (
+                      <select
+                        value={selectedAuthorizedContactId}
+                        onChange={(e) => {
+                          setSelectedAuthorizedContactId(Number(e.target.value) || '');
+                          setAuthorizedContactError(null);
+                        }}
+                        disabled={isReadOnly}
+                        className="input flex-1 text-sm py-1.5"
+                      >
+                        <option value="">Yetkili seçin</option>
+                        {authorizedContacts.map((contact) => (
+                          <option
+                            key={contact.CustomerAuthorizedContactId}
+                            value={contact.CustomerAuthorizedContactId}
+                          >
+                            {formatAuthorizedContactLabel(contact)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="input flex-1 text-red-300 bg-background-secondary text-sm py-2">
+                        Bu müşteri için yetkili tanımlı değil
+                      </div>
+                    )}
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateContactModal(true)}
+                        className="btn-secondary p-1.5 flex-shrink-0"
+                        title="Merkez Yetkilisi Ekle"
+                      >
+                        <Plus size={16} weight="bold" />
+                      </button>
+                    )}
+                  </div>
                   {authorizedContactError && (
                     <p className="text-xs text-red-300">{authorizedContactError}</p>
                   )}
@@ -2295,10 +2360,9 @@ export default function QuoteDetailModal({
                     </tr>
                   ) : (
                     quoteItems.map((item, rowIndex) => {
-                      const itemCode =
-                        item.kind === 'inventory'
-                          ? availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ?? '—'
-                          : '—';
+                      const invItem = item.kind === 'inventory' ? availableItems.find((i) => i.ItemId === item.ItemId) : null;
+                      const itemCode = invItem?.ItemCode ?? '—';
+                      const itemEnName = invItem?.ItemNameEn;
                       const lineTotal = getLineTotal(item);
                       const justAdded =
                         item.kind === 'inventory' ? lastAddedItemIds.includes(item.ItemId) : false;
@@ -2314,30 +2378,44 @@ export default function QuoteDetailModal({
                           <td className="px-3 py-2 font-medium">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
-                                formatInventoryLineBilingualLabel(
-                                  item.ItemNameOverride ?? item.ItemName,
-                                  item.ItemNameEn,
-                                  item.Item
+                                language === 'EN' ? (
+                                  itemEnName ? (
+                                    item.ItemNameOverride ?? itemEnName
+                                  ) : (
+                                    <span>
+                                      {item.ItemNameOverride ?? item.ItemName}{' '}
+                                      <span className="text-yellow-500 text-xs">(Bu ürünün İngilizce adı yoktur)</span>
+                                    </span>
+                                  )
+                                ) : (
+                                  item.ItemNameOverride ?? item.ItemName
                                 )
                               ) : (
                                 <div className="flex items-center gap-2 min-w-[280px]">
-                                  <input
-                                    type="text"
-                                    value={item.ItemNameOverride ?? item.ItemName}
-                                    onChange={(e) => {
-                                      const v = e.target.value;
-                                      setQuoteItems((prev) =>
-                                        prev.map((x) =>
-                                          x.kind === 'inventory' && x.ItemId === item.ItemId
-                                            ? { ...x, ItemNameOverride: v }
-                                            : x
-                                        )
-                                      );
-                                    }}
-                                    className="input w-full py-1 text-sm"
-                                    aria-label="Ürün Adı"
-                                    placeholder={item.ItemName}
-                                  />
+                                  <div className="flex-1 relative">
+                                    <input
+                                      type="text"
+                                      value={item.ItemNameOverride ?? (language === 'EN' ? (itemEnName || item.ItemName) : item.ItemName)}
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setQuoteItems((prev) =>
+                                          prev.map((x) =>
+                                            x.kind === 'inventory' && x.ItemId === item.ItemId
+                                              ? { ...x, ItemNameOverride: v }
+                                              : x
+                                          )
+                                        );
+                                      }}
+                                      className="input w-full py-1 text-sm"
+                                      aria-label="Ürün Adı"
+                                      placeholder={item.ItemName}
+                                    />
+                                    {language === 'EN' && !itemEnName && (
+                                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-yellow-500 text-xs pointer-events-none">
+                                        (İngilizce adı yoktur)
+                                      </span>
+                                    )}
+                                  </div>
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -2944,6 +3022,85 @@ export default function QuoteDetailModal({
           ]);
         }}
       />
+      {showCreateContactModal &&
+        createPortal(
+          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
+            <div className="bg-background-panel rounded-panel shadow-xl w-full max-w-md border border-background-border">
+              <div className="flex items-center justify-between p-4 border-b border-background-border">
+                <h3 className="text-sm font-medium text-text-primary">Yeni Merkez Yetkilisi Ekle</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateContactModal(false)}
+                  className="text-text-secondary hover:text-text-primary"
+                >
+                  <XIcon size={16} />
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">Ad Soyad *</label>
+                  <input
+                    type="text"
+                    value={newContactName}
+                    onChange={(e) => setNewContactName(e.target.value)}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="Ad Soyad"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">Telefon</label>
+                  <input
+                    type="text"
+                    value={newContactPhone}
+                    onChange={(e) => setNewContactPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="Telefon"
+                    maxLength={11}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">E-posta</label>
+                  <input
+                    type="email"
+                    value={newContactEmail}
+                    onChange={(e) => setNewContactEmail(e.target.value)}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="E-posta"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">Ünvan</label>
+                  <input
+                    type="text"
+                    value={newContactTitle}
+                    onChange={(e) => setNewContactTitle(e.target.value)}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="Ünvan"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 p-4 border-t border-background-border">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateContactModal(false)}
+                  className="btn-secondary text-sm"
+                  disabled={isCreatingContact}
+                >
+                  İptal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateContact}
+                  className="btn-primary text-sm"
+                  disabled={isCreatingContact || !newContactName.trim()}
+                >
+                  {isCreatingContact ? 'Kaydediliyor...' : 'Kaydet'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
       {isTemplateEditorOpen &&
         createPortal(
           <QuoteTemplateEditorModal

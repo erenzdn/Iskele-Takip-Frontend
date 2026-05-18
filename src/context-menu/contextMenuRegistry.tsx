@@ -95,6 +95,12 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       ],
     },
     {
+      id: 'movements',
+      label: 'Hareketler',
+      icon: <ClockIcon size={iconSize} />,
+      handlerKey: 'scaffold.movements',
+    },
+    {
       id: 'status',
       label: 'Durum Degistir',
       icon: <CircleIcon size={iconSize} />,
