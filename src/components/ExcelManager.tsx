@@ -470,7 +470,7 @@ export default function ExcelManager({
         document.body
       )}
 
-      {errorModal && (
+      {errorModal && createPortal(
         <div
           className={`fixed inset-0 bg-black/50 flex items-center justify-center p-4 ${modalZClass}`}
           role="dialog"
@@ -627,7 +627,8 @@ export default function ExcelManager({
               )}
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
