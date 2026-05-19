@@ -337,10 +337,22 @@ export default function InventoryPage() {
       return;
     }
 
-    await Promise.all(selectedItemIds.map((id) => inventoryService.deleteAsync(id)));
-    toast.success(`${selectedItemIds.length} kayit silindi.`);
-    clearSelection();
-    await loadData();
+    const confirmDelete = window.confirm(
+      `${selectedItemIds.length} adet seçili malzemeyi silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await Promise.all(selectedItemIds.map((id) => inventoryService.deleteAsync(id)));
+      toast.success(`${selectedItemIds.length} kayit silindi.`);
+      clearSelection();
+      await loadData();
+    } catch (error) {
+      console.error('Toplu silme hatası:', error);
+      toast.error('Bazı malzemeler silinemedi (aktif sözleşmelerde kullanılıyor olabilir).');
+      clearSelection();
+      await loadData();
+    }
   }, [clearSelection, loadData, selectedItemIds]);
 
   useContextMenuHandlers(
@@ -452,6 +464,13 @@ export default function InventoryPage() {
             <button onClick={clearSelection} className="btn-secondary py-2 px-3 text-sm">
               Secimi Temizle ({selectedItemIds.length})
             </button>
+            <button
+              onClick={selectAllFiltered}
+              disabled={filteredInventory.length === 0}
+              className="btn-secondary py-2 px-3 text-sm disabled:opacity-50"
+            >
+              Tümünü Seç
+            </button>
             {canUpdate ? (
               <>
                 <button
@@ -480,7 +499,15 @@ export default function InventoryPage() {
               </button>
             ) : null}
           </>
-        ) : null}
+        ) : (
+          <button
+            onClick={selectAllFiltered}
+            disabled={filteredInventory.length === 0}
+            className="btn-secondary py-2 px-3 text-sm disabled:opacity-50"
+          >
+            Tümünü Seç
+          </button>
+        )}
         <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">
           Yenile
         </button>
@@ -493,7 +520,19 @@ export default function InventoryPage() {
         </button>
       </>
     ),
-    [applyBulkDelete, applyBulkStatus, canDelete, canUpdate, loadData, selectedItemIds.length]
+    [
+      selectedItemIds.length,
+      clearSelection,
+      selectAllFiltered,
+      filteredInventory,
+      canUpdate,
+      applyBulkStatus,
+      canDelete,
+      applyBulkDelete,
+      loadData,
+      handleAddCategory,
+      handleAddNewItem,
+    ]
   );
 
   useEffect(() => {
@@ -658,8 +697,23 @@ export default function InventoryPage() {
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   {selectionMode ? (
-                    <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                      Sec
+                    <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover w-10">
+                      <input
+                        type="checkbox"
+                        checked={
+                          filteredInventory.length > 0 &&
+                          filteredInventory.every((item) => selectedItemIds.includes(item.ItemId))
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            selectAllFiltered();
+                          } else {
+                            clearSelection();
+                          }
+                        }}
+                        className="w-3.5 h-3.5 align-middle cursor-pointer"
+                        title="Tümünü Seç / Seçimi Kaldır"
+                      />
                     </th>
                   ) : null}
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Kodu</th>

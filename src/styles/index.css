@@ -227,3 +227,48 @@
   font-weight: 600;
 }
 
+/* Sınırları Gizlenmiş (Borderless) Tablo Izgara Layoutu */
+.ProseMirror table.border-none,
+.ProseMirror table.border-none td,
+.ProseMirror table.border-none th {
+  border: none !important;
+}
+
+/* Editör içinde sınırları gizlenmiş hücrelerin yerini görebilmek için hafif noktalı çerçeve */
+.ProseMirror table.border-none td,
+.ProseMirror table.border-none th {
+  outline: 1px dotted rgba(156, 163, 175, 0.4) !important;
+}
+
+/* Görsel Konumlandırma ve Hizalama (Float ve Blok Kontrolleri) */
+.ProseMirror [data-align="left"] {
+  float: left !important;
+  margin-right: 1.5rem !important;
+  margin-bottom: 0.5rem !important;
+  display: inline-block !important;
+  clear: none !important;
+}
+
+.ProseMirror [data-align="right"] {
+  float: right !important;
+  margin-left: 1.5rem !important;
+  margin-bottom: 0.5rem !important;
+  display: inline-block !important;
+  clear: none !important;
+}
+
+.ProseMirror [data-align="center"] {
+  display: block !important;
+  margin-left: auto !important;
+  margin-right: auto !important;
+  float: none !important;
+  clear: both !important;
+}
+
+.ProseMirror [data-align="none"] {
+  display: inline-block !important;
+  float: none !important;
+  clear: both !important;
+}
+
+

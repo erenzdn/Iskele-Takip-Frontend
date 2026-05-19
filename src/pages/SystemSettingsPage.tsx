@@ -9,6 +9,8 @@ import {
   SunIcon,
   WarningIcon,
   ShieldCheckIcon,
+  CurrencyCircleDollar,
+  Gear,
 } from '@phosphor-icons/react';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import { adminService } from '../services/adminService';
@@ -73,9 +75,12 @@ function formatTrDateTime(raw?: unknown) {
   }).format(dt);
 }
 
+type SettingsTab = 'general' | 'finance' | 'system';
+
 export default function SystemSettingsPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = isAdminUser(user);
+  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
 
@@ -389,7 +394,52 @@ export default function SystemSettingsPage() {
         </div>
       )}
 
-      {/* Yazılım Güncelleme Bölümü */}
+      <div className="flex flex-col md:flex-row gap-6">
+        {/* Sol Menü (Tabs) */}
+        <div className="w-full md:w-64 flex-shrink-0">
+          <div className="card p-2 space-y-1 sticky top-6">
+            <button
+              onClick={() => setActiveTab('general')}
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
+                activeTab === 'general'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
+              }`}
+            >
+              <InfoIcon size={18} />
+              Genel Ayarlar
+            </button>
+            <button
+              onClick={() => setActiveTab('finance')}
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
+                activeTab === 'finance'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
+              }`}
+            >
+              <CurrencyCircleDollar size={18} />
+              Finansal Ayarlar
+            </button>
+            <button
+              onClick={() => setActiveTab('system')}
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
+                activeTab === 'system'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
+              }`}
+            >
+              <Gear size={18} />
+              Sistem ve Bakım
+            </button>
+          </div>
+        </div>
+
+        {/* İçerik Alanı */}
+        <div className="flex-1 min-w-0">
+
+          {activeTab === 'system' && (
+            <>
+              {/* Yazılım Güncelleme Bölümü */}
       <div className={`card mb-6 overflow-hidden relative transition-all duration-500 ${
         (updateStatus === 'available' || updateStatus === 'downloaded') 
           ? 'border-error/50 shadow-[0_0_15px_rgba(239,68,68,0.1)] ring-1 ring-error/20' 
@@ -526,7 +576,11 @@ export default function SystemSettingsPage() {
           </div>
         </div>
       </div>
+            </>
+          )}
 
+          {activeTab === 'general' && (
+            <>
       <div className="card mb-6">
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div className="min-w-[260px]">
@@ -578,7 +632,11 @@ export default function SystemSettingsPage() {
           </div>
         </div>
       </div>
+            </>
+          )}
 
+          {activeTab === 'finance' && (
+            <>
       {/* Döviz Kuru Yönetimi */}
       <div className="card mb-6">
         <div className="flex items-start justify-between gap-6 flex-wrap">
@@ -746,7 +804,11 @@ export default function SystemSettingsPage() {
           </div>
         </div>
       </div>
+            </>
+          )}
 
+          {activeTab === 'general' && (
+            <>
       {/* Birim Tanımları */}
       <div className="card mb-6">
         <div className="flex items-start justify-between gap-6 flex-wrap">
@@ -817,8 +879,12 @@ export default function SystemSettingsPage() {
           </div>
         </div>
       </div>
+            </>
+          )}
 
-      <div className="card">
+          {activeTab === 'system' && (
+            <>
+      <div className="card mb-6">
         <div className="flex items-start justify-between gap-6 flex-wrap">
           <div className="min-w-[260px]">
             <div className="flex items-center gap-2 mb-2">
@@ -856,6 +922,11 @@ export default function SystemSettingsPage() {
               {busy ? 'Yedek alınıyor...' : 'Manuel Yedek Al'}
             </button>
           </div>
+        </div>
+      </div>
+            </>
+          )}
+
         </div>
       </div>
 

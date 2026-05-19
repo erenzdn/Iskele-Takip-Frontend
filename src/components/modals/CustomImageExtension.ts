@@ -1,9 +1,10 @@
-import Image from '@tiptap/extension-image';
+import ImageResize from 'tiptap-extension-resize-image';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
 // Custom Image extension that handles image:ImageId format
-export const CustomImage = Image.extend({
+export const CustomImage = ImageResize.extend({
+  draggable: true,
   addAttributes() {
     return {
       ...this.parent?.(),
@@ -57,9 +58,37 @@ export const CustomImage = Image.extend({
       alt: {
         default: null,
       },
+      align: {
+        default: 'none',
+        parseHTML: (element) => element.getAttribute('data-align') || element.style.float || 'none',
+        renderHTML: (attributes) => {
+          if (attributes.align === 'left') {
+            return {
+              'data-align': 'left',
+              style: 'float: left; margin-right: 1.5rem; margin-bottom: 0.5rem;',
+            };
+          }
+          if (attributes.align === 'right') {
+            return {
+              'data-align': 'right',
+              style: 'float: right; margin-left: 1.5rem; margin-bottom: 0.5rem;',
+            };
+          }
+          if (attributes.align === 'center') {
+            return {
+              'data-align': 'center',
+              style: 'display: block; margin-left: auto; margin-right: auto; clear: both;',
+            };
+          }
+          return {
+            'data-align': 'none',
+            style: 'display: inline-block; clear: both;',
+          };
+        },
+      },
     };
   },
 }).configure({
   allowBase64: true,
-  inline: false,
+  inline: true,
 });

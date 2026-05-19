@@ -109,6 +109,13 @@ export default function ExcelManager({
   } | null>(null);
   const [importInfoModalType, setImportInfoModalType] = useState<ExcelModuleType | null>(null);
 
+  // Otomatik hesaplama oranları state'leri
+  const [usdRate, setUsdRate] = useState<string>('');
+  const [eurRate, setEurRate] = useState<string>('');
+  const [rentalRateTry, setRentalRateTry] = useState<string>('');
+  const [rentalRateUsd, setRentalRateUsd] = useState<string>('');
+  const [rentalRateEur, setRentalRateEur] = useState<string>('');
+
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const runExport = useCallback(async () => {
@@ -148,6 +155,13 @@ export default function ExcelManager({
       try {
         const formData = new FormData();
         formData.append('file', file);
+        if (type === 'inventory') {
+          if (usdRate) formData.append('usdRate', usdRate);
+          if (eurRate) formData.append('eurRate', eurRate);
+          if (rentalRateTry) formData.append('rentalRateTry', rentalRateTry);
+          if (rentalRateUsd) formData.append('rentalRateUsd', rentalRateUsd);
+          if (rentalRateEur) formData.append('rentalRateEur', rentalRateEur);
+        }
 
         // mode query parametresi eklendi
         const data = await apiClient.postFormData<ExcelImportResponse>(
@@ -208,7 +222,7 @@ export default function ExcelManager({
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
-    [canImport, type, onImportSuccess]
+    [canImport, type, onImportSuccess, usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur]
   );
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -357,6 +371,68 @@ export default function ExcelManager({
               <div className="rounded-md border border-background-border bg-background-muted/30 p-3 text-text-secondary">
                 {importInfoChecklist}
               </div>
+              {type === 'inventory' && (
+                <div className="grid grid-cols-2 gap-3 border border-background-border rounded-md p-3 bg-background-muted/10">
+                  <h4 className="col-span-2 font-semibold text-text-primary text-xs">
+                    Otomatik Hesaplama Oranları (Opsiyonel)
+                  </h4>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold text-text-secondary">Dolar Kuru (USD)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Örn: 32.45"
+                      value={usdRate}
+                      onChange={(e) => setUsdRate(e.target.value)}
+                      className="input text-xs py-1 px-2 border border-background-border rounded bg-background-panel"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold text-text-secondary">Euro Kuru (EUR)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Örn: 35.12"
+                      value={eurRate}
+                      onChange={(e) => setEurRate(e.target.value)}
+                      className="input text-xs py-1 px-2 border border-background-border rounded bg-background-panel"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold text-text-secondary">Kiralama Çarpanı (TL %)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Örn: 0.05"
+                      value={rentalRateTry}
+                      onChange={(e) => setRentalRateTry(e.target.value)}
+                      className="input text-xs py-1 px-2 border border-background-border rounded bg-background-panel"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1">
+                    <label className="text-[11px] font-bold text-text-secondary">Kiralama Çarpanı (USD %)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Örn: 0.04"
+                      value={rentalRateUsd}
+                      onChange={(e) => setRentalRateUsd(e.target.value)}
+                      className="input text-xs py-1 px-2 border border-background-border rounded bg-background-panel"
+                    />
+                  </div>
+                  <div className="flex flex-col gap-1 col-span-2">
+                    <label className="text-[11px] font-bold text-text-secondary">Kiralama Çarpanı (EUR %)</label>
+                    <input
+                      type="number"
+                      step="any"
+                      placeholder="Örn: 0.04"
+                      value={rentalRateEur}
+                      onChange={(e) => setRentalRateEur(e.target.value)}
+                      className="input text-xs py-1 px-2 border border-background-border rounded bg-background-panel"
+                    />
+                  </div>
+                </div>
+              )}
               {customerTaxIdNote && (
                 <div className="rounded-md border border-background-border bg-background-muted/30 p-3 text-text-secondary">
                   {customerTaxIdNote}

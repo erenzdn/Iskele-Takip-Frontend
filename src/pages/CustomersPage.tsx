@@ -298,13 +298,19 @@ export default function CustomersPage() {
             <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" style={{ width: '4%' }}>
+                    ID
+                  </th>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
                     Müşteri Adı
                   </th>
-                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" style={{ width: '10%' }}>
                     Telefon
                   </th>
-                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" style={{ width: '8%' }}>
+                    Vergi No
+                  </th>
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" style={{ width: '12%' }}>
                     E-posta
                   </th>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
@@ -313,7 +319,7 @@ export default function CustomersPage() {
                   <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" style={{ width: '6%' }}>
                     Sözleşme
                   </th>
-                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover" style={{ width: '15%' }}>
                     Kayıt Bilgisi
                   </th>
                 </tr>
@@ -330,16 +336,19 @@ export default function CustomersPage() {
                       onClick={() => handleOpenDetail(customer)}
                       onContextMenu={(event) => openCustomerContextMenu(event, customer)}
                     >
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary">
+                      #{customer.CustomerId}
+                    </td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
                       <span className="font-medium text-text-primary">{customer.Name}</span>
-                      {customer.TaxId && (
-                        <span className="text-text-secondary ml-1">VN: {customer.TaxId}</span>
-                      )}
                     </td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
                       {customer.PhoneNumber || '-'}
                     </td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary opacity-90">
+                      {customer.TaxId || '-'}
+                    </td>
+                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary opacity-90 truncate max-w-[120px]" title={customer.Email || ''}>
                       {customer.Email || '-'}
                     </td>
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
@@ -355,7 +364,7 @@ export default function CustomersPage() {
                     <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
                       <span className="text-text-primary font-medium">{customer.Contracts?.length || 0}</span>
                     </td>
-                    <td className="py-0.5 px-2 align-middle text-text-secondary">
+                    <td className="py-0.5 px-2 align-middle text-text-secondary truncate max-w-[150px]" title={`${customer.CreatedByUserFullName || customer.CreatedByUserName || '-'} • ${formatShortDateTime(customer.CreatedAt)}`}>
                       {customer.CreatedByUserFullName || customer.CreatedByUserName || '-'} • {formatShortDateTime(customer.CreatedAt)}
                     </td>
                     </tr>
