@@ -27,4 +27,6 @@ export const INVENTORY_EXCEL_HELP = {
   optionalLegend: INVENTORY_OPTIONAL_EXCEL_COLUMNS.join(', '),
   stockNote: 'Toplam Stok boş bırakılırsa 0 kabul edilir.',
   notInTemplate: 'Şablonda bulunmaz (içe aktarmada beklenmez): Kirada, Kategoriler, Alt Kategoriler.',
+  exportNote:
+    'Dışa aktarılmış dosyalarda yinelenen stok kodları veya eksik İngilizce ad satırları olabilir. Strict modda tek hata tüm yüklemeyi durdurur; düzeltemiyorsanız "Hatalı satırları atla ve yükle" seçeneğini kullanın.',
 } as const;

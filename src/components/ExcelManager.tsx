@@ -15,6 +15,7 @@ import { toast } from '../hooks/useToast';
 import { getApiErrorMessage } from '../utils/apiError';
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
+import { resolveInventoryImportErrors } from '../utils/inventoryExcelImportUi';
 
 export type ExcelModuleType = 'inventory' | 'customers' | 'checks' | 'stockReceipts';
 
@@ -62,6 +63,8 @@ export interface ExcelImportSummary {
 interface ExcelImportResponse {
   success: boolean;
   partial?: boolean;
+  canPartialImport?: boolean;
+  validRowCount?: number;
   message?: string;
   summary?: ExcelImportSummary;
   errors?: ExcelImportErrorRow[];
@@ -202,6 +205,18 @@ function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null
   return {
     success: Boolean(obj.success ?? obj.Success),
     partial: Boolean(obj.partial ?? obj.Partial),
+    canPartialImport: 
+      obj.canPartialImport !== undefined 
+        ? Boolean(obj.canPartialImport) 
+        : obj.CanPartialImport !== undefined 
+          ? Boolean(obj.CanPartialImport) 
+          : undefined,
+    validRowCount:
+      typeof obj.validRowCount === 'number'
+        ? obj.validRowCount
+        : typeof obj.ValidRowCount === 'number'
+          ? obj.ValidRowCount
+          : undefined,
     message:
       typeof obj.message === 'string'
         ? obj.message
@@ -252,6 +267,57 @@ function categoryBadgeLabel(category: ExcelErrorCategory): string {
 
 function categoryBadgeClass(category: ExcelErrorCategory): string {
   return CATEGORY_BADGE_CLASSES[category] ?? '';
+}
+
+function prepareImportErrors(
+  type: ExcelModuleType,
+  errors: ExcelImportErrorRow[],
+  errorsByRow: ExcelImportRowErrors[]
+): { errors: ExcelImportErrorRow[]; errorsByRow: ExcelImportRowErrors[] } {
+  if (type !== 'inventory') {
+    return { errors, errorsByRow: errorsByRow.length > 0 ? errorsByRow : groupImportErrorsByRowGeneric(errors) };
+  }
+  return resolveInventoryImportErrors(errors, errorsByRow);
+}
+
+function groupImportErrorsByRowGeneric(errors: ExcelImportErrorRow[]): ExcelImportRowErrors[] {
+  const byRow = new Map<number, ExcelImportRowErrors>();
+
+  for (const err of errors) {
+    if (!err.row) continue;
+    let rowErr = byRow.get(err.row);
+    if (!rowErr) {
+      rowErr = {
+        row: err.row,
+        sheet: err.sheet ?? '-',
+        errorCount: 0,
+        columns: [],
+        summary: '',
+        issues: [],
+      };
+      byRow.set(err.row, rowErr);
+    }
+
+    const displayMessage =
+      err.displayMessage?.trim() || `Satır ${err.row}, ${err.column}: ${err.error}`;
+
+    rowErr.issues.push({
+      column: err.column,
+      error: err.error,
+      category: err.category ?? null,
+      givenValue: err.givenValue ?? null,
+      displayMessage,
+    });
+  }
+
+  return Array.from(byRow.values())
+    .map((rowErr) => ({
+      ...rowErr,
+      errorCount: rowErr.issues.length,
+      columns: rowErr.issues.map((issue) => issue.column),
+      summary: rowErr.issues.map((issue) => `${issue.column}: ${issue.error}`).join('; '),
+    }))
+    .sort((a, b) => a.row - b.row);
 }
 
 function isExcelFile(file: File): boolean {
@@ -310,6 +376,7 @@ export default function ExcelManager({
     isPartialSuccess?: boolean;
     canSkipInvalidRows?: boolean;
     canImportAllRows?: boolean;
+    validRowCount?: number;
   } | null>(null);
   const [importInfoModalType, setImportInfoModalType] = useState<ExcelModuleType | null>(null);
 
@@ -395,8 +462,13 @@ export default function ExcelManager({
         // Kısmi Başarı (207) veya Hata (400+)
         if (data && typeof data === 'object') {
           const normalized = normalizeExcelImportResponse(data);
-          const rows = normalized?.errors ?? [];
-          const rowsByRow = normalized?.errorsByRow ?? [];
+          const prepared = prepareImportErrors(
+            type,
+            normalized?.errors ?? [],
+            normalized?.errorsByRow ?? []
+          );
+          const rows = prepared.errors;
+          const rowsByRow = prepared.errorsByRow;
 
           if (normalized?.partial) {
             // Lenient modda bir başarı var; dosyayı temizle
@@ -409,9 +481,13 @@ export default function ExcelManager({
             setLastFile(null);
             onImportSuccess?.();
           } else {
-            // Hata var ve henüz bir şey kaydedilmedi (Strict moddayız muhtemelen)
-            // Kullanıcı isterse "Esnek" (Lenient) modda retry yapabilir
             setLastFile(file);
+            toast.error(
+              normalized?.message ||
+                (type === 'inventory'
+                  ? 'İçe aktarma başarısız. Excel’de işaretli satırları düzeltin veya hatalı satırları atlayarak yükleyin.'
+                  : 'İçe aktarma başarısız. Hata detayları aşağıda.')
+            );
           }
 
           setErrorModal({
@@ -422,9 +498,12 @@ export default function ExcelManager({
             summary: normalized?.summary,
             isPartialSuccess: normalized?.partial,
             canSkipInvalidRows:
-              !normalized?.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+              !normalized?.partial && 
+              normalized?.canPartialImport === true && 
+              mode === 'strict',
             canImportAllRows:
               !normalized?.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+            validRowCount: normalized?.validRowCount,
           });
           return;
         }
@@ -434,8 +513,13 @@ export default function ExcelManager({
         console.error('Excel import error:', e);
         const normalized = normalizeExcelImportError(e);
         if (normalized) {
-          const rows = normalized.errors ?? [];
-          const rowsByRow = normalized.errorsByRow ?? [];
+          const prepared = prepareImportErrors(
+            type,
+            normalized.errors ?? [],
+            normalized.errorsByRow ?? []
+          );
+          const rows = prepared.errors;
+          const rowsByRow = prepared.errorsByRow;
           setLastFile(file);
           setErrorModal({
             message: normalized.message || getApiErrorMessage(e),
@@ -445,10 +529,14 @@ export default function ExcelManager({
             summary: normalized.summary,
             isPartialSuccess: normalized.partial,
             canSkipInvalidRows:
-              !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+              !normalized.partial && 
+              normalized.canPartialImport === true && 
+              mode === 'strict',
             canImportAllRows:
               !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+            validRowCount: normalized.validRowCount,
           });
+          toast.error(normalized.message || getApiErrorMessage(e));
           return;
         }
         toast.error(getApiErrorMessage(e));
@@ -618,6 +706,7 @@ export default function ExcelManager({
                   </div>
                   <p>{INVENTORY_EXCEL_HELP.stockNote}</p>
                   <p className="text-text-secondary/80">{INVENTORY_EXCEL_HELP.notInTemplate}</p>
+                  <p className="text-warning/90">{INVENTORY_EXCEL_HELP.exportNote}</p>
                 </div>
               )}
               {type === 'inventory' && (
@@ -870,9 +959,16 @@ export default function ExcelManager({
             </div>
 
             {(errorModal.canSkipInvalidRows || errorModal.canImportAllRows) && (
-              <div className="px-4 py-2 bg-warning/10 border-b border-background-border flex items-center gap-2 text-warning text-[11px] font-medium">
-                <WarningCircleIcon size={16} weight="fill" />
-                <span>Strict modda hiçbir veri kaydedilmedi. Tüm tabloyu yüklemeyi ya da hatalı satırları atlayarak devam etmeyi seçebilirsiniz.</span>
+              <div className="px-4 py-2 bg-warning/10 border-b border-background-border space-y-1.5">
+                <div className="flex items-center gap-2 text-warning text-[11px] font-medium">
+                  <WarningCircleIcon size={16} weight="fill" />
+                  <span>Strict modda hiçbir veri kaydedilmedi.</span>
+                </div>
+                {errorModal.canSkipInvalidRows && errorModal.validRowCount !== undefined && (
+                  <p className="text-text-primary text-sm font-medium pl-6">
+                    {errorModal.summary?.totalRows ?? 0} satırdan {errorModal.summary?.failedRows ?? 0} tanesi hatalı, {errorModal.validRowCount} tanesi geçerli.
+                  </p>
+                )}
               </div>
             )}
 
@@ -882,7 +978,7 @@ export default function ExcelManager({
                 onClick={() => { setErrorModal(null); setLastFile(null); }} 
                 className="btn-secondary py-2 px-4 text-sm"
               >
-                {errorModal.canSkipInvalidRows || errorModal.canImportAllRows ? 'Tamamını İptal Et' : 'Kapat'}
+                {errorModal.canSkipInvalidRows || errorModal.canImportAllRows ? 'İptal' : 'Kapat'}
               </button>
 
               {errorModal.canImportAllRows && lastFile && (
@@ -913,7 +1009,10 @@ export default function ExcelManager({
                   ) : (
                     <CheckCircleIcon size={18} weight="bold" />
                   )}
-                  Hatalı Satırları Atla ve Yükle
+                  Hatalı Satırları Atla ve Devam Et
+                  {errorModal.validRowCount !== undefined && errorModal.validRowCount > 0 && (
+                    <span className="font-semibold">({errorModal.validRowCount} satır)</span>
+                  )}
                 </button>
               )}
             </div>
