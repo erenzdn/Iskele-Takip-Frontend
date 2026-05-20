@@ -14,6 +14,7 @@ import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/useToast';
 import { getApiErrorMessage } from '../utils/apiError';
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
+import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
 
 export type ExcelModuleType = 'inventory' | 'customers' | 'checks' | 'stockReceipts';
 
@@ -33,6 +34,22 @@ export interface ExcelImportErrorRow {
   error: string;
   category?: ExcelErrorCategory;
   givenValue?: string | null;
+  displayMessage?: string;
+}
+
+export interface ExcelImportRowErrors {
+  row: number;
+  sheet: string;
+  errorCount: number;
+  columns: string[];
+  summary: string;
+  issues: Array<{
+    column: string;
+    error: string;
+    category: ExcelErrorCategory | null;
+    givenValue: string | null;
+    displayMessage: string;
+  }>;
 }
 
 export interface ExcelImportSummary {
@@ -48,15 +65,16 @@ interface ExcelImportResponse {
   message?: string;
   summary?: ExcelImportSummary;
   errors?: ExcelImportErrorRow[];
+  errorsByRow?: ExcelImportRowErrors[];
   count?: number;
 }
 
 type Busy = null | 'export' | 'import';
 type ExcelImportMode = 'strict' | 'lenient' | 'force';
 
-function normalizeExcelErrorRow(error: unknown): ExcelImportErrorRow | null {
-  if (!error || typeof error !== 'object') return null;
-  const row = error as Record<string, unknown>;
+function normalizeExcelErrorRow(raw: unknown): ExcelImportErrorRow | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const row = raw as Record<string, unknown>;
   const rawRow = row.row ?? row.Row ?? row.rowNumber ?? row.RowNumber;
   const rowNumber = Number(rawRow);
   const rawCategory = row.category ?? row.Category;
@@ -65,11 +83,15 @@ function normalizeExcelErrorRow(error: unknown): ExcelImportErrorRow | null {
       ? rawCategory
       : undefined;
 
+  const column = String(row.column ?? row.Column ?? row.field ?? row.Field ?? '-');
+  const errorMessage = String(row.error ?? row.Error ?? row.message ?? row.Message ?? 'Geçersiz değer');
+  const displayMessageRaw = row.displayMessage ?? row.DisplayMessage;
+
   return {
     row: Number.isFinite(rowNumber) ? rowNumber : 0,
     sheet: (row.sheet ?? row.Sheet ?? null) as string | null,
-    column: String(row.column ?? row.Column ?? row.field ?? row.Field ?? '-'),
-    error: String(row.error ?? row.Error ?? row.message ?? row.Message ?? 'Geçersiz değer'),
+    column,
+    error: errorMessage,
     category,
     givenValue:
       row.givenValue !== undefined
@@ -77,6 +99,61 @@ function normalizeExcelErrorRow(error: unknown): ExcelImportErrorRow | null {
         : row.GivenValue !== undefined
           ? String(row.GivenValue)
           : null,
+    displayMessage:
+      typeof displayMessageRaw === 'string' && displayMessageRaw.trim()
+        ? displayMessageRaw
+        : undefined,
+  };
+}
+
+function normalizeExcelImportRowErrors(row: unknown): ExcelImportRowErrors | null {
+  if (!row || typeof row !== 'object') return null;
+  const obj = row as Record<string, unknown>;
+  const rowNumber = Number(obj.row ?? obj.Row);
+  const rawIssues = Array.isArray(obj.issues) ? obj.issues : Array.isArray(obj.Issues) ? obj.Issues : [];
+  const issues = rawIssues
+    .map((issue) => {
+      if (!issue || typeof issue !== 'object') return null;
+      const i = issue as Record<string, unknown>;
+      const rawCategory = i.category ?? i.Category;
+      const category =
+        rawCategory === 'COERCION' || rawCategory === 'VALIDATION' || rawCategory === 'BUSINESS'
+          ? rawCategory
+          : null;
+      const column = String(i.column ?? i.Column ?? '-');
+      const error = String(i.error ?? i.Error ?? 'Geçersiz değer');
+      const displayMessageRaw = i.displayMessage ?? i.DisplayMessage;
+      const displayMessage =
+        typeof displayMessageRaw === 'string' && displayMessageRaw.trim()
+          ? displayMessageRaw
+          : `Satır ${Number.isFinite(rowNumber) ? rowNumber : '?'}, ${column}: ${error}`;
+
+      return {
+        column,
+        error,
+        category,
+        givenValue:
+          i.givenValue !== undefined
+            ? String(i.givenValue)
+            : i.GivenValue !== undefined
+              ? String(i.GivenValue)
+              : null,
+        displayMessage,
+      };
+    })
+    .filter((issue): issue is ExcelImportRowErrors['issues'][number] => issue !== null);
+
+  return {
+    row: Number.isFinite(rowNumber) ? rowNumber : 0,
+    sheet: String(obj.sheet ?? obj.Sheet ?? 'INVENTORY'),
+    errorCount: Number(obj.errorCount ?? obj.ErrorCount ?? issues.length) || issues.length,
+    columns: Array.isArray(obj.columns)
+      ? obj.columns.map(String)
+      : Array.isArray(obj.Columns)
+        ? obj.Columns.map(String)
+        : issues.map((i) => i.column),
+    summary: String(obj.summary ?? obj.Summary ?? ''),
+    issues,
   };
 }
 
@@ -113,6 +190,14 @@ function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null
   const errors = rawErrors
     .map(normalizeExcelErrorRow)
     .filter((row): row is ExcelImportErrorRow => row !== null);
+  const rawErrorsByRow = Array.isArray(obj.errorsByRow)
+    ? obj.errorsByRow
+    : Array.isArray(obj.ErrorsByRow)
+      ? obj.ErrorsByRow
+      : [];
+  const errorsByRow = rawErrorsByRow
+    .map(normalizeExcelImportRowErrors)
+    .filter((row): row is ExcelImportRowErrors => row !== null);
 
   return {
     success: Boolean(obj.success ?? obj.Success),
@@ -125,6 +210,7 @@ function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null
           : undefined,
     summary: normalizeExcelImportSummary(obj.summary ?? obj.Summary),
     errors,
+    errorsByRow,
     count: typeof obj.count === 'number' ? obj.count : typeof obj.Count === 'number' ? obj.Count : undefined,
   };
 }
@@ -146,6 +232,26 @@ function normalizeExcelImportError(error: unknown): ExcelImportResponse | null {
   }
 
   return null;
+}
+
+const CATEGORY_BADGE_LABELS: Record<ExcelErrorCategory, string> = {
+  COERCION: 'Format',
+  VALIDATION: 'Doğrulama',
+  BUSINESS: 'İş Kuralı',
+};
+
+const CATEGORY_BADGE_CLASSES: Record<ExcelErrorCategory, string> = {
+  COERCION: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
+  VALIDATION: 'bg-error/10 text-error border-error/20',
+  BUSINESS: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
+};
+
+function categoryBadgeLabel(category: ExcelErrorCategory): string {
+  return CATEGORY_BADGE_LABELS[category] ?? category;
+}
+
+function categoryBadgeClass(category: ExcelErrorCategory): string {
+  return CATEGORY_BADGE_CLASSES[category] ?? '';
 }
 
 function isExcelFile(file: File): boolean {
@@ -198,6 +304,8 @@ export default function ExcelManager({
   const [errorModal, setErrorModal] = useState<{
     message: string;
     errors: ExcelImportErrorRow[];
+    errorsByRow: ExcelImportRowErrors[];
+    count?: number;
     summary?: ExcelImportSummary;
     isPartialSuccess?: boolean;
     canSkipInvalidRows?: boolean;
@@ -218,12 +326,17 @@ export default function ExcelManager({
     if (!canView) return;
     setBusy('export');
     try {
-      const { blob, filename } = await apiClient.getBlobDownload(`/excel/export/${type}`);
-      triggerBlobDownload(blob, `export_${type}.xlsx`, filename);
+      const downloadPath =
+        type === 'inventory' ? '/excel/template/inventory' : `/excel/export/${type}`;
+      const { blob, filename } = await apiClient.getBlobDownload(downloadPath);
+      const fallbackName = type === 'inventory' ? 'envanter_sablonu.xlsx' : `export_${type}.xlsx`;
+      triggerBlobDownload(blob, fallbackName, filename);
       toast.success(
         type === 'customers'
           ? 'Müşteri Excel şablonu indirildi (Customers + CustomerContacts).'
-          : 'Excel dosyası indirildi.'
+          : type === 'inventory'
+            ? 'Envanter Excel şablonu indirildi.'
+            : 'Excel dosyası indirildi.'
       );
     } catch (e) {
       console.error('Excel export error:', e);
@@ -283,7 +396,8 @@ export default function ExcelManager({
         if (data && typeof data === 'object') {
           const normalized = normalizeExcelImportResponse(data);
           const rows = normalized?.errors ?? [];
-          
+          const rowsByRow = normalized?.errorsByRow ?? [];
+
           if (normalized?.partial) {
             // Lenient modda bir başarı var; dosyayı temizle
             toast.warning(
@@ -303,10 +417,14 @@ export default function ExcelManager({
           setErrorModal({
             message: normalized?.message || 'İçe aktarma sırasında sorunlar oluştu.',
             errors: rows,
+            errorsByRow: rowsByRow,
+            count: normalized?.count,
             summary: normalized?.summary,
             isPartialSuccess: normalized?.partial,
-            canSkipInvalidRows: !normalized?.partial && rows.length > 0 && mode === 'strict',
-            canImportAllRows: !normalized?.partial && rows.length > 0 && mode === 'strict',
+            canSkipInvalidRows:
+              !normalized?.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+            canImportAllRows:
+              !normalized?.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
           });
           return;
         }
@@ -317,14 +435,19 @@ export default function ExcelManager({
         const normalized = normalizeExcelImportError(e);
         if (normalized) {
           const rows = normalized.errors ?? [];
+          const rowsByRow = normalized.errorsByRow ?? [];
           setLastFile(file);
           setErrorModal({
             message: normalized.message || getApiErrorMessage(e),
             errors: rows,
+            errorsByRow: rowsByRow,
+            count: normalized.count,
             summary: normalized.summary,
             isPartialSuccess: normalized.partial,
-            canSkipInvalidRows: !normalized.partial && rows.length > 0 && mode === 'strict',
-            canImportAllRows: !normalized.partial && rows.length > 0 && mode === 'strict',
+            canSkipInvalidRows:
+              !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+            canImportAllRows:
+              !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
           });
           return;
         }
@@ -378,17 +501,17 @@ export default function ExcelManager({
     title ??
     (type === 'customers'
       ? `${CUSTOMERS_EXCEL_HELP.hint} Dosyayı seçin veya .xlsx / .xls dosyasını bu düğmelerin üzerine sürükleyip bırakın.`
-      : 'Excel dosyası seçin veya .xlsx / .xls dosyasını bu düğmelerin üzerine sürükleyip bırakın.');
+      : type === 'inventory'
+        ? `${INVENTORY_EXCEL_HELP.hint} Dosyayı seçin veya .xlsx / .xls dosyasını bu düğmelerin üzerine sürükleyip bırakın.`
+        : 'Excel dosyası seçin veya .xlsx / .xls dosyasını bu düğmelerin üzerine sürükleyip bırakın.');
   const shouldShowImportInfoModal = type === 'customers' || type === 'inventory';
   const importInfoTitle = type === 'customers' ? 'Müşteri Excel İçe Aktarma' : 'Envanter Excel İçe Aktarma';
   const importInfoHint =
-    type === 'customers'
-      ? CUSTOMERS_EXCEL_HELP.hint
-      : 'Envanter içe aktarma işlemi için dosyanızı buradan seçebilirsiniz.';
+    type === 'customers' ? CUSTOMERS_EXCEL_HELP.hint : INVENTORY_EXCEL_HELP.hint;
   const importInfoChecklist =
     type === 'customers'
       ? `Kontrol listesi: ${CUSTOMERS_EXCEL_HELP.checklist}`
-      : 'Kontrol listesi: Şablonu dışa aktar ile indirip doldurun, ardından bu pencereden dosyayı seçin.';
+      : `Kontrol listesi: ${INVENTORY_EXCEL_HELP.checklist}`;
   const customerTaxIdNote = type === 'customers' ? CUSTOMERS_EXCEL_HELP.taxIdNote : null;
 
   return (
@@ -483,6 +606,20 @@ export default function ExcelManager({
               <div className="rounded-md border border-background-border bg-background-muted/30 p-3 text-text-secondary">
                 {importInfoChecklist}
               </div>
+              {type === 'inventory' && (
+                <div className="rounded-md border border-background-border bg-background-muted/20 p-3 space-y-2 text-text-secondary text-xs">
+                  <div>
+                    <span className="font-semibold text-text-primary">Zorunlu sütunlar: </span>
+                    {INVENTORY_EXCEL_HELP.requiredLegend}
+                  </div>
+                  <div>
+                    <span className="font-semibold text-text-primary">Opsiyonel sütunlar: </span>
+                    {INVENTORY_EXCEL_HELP.optionalLegend}
+                  </div>
+                  <p>{INVENTORY_EXCEL_HELP.stockNote}</p>
+                  <p className="text-text-secondary/80">{INVENTORY_EXCEL_HELP.notInTemplate}</p>
+                </div>
+              )}
               {type === 'inventory' && (
                 <div className="grid grid-cols-2 gap-3 border border-background-border rounded-md p-3 bg-background-muted/10">
                   <h4 className="col-span-2 font-semibold text-text-primary text-xs">
@@ -644,8 +781,45 @@ export default function ExcelManager({
               </div>
             )}
 
-            <div className="overflow-auto flex-1 p-4">
-              {errorModal.errors.length === 0 ? (
+            <div className="overflow-auto flex-1 p-4 space-y-4">
+              {errorModal.isPartialSuccess && (
+                <p className="text-sm text-text-primary rounded-md border border-success/30 bg-success/5 px-3 py-2">
+                  {errorModal.count ?? errorModal.summary?.successRows ?? 0} satır kaydedildi;{' '}
+                  {errorModal.summary?.failedRows ?? 0} satır atlandı.
+                </p>
+              )}
+
+              {errorModal.errorsByRow.length > 0 ? (
+                <div className="import-errors space-y-3">
+                  {errorModal.errorsByRow.map((rowErr) => (
+                    <div
+                      key={`${rowErr.sheet}-${rowErr.row}`}
+                      className="rounded-md border border-background-border bg-background-muted/20 p-3"
+                    >
+                      <strong className="text-sm text-text-primary">
+                        Excel&apos;de {rowErr.row}. satıra gidin
+                      </strong>
+                      {rowErr.summary && (
+                        <p className="text-xs text-text-secondary mt-1">{rowErr.summary}</p>
+                      )}
+                      <ul className="mt-2 space-y-1.5 list-disc list-inside text-xs text-text-secondary">
+                        {rowErr.issues.map((issue, i) => (
+                          <li key={`${rowErr.row}-${issue.column}-${i}`} className="leading-relaxed">
+                            <span>{issue.displayMessage}</span>
+                            {issue.category && (
+                              <span
+                                className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold align-middle ${categoryBadgeClass(issue.category)}`}
+                              >
+                                {categoryBadgeLabel(issue.category)}
+                              </span>
+                            )}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              ) : errorModal.errors.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-text-secondary">
                   <CheckCircleIcon size={48} weight="thin" />
                   <p className="mt-2 text-sm">Satır bazlı detaylı hata bulunmadı.</p>
@@ -656,51 +830,40 @@ export default function ExcelManager({
                     <tr className="border-b border-background-border text-left text-text-secondary">
                       <th className="py-2 px-2 font-medium w-12 text-center">Satır</th>
                       <th className="py-2 px-2 font-medium w-28">Sayfa</th>
-                      <th className="py-2 px-2 font-medium w-32">Sütun</th>
-                      <th className="py-2 px-2 font-medium w-max min-w-[220px]">Hata</th>
+                      <th className="py-2 px-2 font-medium w-max min-w-[280px]">Mesaj</th>
                       <th className="py-2 px-2 font-medium w-24">Tip</th>
                       <th className="py-2 px-2 font-medium">Girdi</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {errorModal.errors.map((err: ExcelImportErrorRow, i: number) => {
-                      const categoryLabels: Record<string, string> = {
-                        COERCION: 'Format',
-                        VALIDATION: 'Doğrulama',
-                        BUSINESS: 'İş Kuralı',
-                      };
-                      const categoryColors: Record<string, string> = {
-                        COERCION: 'bg-orange-500/10 text-orange-500 border-orange-500/20',
-                        VALIDATION: 'bg-error/10 text-error border-error/20',
-                        BUSINESS: 'bg-purple-500/10 text-purple-500 border-purple-500/20',
-                      };
-
-                      return (
-                        <tr
-                          key={`${err.row}-${err.column}-${i}`}
-                          className="border-b border-background-border/80 hover:bg-background-hover/40 transition-colors"
-                        >
-                          <td className="py-2 px-2 text-text-primary tabular-nums font-semibold text-center">{err.row}</td>
-                          <td className="py-2 px-2 text-text-primary font-medium">{err.sheet ? String(err.sheet) : '-'}</td>
-                          <td className="py-2 px-2 text-text-primary font-medium">{err.column}</td>
-                          <td className="py-2 px-2 text-text-secondary leading-relaxed">{err.error}</td>
-                          <td className="py-2 px-2">
-                            {err.category && (
-                              <span className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${categoryColors[err.category] || ''}`}>
-                                {categoryLabels[err.category] || err.category}
-                              </span>
-                            )}
-                          </td>
-                          <td className="py-2 px-2">
-                            {err.givenValue !== undefined && (
-                              <code className="text-[10px] bg-background-muted px-1 rounded text-text-primary">
-                                {err.givenValue === null ? 'Boş' : String(err.givenValue)}
-                              </code>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {errorModal.errors.map((err: ExcelImportErrorRow, i: number) => (
+                      <tr
+                        key={`${err.row}-${err.column}-${i}`}
+                        className="border-b border-background-border/80 hover:bg-background-hover/40 transition-colors"
+                      >
+                        <td className="py-2 px-2 text-text-primary tabular-nums font-semibold text-center">{err.row}</td>
+                        <td className="py-2 px-2 text-text-primary font-medium">{err.sheet ? String(err.sheet) : '-'}</td>
+                        <td className="py-2 px-2 text-text-secondary leading-relaxed">
+                          {err.displayMessage || err.error}
+                        </td>
+                        <td className="py-2 px-2">
+                          {err.category && (
+                            <span
+                              className={`px-1.5 py-0.5 rounded border text-[10px] font-bold ${categoryBadgeClass(err.category)}`}
+                            >
+                              {categoryBadgeLabel(err.category)}
+                            </span>
+                          )}
+                        </td>
+                        <td className="py-2 px-2">
+                          {err.givenValue !== undefined && (
+                            <code className="text-[10px] bg-background-muted px-1 rounded text-text-primary">
+                              {err.givenValue === null ? 'Boş' : String(err.givenValue)}
+                            </code>
+                          )}
+                        </td>
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
               )}
