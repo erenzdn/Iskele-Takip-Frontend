@@ -10,6 +10,7 @@ interface ImportMeta {
 interface Window {
   electron: {
     platform: string;
+    appVersion: string;
     updates: {
       onUpdateChecking: (callback: () => void) => () => void;
       onUpdateAvailable: (callback: (info: any) => void) => () => void;

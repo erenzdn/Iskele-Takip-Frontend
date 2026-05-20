@@ -53,6 +53,100 @@ interface ExcelImportResponse {
 
 type Busy = null | 'export' | 'import';
 
+function normalizeExcelErrorRow(error: unknown): ExcelImportErrorRow | null {
+  if (!error || typeof error !== 'object') return null;
+  const row = error as Record<string, unknown>;
+  const rawRow = row.row ?? row.Row ?? row.rowNumber ?? row.RowNumber;
+  const rowNumber = Number(rawRow);
+  const rawCategory = row.category ?? row.Category;
+  const category =
+    rawCategory === 'COERCION' || rawCategory === 'VALIDATION' || rawCategory === 'BUSINESS'
+      ? rawCategory
+      : undefined;
+
+  return {
+    row: Number.isFinite(rowNumber) ? rowNumber : 0,
+    sheet: (row.sheet ?? row.Sheet ?? null) as string | null,
+    column: String(row.column ?? row.Column ?? row.field ?? row.Field ?? '-'),
+    error: String(row.error ?? row.Error ?? row.message ?? row.Message ?? 'Geçersiz değer'),
+    category,
+    givenValue:
+      row.givenValue !== undefined
+        ? String(row.givenValue)
+        : row.GivenValue !== undefined
+          ? String(row.GivenValue)
+          : null,
+  };
+}
+
+function normalizeExcelImportSummary(summary: unknown): ExcelImportSummary | undefined {
+  if (!summary || typeof summary !== 'object') return undefined;
+  const obj = summary as Record<string, unknown>;
+  const totalRows = Number(obj.totalRows ?? obj.TotalRows ?? 0);
+  const successRows = Number(obj.successRows ?? obj.SuccessRows ?? 0);
+  const failedRows = Number(obj.failedRows ?? obj.FailedRows ?? 0);
+  const rawCategories = (obj.errorsByCategory ?? obj.ErrorsByCategory ?? {}) as Partial<
+    Record<ExcelErrorCategory, number>
+  >;
+
+  return {
+    totalRows: Number.isFinite(totalRows) ? totalRows : 0,
+    successRows: Number.isFinite(successRows) ? successRows : 0,
+    failedRows: Number.isFinite(failedRows) ? failedRows : 0,
+    errorsByCategory: {
+      COERCION: Number(rawCategories.COERCION ?? 0),
+      VALIDATION: Number(rawCategories.VALIDATION ?? 0),
+      BUSINESS: Number(rawCategories.BUSINESS ?? 0),
+    },
+  };
+}
+
+function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null {
+  if (!data || typeof data !== 'object') return null;
+  const obj = data as Record<string, unknown>;
+  const rawErrors = Array.isArray(obj.errors)
+    ? obj.errors
+    : Array.isArray(obj.Errors)
+      ? obj.Errors
+      : [];
+  const errors = rawErrors
+    .map(normalizeExcelErrorRow)
+    .filter((row): row is ExcelImportErrorRow => row !== null);
+
+  return {
+    success: Boolean(obj.success ?? obj.Success),
+    partial: Boolean(obj.partial ?? obj.Partial),
+    message:
+      typeof obj.message === 'string'
+        ? obj.message
+        : typeof obj.Message === 'string'
+          ? obj.Message
+          : undefined,
+    summary: normalizeExcelImportSummary(obj.summary ?? obj.Summary),
+    errors,
+    count: typeof obj.count === 'number' ? obj.count : typeof obj.Count === 'number' ? obj.Count : undefined,
+  };
+}
+
+function normalizeExcelImportError(error: unknown): ExcelImportResponse | null {
+  const err = error as { responseText?: string; rawBody?: string; message?: string };
+  const candidates = [err?.responseText, err?.rawBody, err?.message].filter(
+    (value): value is string => typeof value === 'string' && value.trim().startsWith('{')
+  );
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      const normalized = normalizeExcelImportResponse(parsed);
+      if (normalized && (normalized.errors?.length || normalized.message)) return normalized;
+    } catch {
+      // Ignore unparsable candidates and continue with the generic API error message.
+    }
+  }
+
+  return null;
+}
+
 function isExcelFile(file: File): boolean {
   const ext = file.name.split('.').pop()?.toLowerCase();
   if (ext === 'xlsx' || ext === 'xls') return true;
@@ -185,12 +279,13 @@ export default function ExcelManager({
 
         // Kısmi Başarı (207) veya Hata (400+)
         if (data && typeof data === 'object') {
-          const rows = Array.isArray(data.errors) ? data.errors : [];
+          const normalized = normalizeExcelImportResponse(data);
+          const rows = normalized?.errors ?? [];
           
-          if (data.partial) {
+          if (normalized?.partial) {
             // Lenient modda bir başarı var; dosyayı temizle
             toast.warning(
-              data.message ||
+              normalized.message ||
                 (type === 'customers'
                   ? 'Müşteri içe aktarma kısmen tamamlandı. CustomerContacts iş kuralları nedeniyle bazı satırlar atlandı.'
                   : 'İçe aktarma kısmen tamamlandı.')
@@ -204,11 +299,11 @@ export default function ExcelManager({
           }
 
           setErrorModal({
-            message: data.message || 'İçe aktarma sırasında sorunlar oluştu.',
+            message: normalized?.message || 'İçe aktarma sırasında sorunlar oluştu.',
             errors: rows,
-            summary: data.summary,
-            isPartialSuccess: data.partial,
-            canRetry: !data.partial && rows.length > 0 && mode === 'strict',
+            summary: normalized?.summary,
+            isPartialSuccess: normalized?.partial,
+            canRetry: !normalized?.partial && rows.length > 0 && mode === 'strict',
           });
           return;
         }
@@ -216,6 +311,19 @@ export default function ExcelManager({
         toast.error('Beklenmeyen sunucu yanıtı.');
       } catch (e) {
         console.error('Excel import error:', e);
+        const normalized = normalizeExcelImportError(e);
+        if (normalized) {
+          const rows = normalized.errors ?? [];
+          setLastFile(file);
+          setErrorModal({
+            message: normalized.message || getApiErrorMessage(e),
+            errors: rows,
+            summary: normalized.summary,
+            isPartialSuccess: normalized.partial,
+            canRetry: !normalized.partial && rows.length > 0 && mode === 'strict',
+          });
+          return;
+        }
         toast.error(getApiErrorMessage(e));
       } finally {
         setBusy(null);

@@ -230,18 +230,33 @@
 /* Sınırları Gizlenmiş (Borderless) Tablo Izgara Layoutu */
 .ProseMirror table.border-none,
 .ProseMirror table.border-none td,
-.ProseMirror table.border-none th {
+.ProseMirror table.border-none th,
+.ProseMirror table[data-no-border="true"],
+.ProseMirror table[data-no-border="true"] td,
+.ProseMirror table[data-no-border="true"] th {
   border: none !important;
 }
 
 /* Editör içinde sınırları gizlenmiş hücrelerin yerini görebilmek için hafif noktalı çerçeve */
 .ProseMirror table.border-none td,
-.ProseMirror table.border-none th {
+.ProseMirror table.border-none th,
+.ProseMirror table[data-no-border="true"] td,
+.ProseMirror table[data-no-border="true"] th {
   outline: 1px dotted rgba(156, 163, 175, 0.4) !important;
 }
 
+/* Kılavuz çizgileri gizlendiğinde outline'ı kaldır */
+.hide-gridlines .ProseMirror table.border-none td,
+.hide-gridlines .ProseMirror table.border-none th,
+.hide-gridlines .ProseMirror table[data-no-border="true"] td,
+.hide-gridlines .ProseMirror table[data-no-border="true"] th {
+  outline: none !important;
+}
+
 /* Görsel Konumlandırma ve Hizalama (Float ve Blok Kontrolleri) */
-.ProseMirror [data-align="left"] {
+.ProseMirror [data-align="left"],
+.ProseMirror :has(> [data-align="left"]),
+.ProseMirror .image-resizer:has(img[data-align="left"]) {
   float: left !important;
   margin-right: 1.5rem !important;
   margin-bottom: 0.5rem !important;
@@ -249,7 +264,9 @@
   clear: none !important;
 }
 
-.ProseMirror [data-align="right"] {
+.ProseMirror [data-align="right"],
+.ProseMirror :has(> [data-align="right"]),
+.ProseMirror .image-resizer:has(img[data-align="right"]) {
   float: right !important;
   margin-left: 1.5rem !important;
   margin-bottom: 0.5rem !important;
@@ -257,7 +274,9 @@
   clear: none !important;
 }
 
-.ProseMirror [data-align="center"] {
+.ProseMirror [data-align="center"],
+.ProseMirror :has(> [data-align="center"]),
+.ProseMirror .image-resizer:has(img[data-align="center"]) {
   display: block !important;
   margin-left: auto !important;
   margin-right: auto !important;
@@ -265,7 +284,9 @@
   clear: both !important;
 }
 
-.ProseMirror [data-align="none"] {
+.ProseMirror [data-align="none"],
+.ProseMirror :has(> [data-align="none"]),
+.ProseMirror .image-resizer:has(img[data-align="none"]) {
   display: inline-block !important;
   float: none !important;
   clear: both !important;

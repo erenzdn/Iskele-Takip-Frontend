@@ -8,6 +8,7 @@ export type ContextMenuIntent = 'default' | 'danger';
 export type ContextMenuActionHandlerKey =
   | 'scaffold.edit'
   | 'scaffold.stockEntry'
+  | 'scaffold.movements'
   | 'scaffold.delete'
   | 'scaffold.exportPdf'
   | 'scaffold.selection.toggle'

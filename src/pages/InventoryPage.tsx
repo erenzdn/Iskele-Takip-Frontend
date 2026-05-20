@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
 import { Inventory, MaterialCategory } from '../models';
-import { formatInventoryBilingualLabel, formatMoney, formatShortDateTime } from '../utils/formatters';
+import { formatShortDateTime } from '../utils/formatters';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { toast } from '../hooks/useToast';
 import EmptyState from '../components/EmptyState';
@@ -12,7 +12,7 @@ import ExcelManager from '../components/ExcelManager';
 import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
 import { useAuthStore } from '../store/authStore';
-import { useContextMenu, useContextMenuHandlers, type ScaffoldRowTarget } from '../context-menu';
+import { useContextMenu, useContextMenuHandlers, type ContextMenuActionHandlers, type ScaffoldRowTarget } from '../context-menu';
 import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 export default function InventoryPage() {
@@ -357,7 +357,7 @@ export default function InventoryPage() {
 
   useContextMenuHandlers(
     'scaffoldRow',
-    useMemo(
+    useMemo<ContextMenuActionHandlers>(
       () => ({
         'scaffold.edit': (target) => {
           if (!canUpdate) return;
@@ -834,4 +834,3 @@ export default function InventoryPage() {
     </div>
   );
 }
-
