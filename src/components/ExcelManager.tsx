@@ -52,6 +52,7 @@ interface ExcelImportResponse {
 }
 
 type Busy = null | 'export' | 'import';
+type ExcelImportMode = 'strict' | 'lenient' | 'force';
 
 function normalizeExcelErrorRow(error: unknown): ExcelImportErrorRow | null {
   if (!error || typeof error !== 'object') return null;
@@ -199,7 +200,8 @@ export default function ExcelManager({
     errors: ExcelImportErrorRow[];
     summary?: ExcelImportSummary;
     isPartialSuccess?: boolean;
-    canRetry?: boolean;
+    canSkipInvalidRows?: boolean;
+    canImportAllRows?: boolean;
   } | null>(null);
   const [importInfoModalType, setImportInfoModalType] = useState<ExcelModuleType | null>(null);
 
@@ -232,7 +234,7 @@ export default function ExcelManager({
   }, [canView, type]);
 
   const processFile = useCallback(
-    async (file: File, mode: 'strict' | 'lenient' = 'strict') => {
+    async (file: File, mode: ExcelImportMode = 'strict') => {
       if (!canImport) return;
       if (!isExcelFile(file)) {
         toast.warning('Yalnızca .xlsx veya .xls dosyası yükleyebilirsiniz.');
@@ -303,7 +305,8 @@ export default function ExcelManager({
             errors: rows,
             summary: normalized?.summary,
             isPartialSuccess: normalized?.partial,
-            canRetry: !normalized?.partial && rows.length > 0 && mode === 'strict',
+            canSkipInvalidRows: !normalized?.partial && rows.length > 0 && mode === 'strict',
+            canImportAllRows: !normalized?.partial && rows.length > 0 && mode === 'strict',
           });
           return;
         }
@@ -320,7 +323,8 @@ export default function ExcelManager({
             errors: rows,
             summary: normalized.summary,
             isPartialSuccess: normalized.partial,
-            canRetry: !normalized.partial && rows.length > 0 && mode === 'strict',
+            canSkipInvalidRows: !normalized.partial && rows.length > 0 && mode === 'strict',
+            canImportAllRows: !normalized.partial && rows.length > 0 && mode === 'strict',
           });
           return;
         }
@@ -702,10 +706,10 @@ export default function ExcelManager({
               )}
             </div>
 
-            {errorModal.canRetry && (
+            {(errorModal.canSkipInvalidRows || errorModal.canImportAllRows) && (
               <div className="px-4 py-2 bg-warning/10 border-b border-background-border flex items-center gap-2 text-warning text-[11px] font-medium">
                 <WarningCircleIcon size={16} weight="fill" />
-                <span>Hata bulguları nedeniyle hiçbir veri kaydedilmedi. Hataları atlayarak sadece doğru satırları yüklemek ister misiniz?</span>
+                <span>Strict modda hiçbir veri kaydedilmedi. Tüm tabloyu yüklemeyi ya da hatalı satırları atlayarak devam etmeyi seçebilirsiniz.</span>
               </div>
             )}
 
@@ -715,10 +719,26 @@ export default function ExcelManager({
                 onClick={() => { setErrorModal(null); setLastFile(null); }} 
                 className="btn-secondary py-2 px-4 text-sm"
               >
-                {errorModal.canRetry ? 'Tamamını İptal Et' : 'Kapat'}
+                {errorModal.canSkipInvalidRows || errorModal.canImportAllRows ? 'Tamamını İptal Et' : 'Kapat'}
               </button>
 
-              {errorModal.canRetry && lastFile && (
+              {errorModal.canImportAllRows && lastFile && (
+                <button
+                  type="button"
+                  disabled={busy === 'import'}
+                  onClick={() => void processFile(lastFile, 'force')}
+                  className="btn-secondary py-2 px-4 text-sm flex items-center gap-2"
+                >
+                  {busy === 'import' ? (
+                    <ArrowClockwiseIcon size={18} className="animate-spin" />
+                  ) : (
+                    <UploadSimpleIcon size={18} weight="bold" />
+                  )}
+                  Tüm Tabloyu Yine de Yükle
+                </button>
+              )}
+
+              {errorModal.canSkipInvalidRows && lastFile && (
                 <button 
                   type="button" 
                   disabled={busy === 'import'}
@@ -730,7 +750,7 @@ export default function ExcelManager({
                   ) : (
                     <CheckCircleIcon size={18} weight="bold" />
                   )}
-                  Hataları Atla ve Yine de Yükle
+                  Hatalı Satırları Atla ve Yükle
                 </button>
               )}
             </div>
