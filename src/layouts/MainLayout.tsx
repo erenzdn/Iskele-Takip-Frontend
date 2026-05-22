@@ -24,6 +24,7 @@ import { useAuthStore } from '../store/authStore';
 import { isAdminUser } from '../utils/authHelpers';
 import { normalizeText } from '../utils/validation';
 import { HeaderActionsContext } from './HeaderActionsContext';
+import { useUpdateStore } from '../store/updateStore';
 
 interface MainLayoutProps {
   children: React.ReactNode;
@@ -142,22 +143,40 @@ function NavLink({
   isActive: boolean;
   collapsed: boolean;
 }) {
+  const isUpdateAvailable = useUpdateStore((s) => s.isUpdateAvailable);
+  const isDownloaded = useUpdateStore((s) => s.isDownloaded);
+  
+  const showUpdateBadge = (item.path === '/system-settings') && (isUpdateAvailable || isDownloaded);
+
   return (
     <Link
       to={item.path}
       title={collapsed ? item.label : undefined}
-      className={`group flex items-center gap-3 rounded-xl mb-1.5 transition-all ${
+      className={`group relative flex items-center gap-3 rounded-xl mb-1.5 transition-all ${
         isActive
           ? 'bg-primary text-white shadow-sm'
           : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
       }`}
     >
       <span className={`flex h-11 items-center ${collapsed ? 'w-full justify-center' : 'w-11 justify-center'}`}>
-        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background-elevated group-hover:bg-background-hover [&_svg]:size-5">
+        <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background-elevated group-hover:bg-background-hover [&_svg]:size-5 relative">
           {item.icon}
+          {showUpdateBadge && (
+            <span className="absolute -top-1 -right-1 flex h-3 w-3">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-75"></span>
+              <span className="relative inline-flex rounded-full h-3 w-3 bg-error border-2 border-background-sidebar"></span>
+            </span>
+          )}
         </span>
       </span>
-      {!collapsed && <span className="font-medium truncate pr-2">{item.label}</span>}
+      {!collapsed && (
+        <span className="font-medium truncate pr-2 flex-1 flex items-center justify-between">
+          {item.label}
+          {showUpdateBadge && !collapsed && (
+            <span className="h-2 w-2 rounded-full bg-error shadow-[0_0_8px_rgba(239,68,68,0.6)]"></span>
+          )}
+        </span>
+      )}
     </Link>
   );
 }
@@ -447,6 +466,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
             <p className="text-xs text-text-secondary">{pageDescription}</p>
           </div>
           <div className="flex items-center gap-3">
+            <UpdateHeaderIndicator />
             {headerActions ? <div className="flex items-center gap-2">{headerActions}</div> : null}
             <div className="text-right">
               <div className="text-sm font-medium text-text-primary truncate max-w-[240px]">{displayName}</div>
@@ -462,6 +482,37 @@ export default function MainLayout({ children }: MainLayoutProps) {
         </div>
       </main>
     </div>
+  );
+}
+
+function UpdateHeaderIndicator() {
+  const { isUpdateAvailable, isDownloaded, isDownloading, progress } = useUpdateStore();
+
+  if (!isUpdateAvailable && !isDownloaded && !isDownloading) return null;
+
+  return (
+    <Link
+      to="/system-settings"
+      className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border shadow-sm ${
+        isDownloaded
+          ? 'bg-success/10 text-success border-success/30 hover:bg-success/20'
+          : isDownloading
+          ? 'bg-info/10 text-info border-info/30 hover:bg-info/20'
+          : 'bg-warning/10 text-warning border-warning/30 hover:bg-warning/20'
+      }`}
+    >
+      <div className="relative flex h-2 w-2">
+        <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+          isDownloaded ? 'bg-success' : isDownloading ? 'bg-info' : 'bg-warning'
+        }`}></span>
+        <span className={`relative inline-flex rounded-full h-2 w-2 ${
+          isDownloaded ? 'bg-success' : isDownloading ? 'bg-info' : 'bg-warning'
+        }`}></span>
+      </div>
+      <span>
+        {isDownloaded ? 'Güncelleme Hazır' : isDownloading ? `İndiriliyor %${progress.toFixed(0)}` : 'Güncelleme Mevcut'}
+      </span>
+    </Link>
   );
 }
 

@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { CheckIcon, ClipboardIcon, CopySimpleIcon, XIcon } from '@phosphor-icons/react';
+import { CheckIcon, ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -118,6 +118,14 @@ export default function QuoteDetailModal({
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
 
+  // Hızlı merkez yetkilisi oluşturma
+  const [showCreateContactModal, setShowCreateContactModal] = useState(false);
+  const [newContactName, setNewContactName] = useState('');
+  const [newContactPhone, setNewContactPhone] = useState('');
+  const [newContactEmail, setNewContactEmail] = useState('');
+  const [newContactTitle, setNewContactTitle] = useState('');
+  const [isCreatingContact, setIsCreatingContact] = useState(false);
+
   // Sözleşmeye dönüştürme — late binding: yalnızca varsayılan depo veya ürün bazlı atama (global mod kaldırıldı)
   const [showConvertModal, setShowConvertModal] = useState(false);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -142,6 +150,7 @@ export default function QuoteDetailModal({
   const [quoteCode, setQuoteCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
   const [quoteType, setQuoteType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
+  const [language, setLanguage] = useState<'TR' | 'EN'>('TR');
 
   /**
    * Fiyat inputları: TR ondalık ayıracı (,) desteklemek için string tutulur.
@@ -203,6 +212,51 @@ export default function QuoteDetailModal({
     setSelectedCustomerId(value);
     setSelectedAuthorizedContactId('');
     setAuthorizedContactError(null);
+  };
+
+  const handleCreateContact = async () => {
+    if (!selectedCustomerId) return;
+    if (!newContactName.trim()) {
+      toast.error('Ad Soyad zorunludur.');
+      return;
+    }
+
+    try {
+      setIsCreatingContact(true);
+      const updatedCustomer = await customerService.createContactAsync(Number(selectedCustomerId), {
+        Name: newContactName.trim(),
+        Phone: newContactPhone.trim() || undefined,
+        Email: newContactEmail.trim() || undefined,
+        Title: newContactTitle.trim() || undefined,
+        IsPrimary: true,
+      });
+
+      // State'i güncelle
+      setCustomers((prev) =>
+        prev.map((c) => (c.CustomerId === updatedCustomer.CustomerId ? updatedCustomer : c))
+      );
+
+      // Yeni yetkiliyi otomatik seç
+      const newContact = updatedCustomer.AuthorizedContacts?.find(
+        (c) => c.Name === newContactName.trim() && c.IsPrimary
+      );
+      if (newContact) {
+        setSelectedAuthorizedContactId(newContact.CustomerAuthorizedContactId ?? '');
+      }
+
+      toast.success('Merkez yetkilisi başarıyla oluşturuldu.');
+      setShowCreateContactModal(false);
+      // Formu temizle
+      setNewContactName('');
+      setNewContactPhone('');
+      setNewContactEmail('');
+      setNewContactTitle('');
+    } catch (error) {
+      console.error('Create contact error:', error);
+      toast.error(getApiErrorMessage(error) || 'Yetkili oluşturulamadı.');
+    } finally {
+      setIsCreatingContact(false);
+    }
   };
 
 
@@ -311,6 +365,7 @@ export default function QuoteDetailModal({
       setVatRate(Number.isFinite(parsedVatRate) ? parsedVatRate : 20);
       setQuoteCode(source.QuoteCode ?? '');
       setCurrency(source.Currency === 'EUR' ? 'EUR' : source.Currency === 'USD' ? 'USD' : 'TRY');
+      setLanguage((source as any).Language === 'EN' ? 'EN' : 'TR');
       setQuoteType(resolveContractQuoteType(source));
 
       const details = (source as any).details ?? source.QuoteDetails ?? [];
@@ -348,13 +403,24 @@ export default function QuoteDetailModal({
                 ? Number(detail.MonthlyPriceOverride)
                 : undefined,
             Item: undefined,
-            ItemName: detail.ItemName || '',
+            // ItemName: envanterdeki orijinal ad (detail.ItemName backend'de override birleşik dönebilir)
+            ItemName:
+              detail.Item?.ItemName ??
+              detail.item?.itemName ??
+              '',
             ItemNameOverride:
               (detail.ItemNameOverride ??
                 detail.itemNameOverride ??
                 detail.ItemName_Override ??
                 detail.item_name_override ??
                 null) as any,
+            ItemCode: detail.ItemCode ?? detail.itemCode ?? undefined,
+            ItemCodeOverride:
+              (detail.ItemCodeOverride ??
+                detail.itemCodeOverride ??
+                detail.ItemCode_Override ??
+                detail.item_code_override ??
+                null) as string | null,
             ItemNameEn: detail.ItemNameEn ?? detail.itemNameEn ?? undefined,
           };
         });
@@ -581,9 +647,17 @@ export default function QuoteDetailModal({
       const itemsWithNames = await Promise.all(
         quoteItems.map(async (item) => {
           if (item.kind === 'manual') return item;
-          if (item.ItemName) return item;
           try {
-            const inventoryItem = await inventoryService.getByIdAsync(item.ItemId);
+            const inventoryItem =
+              item.Item ?? availableItems.find((i) => i.ItemId === item.ItemId) ??
+              (await inventoryService.getByIdAsync(item.ItemId));
+            if (
+              item.Item &&
+              item.ItemName === inventoryItem.ItemName &&
+              item.ItemNameEn !== undefined
+            ) {
+              return item;
+            }
             return {
               ...item,
               Item: inventoryItem,
@@ -591,17 +665,18 @@ export default function QuoteDetailModal({
               ItemNameEn: inventoryItem.ItemNameEn ?? undefined,
             };
           } catch {
-            return { ...item, ItemName: 'Bilinmiyor' };
+            return { ...item, ItemName: item.ItemName || 'Bilinmiyor' };
           }
         })
       );
-      setQuoteItems(itemsWithNames);
+      const changed = itemsWithNames.some((it, i) => it !== quoteItems[i]);
+      if (changed) setQuoteItems(itemsWithNames);
     };
 
-    if (quoteItems.length > 0 && quoteItems.some((i) => i.kind === 'inventory' && !i.ItemName)) {
+    if (quoteItems.some((i) => i.kind === 'inventory')) {
       loadItemNames();
     }
-  }, [quoteItems.length]);
+  }, [quoteItems.length, availableItems.length]);
 
   useEffect(() => {
     if (quoteItems.length === 0) return;
@@ -617,12 +692,21 @@ export default function QuoteDetailModal({
         // Sadece eksik envanter referansını ve görselleme alanlarını doldur.
         const isExistingDetail = item.QuoteDetailId != null;
         if (isExistingDetail) {
-          if (item.Item && item.ItemNameEn !== undefined) return item;
+          const canonicalName = inv.ItemName;
+          const canonicalEn = inv.ItemNameEn ?? undefined;
+          if (
+            item.Item &&
+            item.ItemName === canonicalName &&
+            item.ItemNameEn !== undefined
+          ) {
+            return item;
+          }
           changed = true;
           return {
             ...item,
             Item: item.Item ?? inv,
-            ItemNameEn: item.ItemNameEn ?? inv.ItemNameEn ?? undefined,
+            ItemName: canonicalName,
+            ItemNameEn: item.ItemNameEn ?? canonicalEn,
           };
         }
         // Yeni teklif / kullanicinin client-side eklemis oldugu kalem: para birimi
@@ -763,6 +847,8 @@ export default function QuoteDetailModal({
           Item: item,
           ItemName: item.ItemName,
           ItemNameOverride: null,
+          ItemCode: item.ItemCode,
+          ItemCodeOverride: null,
           ItemNameEn: item.ItemNameEn ?? undefined,
         },
       ]);
@@ -877,7 +963,7 @@ export default function QuoteDetailModal({
   };
 
   const updateQuoteItemQuantity = (itemId: number, newQty: number) => {
-    const qty = Math.max(1, Math.floor(newQty));
+    const qty = Math.max(0, Math.floor(newQty));
     setQuoteItems((prev) =>
       prev.map((i) => (i.kind === 'inventory' && i.ItemId === itemId ? { ...i, Quantity: qty } : i))
     );
@@ -963,7 +1049,7 @@ export default function QuoteDetailModal({
 
     try {
       setIsBusy(true);
-      const normalizeItemNameOverride = (raw: unknown): string | null => {
+      const normalizeOptionalOverride = (raw: unknown): string | null => {
         const s = typeof raw === 'string' ? raw.trim() : '';
         return s ? s : null;
       };
@@ -981,7 +1067,8 @@ export default function QuoteDetailModal({
           Quantity: item.Quantity,
           is_manual: false,
           // Kritik: Kullanıcı dokunmasa bile state'teki mevcut değeri payload'a koy.
-          ItemNameOverride: normalizeItemNameOverride(item.ItemNameOverride),
+          ItemNameOverride: normalizeOptionalOverride(item.ItemNameOverride),
+          ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
         };
         if (quoteType === 'SALE') {
           if (item.OverrideUnitPrice != null && Number.isFinite(item.OverrideUnitPrice)) {
@@ -1003,6 +1090,7 @@ export default function QuoteDetailModal({
         Iskonto: iskonto,
         VatRate: vatRate,
         Currency: currency,
+        Language: language,
         details,
       };
       if (quoteType === 'RENTAL') {
@@ -1035,6 +1123,7 @@ export default function QuoteDetailModal({
           Iskonto: iskonto,
           VatRate: vatRate,
           Currency: currency,
+          Language: language,
           Subject: normalizeText(subject) ? normalizeText(subject) : null,
           Notes: normalizeText(notes) || undefined,
           // Kalem değişiklikleri (override fiyatlar dahil) PATCH ile de gitsin; aksi halde fiyat yeniden hesaplanmaz.
@@ -1498,6 +1587,8 @@ export default function QuoteDetailModal({
             OverrideMonthlyPrice: undefined,
             Item: inv,
             ItemName: inv.ItemName,
+            ItemCode: inv.ItemCode,
+            ItemCodeOverride: null,
             ItemNameEn: inv.ItemNameEn ?? undefined,
           });
         }
@@ -1719,33 +1810,45 @@ export default function QuoteDetailModal({
                   <label className="block text-xs font-medium text-text-primary">
                     Merkez Yetkili *
                   </label>
-                  {authorizedContactsLoading ? (
-                    <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
-                  ) : authorizedContacts.length > 0 ? (
-                    <select
-                      value={selectedAuthorizedContactId}
-                      onChange={(e) => {
-                        setSelectedAuthorizedContactId(Number(e.target.value) || '');
-                        setAuthorizedContactError(null);
-                      }}
-                      disabled={isReadOnly}
-                      className="input w-full text-sm py-1.5"
-                    >
-                      <option value="">Yetkili seçin</option>
-                      {authorizedContacts.map((contact) => (
-                        <option
-                          key={contact.CustomerAuthorizedContactId}
-                          value={contact.CustomerAuthorizedContactId}
-                        >
-                          {formatAuthorizedContactLabel(contact)}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="input w-full text-red-300 bg-background-secondary text-sm py-2">
-                      Bu müşteri için yetkili tanımlı değil
-                    </div>
-                  )}
+                  <div className="flex items-center gap-2">
+                    {authorizedContactsLoading ? (
+                      <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
+                    ) : authorizedContacts.length > 0 ? (
+                      <select
+                        value={selectedAuthorizedContactId}
+                        onChange={(e) => {
+                          setSelectedAuthorizedContactId(Number(e.target.value) || '');
+                          setAuthorizedContactError(null);
+                        }}
+                        disabled={isReadOnly}
+                        className="input flex-1 text-sm py-1.5"
+                      >
+                        <option value="">Yetkili seçin</option>
+                        {authorizedContacts.map((contact) => (
+                          <option
+                            key={contact.CustomerAuthorizedContactId}
+                            value={contact.CustomerAuthorizedContactId}
+                          >
+                            {formatAuthorizedContactLabel(contact)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <div className="input flex-1 text-red-300 bg-background-secondary text-sm py-2">
+                        Bu müşteri için yetkili tanımlı değil
+                      </div>
+                    )}
+                    {!isReadOnly && (
+                      <button
+                        type="button"
+                        onClick={() => setShowCreateContactModal(true)}
+                        className="btn-secondary p-1.5 flex-shrink-0"
+                        title="Merkez Yetkilisi Ekle"
+                      >
+                        <Plus size={16} weight="bold" />
+                      </button>
+                    )}
+                  </div>
                   {authorizedContactError && (
                     <p className="text-xs text-red-300">{authorizedContactError}</p>
                   )}
@@ -1881,6 +1984,19 @@ export default function QuoteDetailModal({
                   <option value="TRY">TRY (TL)</option>
                   <option value="EUR">EUR (€)</option>
                   <option value="USD">USD ($)</option>
+                </select>
+              </div>
+
+              <div className="space-y-0.5">
+                <label className="block text-xs font-medium text-text-primary">Dil</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TR">Türkçe</option>
+                  <option value="EN">English</option>
                 </select>
               </div>
 
@@ -2278,10 +2394,19 @@ export default function QuoteDetailModal({
                     </tr>
                   ) : (
                     quoteItems.map((item, rowIndex) => {
-                      const itemCode =
+                      const invItem = item.kind === 'inventory' ? availableItems.find((i) => i.ItemId === item.ItemId) : null;
+                      const originalItemCode = invItem?.ItemCode ?? '';
+                      const displayItemCode =
                         item.kind === 'inventory'
-                          ? availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ?? '—'
+                          ? (item.ItemCode ?? item.ItemCodeOverride ?? originalItemCode) || '—'
                           : '—';
+                      const hasCodeOverride =
+                        item.kind === 'inventory' &&
+                        item.ItemCodeOverride != null &&
+                        String(item.ItemCodeOverride).trim() !== '';
+                      const itemEnName = invItem?.ItemNameEn;
+                      const canonicalItemName =
+                        invItem?.ItemName ?? (item.kind === 'inventory' ? item.ItemName : '');
                       const lineTotal = getLineTotal(item);
                       const justAdded =
                         item.kind === 'inventory' ? lastAddedItemIds.includes(item.ItemId) : false;
@@ -2293,34 +2418,109 @@ export default function QuoteDetailModal({
                             justAdded ? 'bg-green-500/20' : ''
                           } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
                         >
-                          <td className="px-3 py-2 text-text-secondary">{itemCode}</td>
-                          <td className="px-3 py-2 font-medium">
+                          <td className="px-3 py-2 text-text-secondary">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
-                                formatInventoryLineBilingualLabel(
-                                  item.ItemNameOverride ?? item.ItemName,
-                                  item.ItemNameEn,
-                                  item.Item
-                                )
+                                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-mono">{displayItemCode}</span>
+                                  {hasCodeOverride && (
+                                    <span
+                                      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
+                                      title="Bu belge için özel ürün kodu tanımlı"
+                                    >
+                                      Özel kod
+                                    </span>
+                                  )}
+                                </span>
                               ) : (
-                                <div className="flex items-center gap-2 min-w-[280px]">
+                                <div className="flex items-center gap-2 min-w-[160px]">
                                   <input
                                     type="text"
-                                    value={item.ItemNameOverride ?? item.ItemName}
+                                    value={item.ItemCodeOverride ?? originalItemCode}
                                     onChange={(e) => {
-                                      const v = e.target.value;
+                                      const v = e.target.value.slice(0, 50);
                                       setQuoteItems((prev) =>
                                         prev.map((x) =>
                                           x.kind === 'inventory' && x.ItemId === item.ItemId
-                                            ? { ...x, ItemNameOverride: v }
+                                            ? { ...x, ItemCodeOverride: v }
                                             : x
                                         )
                                       );
                                     }}
-                                    className="input w-full py-1 text-sm"
-                                    aria-label="Ürün Adı"
-                                    placeholder={item.ItemName}
+                                    className="input w-full py-1 text-sm font-mono"
+                                    aria-label="Ürün Kodu Override"
+                                    placeholder="Boş bırakılırsa orijinal ürün kodu kullanılır"
+                                    maxLength={50}
                                   />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setQuoteItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'inventory' && x.ItemId === item.ItemId
+                                            ? { ...x, ItemCodeOverride: null }
+                                            : x
+                                        )
+                                      );
+                                    }}
+                                    className="btn-secondary text-xs whitespace-nowrap"
+                                    disabled={isBusy}
+                                    title="Varsayılana dön"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                              )
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td className="px-3 py-2 font-medium">
+                            {item.kind === 'inventory' ? (
+                              isReadOnly ? (
+                                language === 'EN' ? (
+                                  itemEnName ? (
+                                    item.ItemNameOverride ?? itemEnName
+                                  ) : (
+                                    <span>
+                                      {item.ItemNameOverride ?? canonicalItemName}{' '}
+                                      <span className="text-yellow-500 text-xs">(Bu ürünün İngilizce adı yoktur)</span>
+                                    </span>
+                                  )
+                                ) : (
+                                  item.ItemNameOverride ?? canonicalItemName
+                                )
+                              ) : (
+                                <div className="flex items-center gap-2 min-w-[280px]">
+                                  <div className="flex-1 relative">
+                                    <input
+                                      type="text"
+                                      value={
+                                        item.ItemNameOverride ??
+                                        (language === 'EN'
+                                          ? itemEnName || canonicalItemName
+                                          : canonicalItemName)
+                                      }
+                                      onChange={(e) => {
+                                        const v = e.target.value;
+                                        setQuoteItems((prev) =>
+                                          prev.map((x) =>
+                                            x.kind === 'inventory' && x.ItemId === item.ItemId
+                                              ? { ...x, ItemNameOverride: v }
+                                              : x
+                                          )
+                                        );
+                                      }}
+                                      className="input w-full py-1 text-sm"
+                                      aria-label="Ürün Adı"
+                                      placeholder={canonicalItemName}
+                                    />
+                                    {language === 'EN' && !itemEnName && (
+                                      <span className="absolute right-2 top-1/2 -translate-y-1/2 text-yellow-500 text-xs pointer-events-none">
+                                        (İngilizce adı yoktur)
+                                      </span>
+                                    )}
+                                  </div>
                                   <button
                                     type="button"
                                     onClick={() => {
@@ -2352,7 +2552,7 @@ export default function QuoteDetailModal({
                                 type="text"
                                 inputMode="numeric"
                                 pattern="[0-9.]*"
-                                value={formatThousandsTR(String(item.Quantity))}
+                                value={item.Quantity === 0 ? '' : formatThousandsTR(String(item.Quantity))}
                                 ref={(el) => {
                                   const key = `${rowIndex}-2`;
                                   if (el) quoteGridRefs.current.set(key, el);
@@ -2362,9 +2562,24 @@ export default function QuoteDetailModal({
                                   setActiveQuoteGridCell({ row: rowIndex, col: 2 });
                                   e.currentTarget.select();
                                 }}
+                                onBlur={() => {
+                                  if (item.Quantity === 0) {
+                                    if (item.kind === 'inventory') {
+                                      updateQuoteItemQuantity(item.ItemId, 1);
+                                    } else {
+                                      setQuoteItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'manual' && x.ClientId === item.ClientId
+                                            ? { ...x, Quantity: 1 }
+                                            : x
+                                        )
+                                      );
+                                    }
+                                  }
+                                }}
                                 onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 2)}
                                 onChange={(e) => {
-                                  const { numeric } = normalizeMaskedIntegerTR(e.target.value, { maxDigits: 9, min: 1 });
+                                  const { numeric } = normalizeMaskedIntegerTR(e.target.value, { maxDigits: 9, min: 0 });
                                   const v = numeric;
                                   if (item.kind === 'inventory') {
                                     updateQuoteItemQuantity(item.ItemId, v);
@@ -2372,7 +2587,7 @@ export default function QuoteDetailModal({
                                     setQuoteItems((prev) =>
                                       prev.map((x) =>
                                         x.kind === 'manual' && x.ClientId === item.ClientId
-                                          ? { ...x, Quantity: Math.max(1, Math.floor(v)) }
+                                          ? { ...x, Quantity: Math.max(0, Math.floor(v)) }
                                           : x
                                       )
                                     );
@@ -2912,6 +3127,85 @@ export default function QuoteDetailModal({
           ]);
         }}
       />
+      {showCreateContactModal &&
+        createPortal(
+          <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
+            <div className="bg-background-panel rounded-panel shadow-xl w-full max-w-md border border-background-border">
+              <div className="flex items-center justify-between p-4 border-b border-background-border">
+                <h3 className="text-sm font-medium text-text-primary">Yeni Merkez Yetkilisi Ekle</h3>
+                <button
+                  type="button"
+                  onClick={() => setShowCreateContactModal(false)}
+                  className="text-text-secondary hover:text-text-primary"
+                >
+                  <XIcon size={16} />
+                </button>
+              </div>
+              <div className="p-4 space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">Ad Soyad *</label>
+                  <input
+                    type="text"
+                    value={newContactName}
+                    onChange={(e) => setNewContactName(e.target.value)}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="Ad Soyad"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">Telefon</label>
+                  <input
+                    type="text"
+                    value={newContactPhone}
+                    onChange={(e) => setNewContactPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="Telefon"
+                    maxLength={11}
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">E-posta</label>
+                  <input
+                    type="email"
+                    value={newContactEmail}
+                    onChange={(e) => setNewContactEmail(e.target.value)}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="E-posta"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs font-medium text-text-primary">Ünvan</label>
+                  <input
+                    type="text"
+                    value={newContactTitle}
+                    onChange={(e) => setNewContactTitle(e.target.value)}
+                    className="input w-full text-sm py-1.5"
+                    placeholder="Ünvan"
+                  />
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 p-4 border-t border-background-border">
+                <button
+                  type="button"
+                  onClick={() => setShowCreateContactModal(false)}
+                  className="btn-secondary text-sm"
+                  disabled={isCreatingContact}
+                >
+                  İptal
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCreateContact}
+                  className="btn-primary text-sm"
+                  disabled={isCreatingContact || !newContactName.trim()}
+                >
+                  {isCreatingContact ? 'Kaydediliyor...' : 'Kaydet'}
+                </button>
+              </div>
+            </div>
+          </div>,
+          document.body
+        )}
       {isTemplateEditorOpen &&
         createPortal(
           <QuoteTemplateEditorModal

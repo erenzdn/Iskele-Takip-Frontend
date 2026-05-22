@@ -1,5 +1,5 @@
-import { useState, useEffect, useCallback } from 'react';
-import { ReceiptIcon } from '@phosphor-icons/react';
+import { useState, useEffect, useCallback, type MouseEvent } from 'react';
+import { ReceiptIcon, TrashIcon } from '@phosphor-icons/react';
 import { stockReceiptService, StockReceiptListParams } from '../services/stockReceiptService';
 import { warehouseService } from '../services/warehouseService';
 import { StockReceipt, ReceiptType, StockReceiptStatus, Warehouse } from '../models';
@@ -7,7 +7,11 @@ import { useAuthStore } from '../store/authStore';
 import EmptyState from '../components/EmptyState';
 import ExcelManager from '../components/ExcelManager';
 import StockReceiptDetailModal from '../components/modals/StockReceiptDetailModal';
+import ConfirmModal from '../components/modals/ConfirmModal';
 import { formatShortDateTime } from '../utils/formatters';
+import { toast } from '../hooks/useToast';
+import { getStockReceiptDeleteErrorMessage } from '../utils/apiError';
+import { canDeleteStockReceipt, isStockReceiptCancelled } from '../utils/stockReceiptPermissions';
 
 const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {
   IN: 'Giriş',
@@ -25,6 +29,7 @@ export default function StockReceiptsPage() {
   const user = useAuthStore((state) => state.user);
   const canView = user?.permissions?.includes('stockReceipts_view');
   const canCreate = user?.permissions?.includes('stockReceipts_create');
+  const canDelete = canDeleteStockReceipt(user);
 
   const [receipts, setReceipts] = useState<StockReceipt[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -38,6 +43,8 @@ export default function StockReceiptsPage() {
   const [filterStatus, setFilterStatus] = useState<string>('');
   const [filterDateFrom, setFilterDateFrom] = useState('');
   const [filterDateTo, setFilterDateTo] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<StockReceipt | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   const loadWarehouses = useCallback(async () => {
     try {
@@ -105,6 +112,27 @@ export default function StockReceiptsPage() {
     setIsModalOpen(false);
     setSelectedReceipt(null);
     loadReceipts();
+  };
+
+  const handleDeleteClick = (receipt: StockReceipt, e: MouseEvent) => {
+    e.stopPropagation();
+    if (!canDelete || !isStockReceiptCancelled(receipt.Status)) return;
+    setDeleteTarget(receipt);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget?.ReceiptId) return;
+    try {
+      setDeleteBusy(true);
+      await stockReceiptService.deleteAsync(deleteTarget.ReceiptId);
+      setDeleteTarget(null);
+      toast.success('Stok fişi silindi.');
+      await loadReceipts();
+    } catch (error) {
+      toast.error(getStockReceiptDeleteErrorMessage(error));
+    } finally {
+      setDeleteBusy(false);
+    }
   };
 
   if (!canView) {
@@ -234,9 +262,14 @@ export default function StockReceiptsPage() {
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
                     Oluşturan
                   </th>
-                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">
+                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
                     Tarih
                   </th>
+                  {canDelete && (
+                    <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover w-20">
+                      İşlem
+                    </th>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -266,12 +299,12 @@ export default function StockReceiptsPage() {
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
                       <span
                         className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                          receipt.Status === 'CANCELLED'
+                          isStockReceiptCancelled(receipt.Status)
                             ? 'bg-red-500/15 text-red-400'
                             : 'bg-emerald-500/15 text-emerald-400'
                         }`}
                       >
-                        {STATUS_LABELS[receipt.Status]}
+                        {STATUS_LABELS[receipt.Status] ?? receipt.Status}
                       </span>
                     </td>
                     <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0">
@@ -280,9 +313,27 @@ export default function StockReceiptsPage() {
                     <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-secondary">
                       {receipt.CreatedByName ?? '-'}
                     </td>
-                    <td className="py-0.5 px-2 align-middle text-text-secondary">
+                    <td className="py-0.5 px-2 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">
                       {formatShortDateTime(receipt.CreatedAt ?? null)}
                     </td>
+                    {canDelete && (
+                      <td className="py-0.5 px-2 align-middle text-center" onClick={(e) => e.stopPropagation()}>
+                        {isStockReceiptCancelled(receipt.Status) ? (
+                          <button
+                            type="button"
+                            onClick={(e) => handleDeleteClick(receipt, e)}
+                            disabled={deleteBusy}
+                            className="btn-danger px-2 py-1 text-[11px] inline-flex items-center gap-1"
+                            title="İptal edilmiş fişi kalıcı sil"
+                          >
+                            <TrashIcon size={14} />
+                            Sil
+                          </button>
+                        ) : (
+                          <span className="text-text-secondary/50">—</span>
+                        )}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -301,6 +352,22 @@ export default function StockReceiptsPage() {
           onClose={handleModalClose}
         />
       )}
+
+      <ConfirmModal
+        open={!!deleteTarget}
+        title="Stok fişini sil"
+        message={
+          deleteTarget?.ReceiptNo
+            ? `${deleteTarget.ReceiptNo} numaralı iptal edilmiş stok fişini kalıcı olarak silmek istiyor musunuz?`
+            : 'İptal edilmiş bu stok fişini kalıcı olarak silmek istiyor musunuz?'
+        }
+        confirmLabel="Sil"
+        cancelLabel="Vazgeç"
+        variant="danger"
+        loading={deleteBusy}
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   );
 }

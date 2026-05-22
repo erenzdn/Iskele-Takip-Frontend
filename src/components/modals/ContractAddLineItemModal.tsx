@@ -42,6 +42,7 @@ export default function ContractAddLineItemModal({
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | ''>('');
   const [quantityStr, setQuantityStr] = useState<string>('1');
+  const [itemCodeOverride, setItemCodeOverride] = useState<string>('');
   const [effectiveStartDate, setEffectiveStartDate] = useState<string>(todayDateInputValue());
 
   // Sale option
@@ -66,6 +67,7 @@ export default function ContractAddLineItemModal({
     setSelectedItemId('');
     setSelectedWarehouseId('');
     setQuantityStr('1');
+    setItemCodeOverride('');
     setEffectiveStartDate(todayDateInputValue());
     setDecrementStock(true);
     setManualDescription('');
@@ -110,11 +112,13 @@ export default function ContractAddLineItemModal({
     const body: AddContractDetailsRequestBody = { details: [] };
 
     if (kind === 'inventory') {
-      const detail: any = {
+      const codeOverride = itemCodeOverride.trim();
+      const detail: AddContractDetailsRequestBody['details'][number] = {
         ItemId: Number(selectedItemId),
         WarehouseId: Number(selectedWarehouseId),
         RentedQuantity: qty,
         IsManual: false,
+        ...(codeOverride ? { ItemCodeOverride: codeOverride } : {}),
       };
       if (isRental) {
         // UI default: bugün. Kullanıcı değiştirirse ISO8601 gönder.
@@ -217,6 +221,21 @@ export default function ContractAddLineItemModal({
                     </option>
                   ))}
                 </select>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-xs font-medium text-text-primary mb-1">
+                  Ürün Kodu Override
+                </label>
+                <input
+                  type="text"
+                  value={itemCodeOverride}
+                  onChange={(e) => setItemCodeOverride(e.target.value.slice(0, 50))}
+                  className="input w-full font-mono"
+                  disabled={isBusy}
+                  placeholder="Boş bırakılırsa orijinal ürün kodu kullanılır"
+                  maxLength={50}
+                />
               </div>
 
               <div>

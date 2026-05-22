@@ -75,6 +75,11 @@ export interface InventorySubCategory {
   CategoryName?: string;
 }
 
+export interface Unit {
+  UnitId: number;
+  UnitName: string;
+}
+
 export interface Inventory {
   ItemId: number;
   ItemCode?: string;
@@ -92,6 +97,9 @@ export interface Inventory {
   UnitPriceEur?: number;
   MonthlyListPriceUsd?: number | null;
   UnitPriceUsd?: number | null;
+  Weight?: number | null;
+  UnitId?: number | null;
+  UnitName?: string | null;
   Categories?: MaterialCategory[];
   SubCategories?: SubCategory[];
   CreatedAt?: string;
@@ -261,6 +269,8 @@ export interface Contract {
   VatRate?: number;  // yüzde
   Currency?: CurrencyCode;
   Type?: ContractQuoteType;
+  /** Dil seçeneği (TR/EN) */
+  Language?: 'TR' | 'EN';
   /** Liste yanıtında API'den (GET /contracts) */
   CustomerName?: string;
   IsCompleted: boolean;
@@ -290,6 +300,10 @@ export interface ContractDetail {
   PriceSource: PriceSource;
   /** Kiralama sözleşmesinde satır bazlı ücret başlangıç tarihi (ISO 8601) */
   EffectiveStartDate?: string;
+  /** listContractDetails: override varsa override, yoksa orijinal kod */
+  ItemCode?: string;
+  /** Satır bazlı ürün kodu override (envanter satırları için). */
+  ItemCodeOverride?: string | null;
   Contract?: Contract;
   Item?: Inventory;
 }
@@ -458,6 +472,9 @@ export interface ContractDetailItem {
   PriceSource: PriceSource;
   ItemName: string;
   ItemNameEn?: string | null;
+  /** listContractDetails: override varsa override, yoksa orijinal kod */
+  ItemCode?: string;
+  ItemCodeOverride?: string | null;
 }
 
 // Manuel kalem destekli satır tipleri (UI için)
@@ -480,6 +497,10 @@ export interface InventoryContractLineItem {
   EffectiveStartDate?: string;
   ItemName: string;
   ItemNameEn?: string | null;
+  /** Backend'den gelen çözümlenmiş kod (override dahil) */
+  ItemCode?: string;
+  /** UI state: satır bazlı ürün kodu override */
+  ItemCodeOverride?: string | null;
 }
 
 export interface ManualContractLineItem {
@@ -737,6 +758,8 @@ export interface Quote {
   VatRate?: number;  // yüzde
   Currency?: CurrencyCode;
   Type?: ContractQuoteType;
+  /** Dil seçeneği (TR/EN) */
+  Language?: 'TR' | 'EN';
   CreatedAt: string; // ISO 8601 format
   UpdatedAt: string; // ISO 8601 format
   ConvertedContractId?: number;
@@ -780,6 +803,10 @@ export interface QuoteDetail {
   ItemName?: string;
   /** Satır bazlı ürün adı override (envanter satırları için). */
   ItemNameOverride?: string | null;
+  /** listQuoteDetails: override varsa override, yoksa orijinal kod */
+  ItemCode?: string;
+  /** Satır bazlı ürün kodu override (envanter satırları için). */
+  ItemCodeOverride?: string | null;
   ItemNameEn?: string | null;
   CategoryId?: number;
 }
@@ -796,6 +823,8 @@ export interface QuoteDetailItem {
   PriceSource: PriceSource;
   ItemName: string;
   ItemNameOverride?: string | null;
+  ItemCode?: string;
+  ItemCodeOverride?: string | null;
   ItemNameEn?: string | null;
 }
 
@@ -818,6 +847,10 @@ export interface InventoryQuoteLineItem {
   ItemName: string;
   /** UI state: satır bazlı ürün adı override */
   ItemNameOverride?: string | null;
+  /** Backend'den gelen çözümlenmiş kod (override dahil) */
+  ItemCode?: string;
+  /** UI state: satır bazlı ürün kodu override */
+  ItemCodeOverride?: string | null;
   ItemNameEn?: string | null;
 }
 

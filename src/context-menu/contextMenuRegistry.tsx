@@ -95,6 +95,12 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       ],
     },
     {
+      id: 'movements',
+      label: 'Hareketler',
+      icon: <ClockIcon size={iconSize} />,
+      handlerKey: 'scaffold.movements',
+    },
+    {
       id: 'status',
       label: 'Durum Degistir',
       icon: <CircleIcon size={iconSize} />,
@@ -242,6 +248,12 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       handlerKey: 'quote.open',
     },
     {
+      id: 'quote-preview',
+      label: 'Onizle',
+      icon: <FilePdfIcon size={iconSize} />,
+      handlerKey: 'quote.preview',
+    },
+    {
       id: 'quote-copy-code',
       label: 'Kod Kopyala',
       icon: <CopySimpleIcon size={iconSize} />,
@@ -290,6 +302,21 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
             Boolean(isQuoteTarget(target) && target.rawData.Status === 'accepted'),
         },
       ],
+    },
+    {
+      id: 'quote-delete',
+      label: 'Teklifi Sil',
+      icon: <TrashIcon size={iconSize} />,
+      intent: 'danger',
+      handlerKey: 'quote.delete',
+      enabledWhen: (target) =>
+        Boolean(isQuoteTarget(target) && !target.rawData.ConvertedContractId),
+      confirm: {
+        title: 'Teklifi silmek istiyor musunuz?',
+        message: (target) =>
+          `"${target.itemName}" teklifini silmek istediğinizden emin misiniz? Bu işlem geri alınamaz.`,
+        confirmLabel: 'Sil',
+      },
     },
   ],
 };

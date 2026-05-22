@@ -13,6 +13,8 @@ export interface CreateContractDetailRequest {
   ItemId: number;
   WarehouseId: number;
   RentedQuantity: number;
+  /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
+  ItemCodeOverride?: string | null;
 }
 
 export interface CreateContractManualDetailRequest {
@@ -37,6 +39,7 @@ export interface CreateContractRequest {
   VatRate?: number;  // yüzde
   Currency?: 'TRY' | 'EUR';
   Type?: ContractQuoteType;
+  Language?: 'TR' | 'EN';
   /** Opsiyonel. Bir kalemde WarehouseId yoksa bu depo kullanılır; depo stoğu düşümü için her detayda WarehouseId veya bu alan gerekir. */
   defaultWarehouseId?: number;
   details: CreateContractDetailPayload[];
@@ -54,6 +57,7 @@ export interface UpdateContractRequest {
   StartDate?: string;
   /** Kiralama sözleşmesi planlanan bitiş (ISO 8601) */
   PlannedEndDate?: string;
+  Language?: 'TR' | 'EN';
 }
 
 export interface CreateContractResponse {
@@ -70,6 +74,8 @@ export type AddContractDetailInventoryRequest = {
   WarehouseId: number;
   RentedQuantity: number;
   IsManual?: false;
+  /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
+  ItemCodeOverride?: string | null;
   /** Kiralama sözleşmesi için: gönderilmezse backend "şimdi" kabul eder */
   EffectiveStartDate?: string;
 };

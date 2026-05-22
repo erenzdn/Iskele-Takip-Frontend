@@ -43,7 +43,7 @@ export default function PdfPreviewModal({
 
   const modalContent = (
     <div
-      className="fixed inset-0 flex flex-col z-[70]"
+      className="fixed inset-0 flex flex-col z-[150]"
       style={{ backgroundColor: 'rgba(0,0,0,0.85)' }}
     >
       <div className="shrink-0 flex items-center justify-between px-6 py-3 bg-background-panel border-b border-background-border">

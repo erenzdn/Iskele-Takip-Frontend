@@ -44,6 +44,11 @@ export const stockReceiptService = {
     return apiClient.patch<StockReceipt>(`/stock-receipts/${id}/cancel`);
   },
 
+  /** Yalnızca Status=CANCELLED fişler; 204 No Content. İzin: stockReceipts_delete */
+  async deleteAsync(id: string): Promise<void> {
+    await apiClient.delete<void>(`/stock-receipts/${id}`);
+  },
+
   async getPdfBlobAsync(id: string, templateId?: number): Promise<Blob> {
     const query = templateId != null ? `?templateId=${templateId}` : '';
     return apiClient.getBlob(`/stock-receipts/${id}/pdf${query}`);

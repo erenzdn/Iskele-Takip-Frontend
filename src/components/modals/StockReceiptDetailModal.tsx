@@ -15,7 +15,8 @@ import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
 import { reportTemplateService } from '../../services/reportTemplateService';
 import { useAuthStore } from '../../store/authStore';
-import { getApiErrorMessage } from '../../utils/apiError';
+import { getApiErrorMessage, getStockReceiptDeleteErrorMessage } from '../../utils/apiError';
+import { canDeleteStockReceipt, isStockReceiptCancelled } from '../../utils/stockReceiptPermissions';
 import { toast } from '../../hooks/useToast';
 import { formatShortDateTime } from '../../utils/formatters';
 import ConfirmModal from './ConfirmModal';
@@ -52,7 +53,9 @@ export default function StockReceiptDetailModal({
   onClose,
 }: StockReceiptDetailModalProps) {
   const user = useAuthStore((state) => state.user);
-  const canCreate = user?.permissions?.includes('stockReceipts_create');
+  const permissions = user?.permissions ?? [];
+  const canCreate = permissions.includes('stockReceipts_create');
+  const canDelete = canDeleteStockReceipt(user);
   const canCreateReportTemplate = user?.permissions?.includes('reportTemplates_create');
   const canUpdateReportTemplate = user?.permissions?.includes('reportTemplates_update');
 
@@ -60,6 +63,7 @@ export default function StockReceiptDetailModal({
   const [loadingDetail, setLoadingDetail] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
@@ -129,6 +133,21 @@ export default function StockReceiptDetailModal({
       onClose();
     } catch (error) {
       toast.error(getApiErrorMessage(error) || 'İptal işlemi başarısız');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleDeleteReceipt = async () => {
+    if (!detail?.ReceiptId) return;
+    try {
+      setIsBusy(true);
+      await stockReceiptService.deleteAsync(detail.ReceiptId);
+      setShowDeleteConfirm(false);
+      toast.success('Stok fişi silindi.');
+      onClose();
+    } catch (error) {
+      toast.error(getStockReceiptDeleteErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -314,7 +333,7 @@ export default function StockReceiptDetailModal({
                     <span className="text-text-secondary">Durum: </span>
                     <span
                       className={`inline-flex items-center rounded-full px-2 py-0.5 text-xs font-medium ${
-                        displayReceipt.Status === 'CANCELLED'
+                        isStockReceiptCancelled(displayReceipt.Status)
                           ? 'bg-red-500/15 text-red-400'
                           : 'bg-emerald-500/15 text-emerald-400'
                       }`}
@@ -428,7 +447,7 @@ export default function StockReceiptDetailModal({
                   >
                     {pdfLoading ? 'Hazırlanıyor...' : 'PDF Önizleme'}
                   </button>
-                  {canCreate && displayReceipt.Status === 'ACTIVE' && (
+                  {canCreate && !isStockReceiptCancelled(displayReceipt.Status) && (
                     <button
                       type="button"
                       onClick={() => setShowCancelConfirm(true)}
@@ -438,15 +457,20 @@ export default function StockReceiptDetailModal({
                       İptal Et
                     </button>
                   )}
-                  {canCreate && displayReceipt.Status === 'CANCELLED' && (
+                  {canDelete && isStockReceiptCancelled(displayReceipt.Status) && (
                     <button
                       type="button"
-                      disabled
-                      className="btn-secondary text-sm opacity-60 cursor-not-allowed"
-                      title="İptal edilmiş fiş yeniden iptal edilemez."
+                      onClick={() => setShowDeleteConfirm(true)}
+                      disabled={isBusy}
+                      className="btn-danger text-sm"
                     >
-                      Zaten İptal Edildi
+                      Sil
                     </button>
+                  )}
+                  {isStockReceiptCancelled(displayReceipt.Status) && !canDelete && (
+                    <span className="text-xs text-text-secondary self-center">
+                      Kalıcı silme için stok fişi silme izni gerekir.
+                    </span>
                   )}
                 </div>
               </>
@@ -693,6 +717,22 @@ export default function StockReceiptDetailModal({
         loading={isBusy}
         onConfirm={handleCancelReceipt}
         onCancel={() => setShowCancelConfirm(false)}
+      />
+
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Fişi sil"
+        message={
+          displayReceipt?.ReceiptNo
+            ? `${displayReceipt.ReceiptNo} numaralı iptal edilmiş stok fişini kalıcı olarak silmek istediğinize emin misiniz?`
+            : 'İptal edilmiş bu stok fişini kalıcı olarak silmek istediğinize emin misiniz?'
+        }
+        confirmLabel="Sil"
+        cancelLabel="Vazgeç"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={handleDeleteReceipt}
+        onCancel={() => setShowDeleteConfirm(false)}
       />
 
       <PdfPreviewModal

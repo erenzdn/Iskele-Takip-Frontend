@@ -8,6 +8,8 @@ export interface CreateQuoteDetailRequest {
   Description?: string;
   /** Envanter satırları için satır bazlı ürün adı override (boş/whitespace => null). */
   ItemNameOverride?: string | null;
+  /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
+  ItemCodeOverride?: string | null;
   /** SALE: satır bazlı birim fiyat override */
   OverrideUnitPrice?: number;
   /** RENTAL: satır bazlı aylık fiyat override */
@@ -37,6 +39,7 @@ export interface CreateQuoteRequest {
   VatRate?: number;
   Currency?: 'TRY' | 'EUR' | 'USD';
   Type?: ContractQuoteType;
+  Language?: 'TR' | 'EN';
   details: CreateQuoteDetailRequest[];
 }
 
@@ -56,6 +59,7 @@ export interface UpdateQuoteRequest {
   Iskonto?: number;
   VatRate?: number;
   Currency?: 'TRY' | 'EUR' | 'USD';
+  Language?: 'TR' | 'EN';
   /** Mevcut teklif güncellemede de kalemleri güncellemek için */
   details?: CreateQuoteDetailRequest[];
 }

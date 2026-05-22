@@ -4,7 +4,7 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
 import { Inventory, MaterialCategory } from '../models';
-import { formatInventoryBilingualLabel, formatMoney, formatShortDateTime } from '../utils/formatters';
+import { formatShortDateTime } from '../utils/formatters';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { toast } from '../hooks/useToast';
 import EmptyState from '../components/EmptyState';
@@ -12,7 +12,7 @@ import ExcelManager from '../components/ExcelManager';
 import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
 import { useAuthStore } from '../store/authStore';
-import { useContextMenu, useContextMenuHandlers, type ScaffoldRowTarget } from '../context-menu';
+import { useContextMenu, useContextMenuHandlers, type ContextMenuActionHandlers, type ScaffoldRowTarget } from '../context-menu';
 import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 export default function InventoryPage() {
@@ -39,6 +39,7 @@ export default function InventoryPage() {
   const debouncedSearch = useDebouncedValue(searchText, 300);
   const [minAvailable, setMinAvailable] = useState<number | ''>('');
   const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
+  const [selectedLanguage, setSelectedLanguage] = useState<'tr' | 'en'>('tr');
   const [listLoading, setListLoading] = useState(false);
   const [categoriesReady, setCategoriesReady] = useState(false);
   const [subCategoryOptions, setSubCategoryOptions] = useState<string[]>([]);
@@ -136,9 +137,11 @@ export default function InventoryPage() {
       const matchesMin = minAvailable === '' || availableStock >= minAvailable;
       const matchesMax = maxAvailable === '' || availableStock <= maxAvailable;
 
-      return matchesSubCategory && matchesMin && matchesMax;
+      const matchesLanguage = selectedLanguage === 'tr' || (selectedLanguage === 'en' && Boolean(item.ItemNameEn));
+
+      return matchesSubCategory && matchesMin && matchesMax && matchesLanguage;
     });
-  }, [allInventory, selectedSubCategories, minAvailable, maxAvailable]);
+  }, [allInventory, selectedSubCategories, minAvailable, maxAvailable, selectedLanguage]);
 
   const selectAllFiltered = useCallback(() => {
     setSelectionMode(true);
@@ -334,15 +337,27 @@ export default function InventoryPage() {
       return;
     }
 
-    await Promise.all(selectedItemIds.map((id) => inventoryService.deleteAsync(id)));
-    toast.success(`${selectedItemIds.length} kayit silindi.`);
-    clearSelection();
-    await loadData();
+    const confirmDelete = window.confirm(
+      `${selectedItemIds.length} adet seçili malzemeyi silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`
+    );
+    if (!confirmDelete) return;
+
+    try {
+      await Promise.all(selectedItemIds.map((id) => inventoryService.deleteAsync(id)));
+      toast.success(`${selectedItemIds.length} kayit silindi.`);
+      clearSelection();
+      await loadData();
+    } catch (error) {
+      console.error('Toplu silme hatası:', error);
+      toast.error('Bazı malzemeler silinemedi (aktif sözleşmelerde kullanılıyor olabilir).');
+      clearSelection();
+      await loadData();
+    }
   }, [clearSelection, loadData, selectedItemIds]);
 
   useContextMenuHandlers(
     'scaffoldRow',
-    useMemo(
+    useMemo<ContextMenuActionHandlers>(
       () => ({
         'scaffold.edit': (target) => {
           if (!canUpdate) return;
@@ -363,6 +378,10 @@ export default function InventoryPage() {
             return;
           }
           handleOpenItemDetail(item, { startInEditMode: true });
+        },
+        'scaffold.movements': (target) => {
+          const row = target as ScaffoldRowTarget;
+          navigate(`/inventory/${row.entityId}/movements`);
         },
         'scaffold.delete': async (target) => {
           if (!canDelete) return;
@@ -402,9 +421,17 @@ export default function InventoryPage() {
     )
   );
 
-  const formatTry = (amount: number) => formatMoney(amount, 'TRY');
-  const formatEur = (amount: number) => formatMoney(amount, 'EUR');
-  const formatUsd = (amount: number) => formatMoney(amount, 'USD');
+  const formatMoneyCustom = (amount: number, currency: 'TRY' | 'EUR' | 'USD') => {
+    const formatted = new Intl.NumberFormat('tr-TR', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(amount);
+    const symbols = { TRY: '₺', EUR: '€', USD: '$' };
+    return `${formatted} ${symbols[currency]}`;
+  };
+  const formatTry = (amount: number) => formatMoneyCustom(amount, 'TRY');
+  const formatEur = (amount: number) => formatMoneyCustom(amount, 'EUR');
+  const formatUsd = (amount: number) => formatMoneyCustom(amount, 'USD');
 
   useEffect(() => {
     let cancelled = false;
@@ -437,6 +464,13 @@ export default function InventoryPage() {
             <button onClick={clearSelection} className="btn-secondary py-2 px-3 text-sm">
               Secimi Temizle ({selectedItemIds.length})
             </button>
+            <button
+              onClick={selectAllFiltered}
+              disabled={filteredInventory.length === 0}
+              className="btn-secondary py-2 px-3 text-sm disabled:opacity-50"
+            >
+              Tümünü Seç
+            </button>
             {canUpdate ? (
               <>
                 <button
@@ -465,7 +499,15 @@ export default function InventoryPage() {
               </button>
             ) : null}
           </>
-        ) : null}
+        ) : (
+          <button
+            onClick={selectAllFiltered}
+            disabled={filteredInventory.length === 0}
+            className="btn-secondary py-2 px-3 text-sm disabled:opacity-50"
+          >
+            Tümünü Seç
+          </button>
+        )}
         <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">
           Yenile
         </button>
@@ -478,7 +520,19 @@ export default function InventoryPage() {
         </button>
       </>
     ),
-    [applyBulkDelete, applyBulkStatus, canDelete, canUpdate, loadData, selectedItemIds.length]
+    [
+      selectedItemIds.length,
+      clearSelection,
+      selectAllFiltered,
+      filteredInventory,
+      canUpdate,
+      applyBulkStatus,
+      canDelete,
+      applyBulkDelete,
+      loadData,
+      handleAddCategory,
+      handleAddNewItem,
+    ]
   );
 
   useEffect(() => {
@@ -512,6 +566,7 @@ export default function InventoryPage() {
                 setSelectedSubCategories(Array.from({ length: 6 }, () => ''));
                 setMinAvailable('');
                 setMaxAvailable('');
+                setSelectedLanguage('tr');
               }}
               className="btn-secondary py-1.5 px-3 text-xs"
             >
@@ -560,7 +615,18 @@ export default function InventoryPage() {
             </select>
           </div>
 
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-2">
+            <select
+              value={selectedLanguage}
+              onChange={(e) => setSelectedLanguage(e.target.value as 'tr' | 'en')}
+              className="input py-2 px-3 text-sm w-full"
+            >
+              <option value="tr">Türkçe</option>
+              <option value="en">English</option>
+            </select>
+          </div>
+
+          <div className="lg:col-span-2">
             <input
               type="number"
               className="input py-2 px-3 text-sm w-full"
@@ -571,7 +637,7 @@ export default function InventoryPage() {
             />
           </div>
 
-          <div className="lg:col-span-3">
+          <div className="lg:col-span-2">
             <input
               type="number"
               className="input py-2 px-3 text-sm w-full"
@@ -631,19 +697,34 @@ export default function InventoryPage() {
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   {selectionMode ? (
-                    <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                      Sec
+                    <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover w-10">
+                      <input
+                        type="checkbox"
+                        checked={
+                          filteredInventory.length > 0 &&
+                          filteredInventory.every((item) => selectedItemIds.includes(item.ItemId))
+                        }
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            selectAllFiltered();
+                          } else {
+                            clearSelection();
+                          }
+                        }}
+                        className="w-3.5 h-3.5 align-middle cursor-pointer"
+                        title="Tümünü Seç / Seçimi Kaldır"
+                      />
                     </th>
                   ) : null}
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Kodu</th>
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Adı</th>
+                  <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ağırlık</th>
+                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover w-16">Ana Birim</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Aylık Liste (₺)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (₺)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim ($)</th>
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (€)</th>
-                  <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                    Hareketler
-                  </th>
+
                   <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Bilgisi</th>
                 </tr>
@@ -690,11 +771,14 @@ export default function InventoryPage() {
                       </td>
                       <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
                         <div className="font-medium text-text-primary leading-tight">
-                          {formatInventoryBilingualLabel(item.ItemName, item.ItemNameEn)}
+                          {selectedLanguage === 'tr' ? item.ItemName : (item.ItemNameEn || item.ItemName)}
                         </div>
-                        <div className="text-text-secondary text-[10px] mt-0.5">
-                          Birim: {item.UnitPrice != null ? formatTry(item.UnitPrice) : formatTry(item.PurchasePrice ?? 0)}
-                        </div>
+                      </td>
+                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums whitespace-nowrap">
+                        {item.Weight != null ? `${item.Weight} kg` : '-'}
+                      </td>
+                      <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
+                        {item.UnitName ?? '-'}
                       </td>
                       <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-success tabular-nums">
                         {item.MonthlyListPrice != null ? formatTry(item.MonthlyListPrice) : '-'}
@@ -708,19 +792,7 @@ export default function InventoryPage() {
                       <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums">
                         {item.UnitPriceEur != null ? formatEur(item.UnitPriceEur) : '-'}
                       </td>
-                      <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">
-                        <button
-                          type="button"
-                          className="btn-secondary py-1 px-2 text-[11px]"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            navigate(`/inventory/${item.ItemId}/movements`);
-                          }}
-                          title="Ürün hareket dökümü"
-                        >
-                          Hareketler
-                        </button>
-                      </td>
+
                       <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">{statusBadge}</td>
                       <td className="py-0 px-1.5 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">
                         {item.CreatedByUserFullName || item.CreatedByUserName || '-'} • {formatShortDateTime(item.CreatedAt)}
@@ -762,4 +834,3 @@ export default function InventoryPage() {
     </div>
   );
 }
-

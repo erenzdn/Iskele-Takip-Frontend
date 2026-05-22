@@ -1,26 +1,34 @@
 export default {
-  appId: 'com.iskeletakip.desktop',
-  productName: 'İskeleTakip',
+  appId: 'com.iskeletakip.app',
+  productName: 'IskeleTakip',
   directories: {
     output: 'release',
   },
+  publish: [
+    {
+      provider: 'github',
+      owner: 'erenzdn',
+      repo: 'Iskele-Takip-Frontend',
+      releaseType: 'release',
+    },
+  ],
   files: ['dist-web/**/*', 'dist-electron/**/*', 'package.json', 'LICENSE.txt'],
   win: {
-    target: ['nsis'],
-    signAndEditExecutable: false, // Symlink hatasını önlemek için imzalama devre dışı
-    // icon: 'assets/icon.ico',  // assets/icon.ico ekledikten sonra aktif edin
+    target: [
+      {
+        target: 'nsis',
+        arch: ['x64'],
+      },
+    ],
+    signAndEditExecutable: false,
   },
   nsis: {
-    oneClick: false,
-    allowToChangeInstallationDirectory: true,
-    // Kurulum sihirbazı ve kaldırma programı ikonları (assets/icon.ico ekledikten sonra aktif edin)
-    // installerIcon: 'assets/icon.ico',
-    // uninstallerIcon: 'assets/icon.ico',
-    // Kısayollar
-    createDesktopShortcut: 'always',
+    oneClick: true,
+    allowToChangeInstallationDirectory: false,
+    perMachine: false,
+    createDesktopShortcut: true,
     createStartMenuShortcut: true,
-    shortcutName: 'İskeleTakip',
-    // Lisans metni (kurulum sırasında kabul ekranı gösterir)
+    shortcutName: 'İskele Takip',
     license: 'LICENSE.txt',
   },
 };

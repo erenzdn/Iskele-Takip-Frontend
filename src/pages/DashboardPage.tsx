@@ -76,6 +76,12 @@ export default function DashboardPage() {
   const [monthlyRevenueData, setMonthlyRevenueData] = useState<{ ay: string; gelir: number }[]>([]);
   const [totalStockSum, setTotalStockSum] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [isMounted, setIsMounted] = useState(false);
+
+  useEffect(() => {
+    const timer = setTimeout(() => setIsMounted(true), 100);
+    return () => clearTimeout(timer);
+  }, []);
 
   useEffect(() => {
     loadDashboardData();
@@ -340,35 +346,37 @@ export default function DashboardPage() {
             <h2 className="text-lg font-semibold">Aylık Gelir Trendi</h2>
           </div>
           <div className="h-[260px] w-full min-w-0">
-            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
-              <BarChart data={monthlyRevenueData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
-                <XAxis
-                  dataKey="ay"
-                  tick={{ fill: chartColors.textSecondary, fontSize: 12 }}
-                  axisLine={{ stroke: chartColors.axis }}
-                  tickLine={false}
-                />
-                <YAxis
-                  tick={{ fill: chartColors.textSecondary, fontSize: 12 }}
-                  axisLine={false}
-                  tickLine={false}
-                  tickFormatter={(v) => (v >= 1000 ? `${v / 1000}K` : String(v))}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: chartColors.panel,
-                    border: `1px solid ${chartColors.axis}`,
-                    borderRadius: '8px',
-                  }}
-                  labelStyle={{ color: chartColors.textPrimary }}
-                  itemStyle={{ color: chartColors.textPrimary }}
-                  formatter={(value: number | undefined) => [value != null ? formatCurrency(value) : '0', 'Gelir']}
-                  labelFormatter={(label) => label}
-                />
-                <Bar dataKey="gelir" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+            {isMounted && (
+              <ResponsiveContainer width="100%" height={260} minWidth={0} minHeight={0}>
+                <BarChart data={monthlyRevenueData} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={chartColors.grid} vertical={false} />
+                  <XAxis
+                    dataKey="ay"
+                    tick={{ fill: chartColors.textSecondary, fontSize: 12 }}
+                    axisLine={{ stroke: chartColors.axis }}
+                    tickLine={false}
+                  />
+                  <YAxis
+                    tick={{ fill: chartColors.textSecondary, fontSize: 12 }}
+                    axisLine={false}
+                    tickLine={false}
+                    tickFormatter={(v) => (v >= 1000 ? `${v / 1000}K` : String(v))}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: chartColors.panel,
+                      border: `1px solid ${chartColors.axis}`,
+                      borderRadius: '8px',
+                    }}
+                    labelStyle={{ color: chartColors.textPrimary }}
+                    itemStyle={{ color: chartColors.textPrimary }}
+                    formatter={(value: number | undefined) => [value != null ? formatCurrency(value) : '0', 'Gelir']}
+                    labelFormatter={(label) => label}
+                  />
+                  <Bar dataKey="gelir" fill={chartColors.primary} radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            )}
           </div>
         </div>
         <div className="card">

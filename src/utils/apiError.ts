@@ -119,6 +119,28 @@ export function getApiErrorMessage(error: unknown): string {
   return msg || 'Beklenmeyen hata';
 }
 
+export function getStockReceiptDeleteErrorMessage(error: unknown): string {
+  const status = (error as { status?: number })?.status;
+  if (status === 404) {
+    return (
+      'Silme servisi sunucuda bulunamadı (404). Backend\'de DELETE /stock-receipts/:id route\'u ve ' +
+      '066 migration\'ının production\'a deploy edildiğinden emin olun.'
+    );
+  }
+  if (status === 403) {
+    return (
+      'Stok fişi silme yetkiniz yok. Kullanıcıya stockReceipts_delete izni verin ve tekrar giriş yapın.'
+    );
+  }
+  if (status === 409) {
+    return (
+      getApiErrorMessage(error) ||
+      'Yalnızca iptal edilmiş fişler silinebilir. Önce fişi iptal edin.'
+    );
+  }
+  return getApiErrorMessage(error) || 'Silme işlemi başarısız';
+}
+
 export function getApiFieldErrors(
   error: unknown,
   expectedFields?: string[]

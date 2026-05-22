@@ -44,7 +44,7 @@ interface SignatureResult {
   nonce: string;
 }
 
-type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
+type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE' | 'PUT';
 
 interface RequestMetricEntry {
   count: number;
@@ -293,6 +293,11 @@ class ApiClient {
 
   async patch<T>(endpoint: string, body?: unknown): Promise<T> {
     const request = await this.createRequest('PATCH', endpoint, body);
+    return this.sendAsync<T>(request);
+  }
+
+  async put<T>(endpoint: string, body?: unknown): Promise<T> {
+    const request = await this.createRequest('PUT', endpoint, body);
     return this.sendAsync<T>(request);
   }
 

@@ -33,6 +33,8 @@ export interface CreateInventoryRequest {
   MonthlyListPriceUsd?: number;
   UnitPriceUsd?: number;
   SubCategoryIds?: number[];
+  Weight?: number;
+  UnitId?: number;
 }
 
 export interface UpdateInventoryRequest {
@@ -49,10 +51,73 @@ export interface UpdateInventoryRequest {
   MonthlyListPriceUsd?: number;
   UnitPriceUsd?: number;
   SubCategoryIds?: number[];
+  Weight?: number;
+  UnitId?: number;
 }
 
 export interface CreateInventoryResponse {
   ItemId: number;
+}
+
+export interface ExchangeRateResponse {
+  RateId: number;
+  UsdRate: number;
+  EurRate: number;
+  Notes: string | null;
+  IsActive: boolean;
+  CreatedAt: string;
+  UpdatedAt: string;
+}
+
+export interface UpdateExchangeRatesRequest {
+  UsdRate: number;
+  EurRate: number;
+  Notes?: string;
+}
+
+export interface PricingPresetResponse {
+  PresetId: number;
+  RentalRateTry: number;
+  RentalRateUsd: number;
+  RentalRateEur: number;
+  IsActive: boolean;
+  Notes: string | null;
+  CreatedAt: string;
+  UpdatedAt: string | null;
+}
+
+export interface UpdatePricingPresetRequest {
+  RentalRateTry: number;
+  RentalRateUsd: number;
+  RentalRateEur: number;
+  Notes?: string;
+}
+
+export interface PricePreviewRequest {
+  UnitPrice: number;
+  UsdRate?: number;
+  EurRate?: number;
+  RentalRateTry?: number;
+  RentalRateUsd?: number;
+  RentalRateEur?: number;
+  MonthlyListPrice?: number;
+  MonthlyListPriceUsd?: number;
+  MonthlyListPriceEur?: number;
+}
+
+export interface PricePreviewResponse {
+  UnitPrice: number;
+  UnitPriceUsd: number;
+  UnitPriceEur: number;
+  MonthlyListPrice: number;
+  MonthlyListPriceUsd: number;
+  MonthlyListPriceEur: number;
+  DailyPrice: number;
+  DailyPriceUsd: number;
+  DailyPriceEur: number;
+  rates: { UsdRate: number; EurRate: number };
+  preset: { RentalRateTry: number; RentalRateUsd: number; RentalRateEur: number };
+  overrides: Record<string, boolean>;
 }
 
 export const inventoryService = {
@@ -75,6 +140,10 @@ export const inventoryService = {
 
   async deleteCategoryAsync(id: number): Promise<void> {
     return apiClient.delete<void>(`/categories/${id}`);
+  },
+
+  async applyDiscountAsync(categoryId: number, data: { discountRate: number; type: 'sales' | 'rental' }): Promise<{ message: string; updatedCount: number }> {
+    return apiClient.post<{ message: string; updatedCount: number }>(`/categories/${categoryId}/apply-discount`, data);
   },
 
   // Inventory Items
@@ -140,6 +209,27 @@ export const inventoryService = {
     return apiClient.get<InventoryItemMovementsResponse>(
       qs ? `/inventory/${itemId}/movements?${qs}` : `/inventory/${itemId}/movements`
     );
+  },
+
+  // Pricing & Exchange Rates
+  async getExchangeRatesAsync(): Promise<ExchangeRateResponse> {
+    return apiClient.get<ExchangeRateResponse>('/exchange-rates');
+  },
+
+  async updateExchangeRatesAsync(data: UpdateExchangeRatesRequest): Promise<void> {
+    return apiClient.put<void>('/exchange-rates', data);
+  },
+
+  async getPricingPresetAsync(): Promise<PricingPresetResponse> {
+    return apiClient.get<PricingPresetResponse>('/inventory-pricing-preset');
+  },
+
+  async updatePricingPresetAsync(data: UpdatePricingPresetRequest): Promise<void> {
+    return apiClient.put<void>('/inventory-pricing-preset', data);
+  },
+
+  async getPricePreviewAsync(data: PricePreviewRequest): Promise<PricePreviewResponse> {
+    return apiClient.post<PricePreviewResponse>('/inventory/price-preview', data);
   },
 };
 

@@ -8,6 +8,7 @@ export type ContextMenuIntent = 'default' | 'danger';
 export type ContextMenuActionHandlerKey =
   | 'scaffold.edit'
   | 'scaffold.stockEntry'
+  | 'scaffold.movements'
   | 'scaffold.delete'
   | 'scaffold.exportPdf'
   | 'scaffold.selection.toggle'
@@ -27,11 +28,13 @@ export type ContextMenuActionHandlerKey =
   | 'contract.complete'
   | 'contract.copyCode'
   | 'quote.open'
+  | 'quote.preview'
   | 'quote.copyCode'
   | 'quote.accept'
   | 'quote.rollback'
   | 'quote.convert'
-  | 'quote.clone';
+  | 'quote.clone'
+  | 'quote.delete';
 
 export interface ScaffoldRowTarget {
   entityType: 'scaffold';
@@ -81,6 +84,7 @@ export interface QuoteRowTarget {
     QuoteId: number;
     QuoteCode?: string;
     Status: 'pending' | 'accepted' | 'rejected';
+    ConvertedContractId?: number;
   };
 }
 

@@ -22,11 +22,13 @@ import OfferManagementPage from './pages/OfferManagementPage';
 import MainLayout from './layouts/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import ToastContainer from './components/ToastContainer';
+import UpdateListener from './components/UpdateListener';
 import { ContextMenuProvider } from './context-menu';
 
 function App() {
   return (
-    <HashRouter>
+    <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <UpdateListener />
       <ContextMenuProvider>
         <Routes>
           <Route path="/login" element={<LoginPage />} />
