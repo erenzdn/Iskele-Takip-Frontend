@@ -13,6 +13,8 @@ export interface CreateContractDetailRequest {
   ItemId: number;
   WarehouseId: number;
   RentedQuantity: number;
+  /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
+  ItemCodeOverride?: string | null;
 }
 
 export interface CreateContractManualDetailRequest {
@@ -72,6 +74,8 @@ export type AddContractDetailInventoryRequest = {
   WarehouseId: number;
   RentedQuantity: number;
   IsManual?: false;
+  /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
+  ItemCodeOverride?: string | null;
   /** Kiralama sözleşmesi için: gönderilmezse backend "şimdi" kabul eder */
   EffectiveStartDate?: string;
 };

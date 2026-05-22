@@ -356,6 +356,13 @@ export default function ContractDetailModal({
             Item: undefined,
             ItemName: detail.ItemName ?? '',
             ItemNameEn: detail.ItemNameEn ?? detail.itemNameEn ?? undefined,
+            ItemCode: detail.ItemCode ?? detail.itemCode ?? undefined,
+            ItemCodeOverride:
+              (detail.ItemCodeOverride ??
+                detail.itemCodeOverride ??
+                detail.ItemCode_Override ??
+                detail.item_code_override ??
+                null) as string | null,
           };
         });
         setContractItems(items);
@@ -638,6 +645,8 @@ export default function ContractDetailModal({
           PriceSource: 'INVENTORY',
           Item: item,
           ItemName: item.ItemName,
+          ItemCode: item.ItemCode,
+          ItemCodeOverride: null,
           ItemNameEn: item.ItemNameEn ?? undefined,
         },
       ]);
@@ -859,6 +868,11 @@ export default function ContractDetailModal({
     try {
       setIsBusy(true);
 
+      const normalizeOptionalOverride = (raw: unknown): string | null => {
+        const s = typeof raw === 'string' ? raw.trim() : '';
+        return s ? s : null;
+      };
+
       if (isNew) {
         const details = contractItems.map((item) => {
           if (item.kind === 'manual') {
@@ -873,6 +887,7 @@ export default function ContractDetailModal({
             ItemId: item.ItemId,
             WarehouseId: item.WarehouseId,
             RentedQuantity: item.RentedQuantity,
+            ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
           };
         });
 
@@ -2129,7 +2144,19 @@ export default function ContractDetailModal({
                       const remainingOnRent = item.kind === 'inventory' ? item.RentedQuantity - item.ReturnedQuantity : 0;
                       const itemKey = item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : item.ClientId;
                       const isReturnFormOpen = item.kind === 'inventory' ? returnDetailKey === itemKey : false;
-                      const itemCode = item.kind === 'inventory' ? (availableItems.find((i) => i.ItemId === item.ItemId)?.ItemCode ?? '—') : '—';
+                      const invItem =
+                        item.kind === 'inventory'
+                          ? availableItems.find((i) => i.ItemId === item.ItemId)
+                          : null;
+                      const originalItemCode = invItem?.ItemCode ?? '';
+                      const displayItemCode =
+                        item.kind === 'inventory'
+                          ? (item.ItemCode ?? item.ItemCodeOverride ?? originalItemCode) || '—'
+                          : '—';
+                      const hasCodeOverride =
+                        item.kind === 'inventory' &&
+                        item.ItemCodeOverride != null &&
+                        String(item.ItemCodeOverride).trim() !== '';
                       const justAdded = item.kind === 'inventory' ? lastAddedKeys.includes(itemKey) : false;
                       const isRowActive = activeItemsGridCell?.row === rowIndex;
                       return (
@@ -2139,7 +2166,67 @@ export default function ContractDetailModal({
                               justAdded ? 'bg-green-500/20' : ''
                             } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
                           >
-                            <td className="px-3 py-2 text-text-secondary">{itemCode}</td>
+                            <td className="px-3 py-2 text-text-secondary">
+                              {item.kind === 'inventory' ? (
+                                isReadOnly || !isNew ? (
+                                  <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                    <span className="font-mono">{displayItemCode}</span>
+                                    {hasCodeOverride && (
+                                      <span
+                                        className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
+                                        title="Bu belge için özel ürün kodu tanımlı"
+                                      >
+                                        Özel kod
+                                      </span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <div className="flex items-center gap-2 min-w-[160px]">
+                                    <input
+                                      type="text"
+                                      value={item.ItemCodeOverride ?? originalItemCode}
+                                      onChange={(e) => {
+                                        const v = e.target.value.slice(0, 50);
+                                        setContractItems((prev) =>
+                                          prev.map((x) =>
+                                            x.kind === 'inventory' &&
+                                            x.ItemId === item.ItemId &&
+                                            x.WarehouseId === item.WarehouseId
+                                              ? { ...x, ItemCodeOverride: v }
+                                              : x
+                                          )
+                                        );
+                                      }}
+                                      className="input w-full py-1 text-sm font-mono"
+                                      aria-label="Ürün Kodu Override"
+                                      placeholder="Boş bırakılırsa orijinal ürün kodu kullanılır"
+                                      maxLength={50}
+                                    />
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setContractItems((prev) =>
+                                          prev.map((x) =>
+                                            x.kind === 'inventory' &&
+                                            x.ItemId === item.ItemId &&
+                                            x.WarehouseId === item.WarehouseId
+                                              ? { ...x, ItemCodeOverride: null }
+                                              : x
+                                          )
+                                        );
+                                      }}
+                                      className="btn-secondary text-xs whitespace-nowrap"
+                                      disabled={isBusy}
+                                      title="Varsayılana dön"
+                                    >
+                                      Reset
+                                    </button>
+                                  </div>
+                                )
+                              ) : (
+                                '—'
+                              )}
+                            </td>
                             <td className="px-3 py-2">
                               <div className="font-medium">
                                 {item.kind === 'inventory'

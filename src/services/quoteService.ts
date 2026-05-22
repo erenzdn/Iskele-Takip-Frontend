@@ -8,6 +8,8 @@ export interface CreateQuoteDetailRequest {
   Description?: string;
   /** Envanter satırları için satır bazlı ürün adı override (boş/whitespace => null). */
   ItemNameOverride?: string | null;
+  /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
+  ItemCodeOverride?: string | null;
   /** SALE: satır bazlı birim fiyat override */
   OverrideUnitPrice?: number;
   /** RENTAL: satır bazlı aylık fiyat override */

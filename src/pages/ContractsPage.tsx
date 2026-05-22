@@ -3,6 +3,7 @@ import { ClipboardIcon, NotePencilIcon, MagnifyingGlassIcon } from '@phosphor-ic
 import { useLocation, useNavigate } from 'react-router-dom';
 import { contractService } from '../services/contractService';
 import { quoteService } from '../services/quoteService';
+import { quoteTemplateService } from '../services/quoteTemplateService';
 import { customerService } from '../services/customerService';
 import { siteService } from '../services/siteService';
 import {
@@ -12,6 +13,7 @@ import {
   ConstructionSite,
   Quote,
   QuoteStatus,
+  QuoteTemplate,
 } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
 import { getApiErrorMessage } from '../utils/apiError';
@@ -20,6 +22,7 @@ import EmptyState from '../components/EmptyState';
 import ContractDetailModal from '../components/modals/ContractDetailModal';
 import QuoteDetailModal from '../components/modals/QuoteDetailModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
+import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import { toast } from '../hooks/useToast';
 import {
   useContextMenu,
@@ -101,6 +104,12 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const [overdueOnly, setOverdueOnly] = useState(false);
   const hydratedSiteCustomersRef = useRef<Set<number>>(new Set());
   const hydratedCustomersRef = useRef<Set<number>>(new Set());
+  const quoteTemplatesCacheRef = useRef<QuoteTemplate[] | null>(null);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
+  const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [pdfPreviewTitle, setPdfPreviewTitle] = useState('Teklif Önizleme');
+  const [pdfPreviewFileName, setPdfPreviewFileName] = useState('teklif_onizleme.pdf');
+  const [quotePreviewLoading, setQuotePreviewLoading] = useState(false);
 
   useEffect(() => {
     hydratedSiteCustomersRef.current.clear();
@@ -394,6 +403,68 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     [cloningQuoteId, handleQuoteCloned]
   );
 
+  const resolveDefaultQuoteTemplateId = useCallback(async (): Promise<number | null> => {
+    if (!quoteTemplatesCacheRef.current) {
+      const templateList = await quoteTemplateService.getAllAsync();
+      quoteTemplatesCacheRef.current = templateList;
+    }
+    const templates = quoteTemplatesCacheRef.current;
+    const defaultTemplate = templates.find((t) => t.IsDefault) ?? templates[0];
+    return defaultTemplate?.TemplateId ?? null;
+  }, []);
+
+  const closePdfPreview = useCallback(() => {
+    setShowPdfPreview(false);
+    setPdfPreviewUrl((prev) => {
+      if (prev) window.URL.revokeObjectURL(prev);
+      return null;
+    });
+  }, []);
+
+  const handleQuotePreview = useCallback(
+    async (quote: Quote) => {
+      if (quotePreviewLoading) return;
+      const templateId = await resolveDefaultQuoteTemplateId();
+      if (!templateId) {
+        toast.warning('Önizleme için bir şablon seçmelisiniz');
+        return;
+      }
+      try {
+        setQuotePreviewLoading(true);
+        const blob = await quoteService.previewDocumentAsync(quote.QuoteId, templateId);
+        if (blob.size === 0) {
+          toast.error('Sunucu boş yanıt döndürdü (boyut: 0).');
+          return;
+        }
+        const isPdf = blob.type === 'application/pdf' || blob.type === '';
+        if (!isPdf && blob.size < 10000) {
+          const text = await blob.text();
+          try {
+            const j = JSON.parse(text);
+            toast.error('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
+          } catch {
+            toast.error('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
+          }
+          return;
+        }
+        const label = quote.QuoteCode || `#${quote.QuoteId}`;
+        setPdfPreviewTitle(`Teklif Önizleme — ${label}`);
+        setPdfPreviewFileName(
+          quote.QuoteCode ? `teklif_${quote.QuoteCode}.pdf` : `teklif_${quote.QuoteId}.pdf`
+        );
+        const url = window.URL.createObjectURL(blob);
+        setPdfPreviewUrl(url);
+        setShowPdfPreview(true);
+      } catch (error) {
+        console.error('Preview quote error:', error);
+        toast.error(getApiErrorMessage(error) || 'Önizleme hatası');
+      } finally {
+        setQuotePreviewLoading(false);
+      }
+    },
+    [quotePreviewLoading, resolveDefaultQuoteTemplateId]
+  );
+
   const handleContractModalClose = () => {
     setIsContractModalOpen(false);
     setSelectedContract(null);
@@ -487,6 +558,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           QuoteId: quote.QuoteId,
           QuoteCode: quote.QuoteCode,
           Status: quote.Status,
+          ConvertedContractId: quote.ConvertedContractId,
         },
       },
     });
@@ -539,6 +611,12 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           if (!quote) return;
           handleOpenQuote(quote);
         },
+        'quote.preview': async (target) => {
+          const row = target as QuoteRowTarget;
+          const quote = quotes.find((item) => item.QuoteId === row.entityId);
+          if (!quote) return;
+          await handleQuotePreview(quote);
+        },
         'quote.copyCode': async (target) => {
           const row = target as QuoteRowTarget;
           if (!row.rawData.QuoteCode) {
@@ -577,8 +655,23 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           const row = target as QuoteRowTarget;
           await handleQuoteCloneFromRow(row.entityId);
         },
+        'quote.delete': async (target) => {
+          const row = target as QuoteRowTarget;
+          if (row.rawData.ConvertedContractId) {
+            toast.warning('Sözleşmeye dönüştürülmüş teklifler silinemez.');
+            return;
+          }
+          try {
+            await quoteService.deleteAsync(row.entityId);
+            toast.success('Teklif silindi.');
+            await loadData();
+          } catch (error) {
+            console.error('Delete quote error:', error);
+            toast.error(getApiErrorMessage(error));
+          }
+        },
       }),
-      [handleQuoteCloneFromRow, loadData, quotes]
+      [handleQuoteCloneFromRow, handleQuotePreview, loadData, quotes]
     )
   );
 
@@ -966,6 +1059,14 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           isClonedDraft={isQuoteClonedDraft}
         />
       )}
+
+      <PdfPreviewModal
+        open={showPdfPreview}
+        pdfUrl={pdfPreviewUrl}
+        title={pdfPreviewTitle}
+        downloadFileName={pdfPreviewFileName}
+        onClose={closePdfPreview}
+      />
 
       <ConfirmModal
         open={showCompleteConfirm}

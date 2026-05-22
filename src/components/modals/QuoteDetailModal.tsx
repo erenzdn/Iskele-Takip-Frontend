@@ -403,13 +403,24 @@ export default function QuoteDetailModal({
                 ? Number(detail.MonthlyPriceOverride)
                 : undefined,
             Item: undefined,
-            ItemName: detail.ItemName || '',
+            // ItemName: envanterdeki orijinal ad (detail.ItemName backend'de override birleşik dönebilir)
+            ItemName:
+              detail.Item?.ItemName ??
+              detail.item?.itemName ??
+              '',
             ItemNameOverride:
               (detail.ItemNameOverride ??
                 detail.itemNameOverride ??
                 detail.ItemName_Override ??
                 detail.item_name_override ??
                 null) as any,
+            ItemCode: detail.ItemCode ?? detail.itemCode ?? undefined,
+            ItemCodeOverride:
+              (detail.ItemCodeOverride ??
+                detail.itemCodeOverride ??
+                detail.ItemCode_Override ??
+                detail.item_code_override ??
+                null) as string | null,
             ItemNameEn: detail.ItemNameEn ?? detail.itemNameEn ?? undefined,
           };
         });
@@ -636,9 +647,17 @@ export default function QuoteDetailModal({
       const itemsWithNames = await Promise.all(
         quoteItems.map(async (item) => {
           if (item.kind === 'manual') return item;
-          if (item.ItemName) return item;
           try {
-            const inventoryItem = await inventoryService.getByIdAsync(item.ItemId);
+            const inventoryItem =
+              item.Item ?? availableItems.find((i) => i.ItemId === item.ItemId) ??
+              (await inventoryService.getByIdAsync(item.ItemId));
+            if (
+              item.Item &&
+              item.ItemName === inventoryItem.ItemName &&
+              item.ItemNameEn !== undefined
+            ) {
+              return item;
+            }
             return {
               ...item,
               Item: inventoryItem,
@@ -646,17 +665,18 @@ export default function QuoteDetailModal({
               ItemNameEn: inventoryItem.ItemNameEn ?? undefined,
             };
           } catch {
-            return { ...item, ItemName: 'Bilinmiyor' };
+            return { ...item, ItemName: item.ItemName || 'Bilinmiyor' };
           }
         })
       );
-      setQuoteItems(itemsWithNames);
+      const changed = itemsWithNames.some((it, i) => it !== quoteItems[i]);
+      if (changed) setQuoteItems(itemsWithNames);
     };
 
-    if (quoteItems.length > 0 && quoteItems.some((i) => i.kind === 'inventory' && !i.ItemName)) {
+    if (quoteItems.some((i) => i.kind === 'inventory')) {
       loadItemNames();
     }
-  }, [quoteItems.length]);
+  }, [quoteItems.length, availableItems.length]);
 
   useEffect(() => {
     if (quoteItems.length === 0) return;
@@ -672,12 +692,21 @@ export default function QuoteDetailModal({
         // Sadece eksik envanter referansını ve görselleme alanlarını doldur.
         const isExistingDetail = item.QuoteDetailId != null;
         if (isExistingDetail) {
-          if (item.Item && item.ItemNameEn !== undefined) return item;
+          const canonicalName = inv.ItemName;
+          const canonicalEn = inv.ItemNameEn ?? undefined;
+          if (
+            item.Item &&
+            item.ItemName === canonicalName &&
+            item.ItemNameEn !== undefined
+          ) {
+            return item;
+          }
           changed = true;
           return {
             ...item,
             Item: item.Item ?? inv,
-            ItemNameEn: item.ItemNameEn ?? inv.ItemNameEn ?? undefined,
+            ItemName: canonicalName,
+            ItemNameEn: item.ItemNameEn ?? canonicalEn,
           };
         }
         // Yeni teklif / kullanicinin client-side eklemis oldugu kalem: para birimi
@@ -818,6 +847,8 @@ export default function QuoteDetailModal({
           Item: item,
           ItemName: item.ItemName,
           ItemNameOverride: null,
+          ItemCode: item.ItemCode,
+          ItemCodeOverride: null,
           ItemNameEn: item.ItemNameEn ?? undefined,
         },
       ]);
@@ -1018,7 +1049,7 @@ export default function QuoteDetailModal({
 
     try {
       setIsBusy(true);
-      const normalizeItemNameOverride = (raw: unknown): string | null => {
+      const normalizeOptionalOverride = (raw: unknown): string | null => {
         const s = typeof raw === 'string' ? raw.trim() : '';
         return s ? s : null;
       };
@@ -1036,7 +1067,8 @@ export default function QuoteDetailModal({
           Quantity: item.Quantity,
           is_manual: false,
           // Kritik: Kullanıcı dokunmasa bile state'teki mevcut değeri payload'a koy.
-          ItemNameOverride: normalizeItemNameOverride(item.ItemNameOverride),
+          ItemNameOverride: normalizeOptionalOverride(item.ItemNameOverride),
+          ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
         };
         if (quoteType === 'SALE') {
           if (item.OverrideUnitPrice != null && Number.isFinite(item.OverrideUnitPrice)) {
@@ -1555,6 +1587,8 @@ export default function QuoteDetailModal({
             OverrideMonthlyPrice: undefined,
             Item: inv,
             ItemName: inv.ItemName,
+            ItemCode: inv.ItemCode,
+            ItemCodeOverride: null,
             ItemNameEn: inv.ItemNameEn ?? undefined,
           });
         }
@@ -2361,8 +2395,18 @@ export default function QuoteDetailModal({
                   ) : (
                     quoteItems.map((item, rowIndex) => {
                       const invItem = item.kind === 'inventory' ? availableItems.find((i) => i.ItemId === item.ItemId) : null;
-                      const itemCode = invItem?.ItemCode ?? '—';
+                      const originalItemCode = invItem?.ItemCode ?? '';
+                      const displayItemCode =
+                        item.kind === 'inventory'
+                          ? (item.ItemCode ?? item.ItemCodeOverride ?? originalItemCode) || '—'
+                          : '—';
+                      const hasCodeOverride =
+                        item.kind === 'inventory' &&
+                        item.ItemCodeOverride != null &&
+                        String(item.ItemCodeOverride).trim() !== '';
                       const itemEnName = invItem?.ItemNameEn;
+                      const canonicalItemName =
+                        invItem?.ItemName ?? (item.kind === 'inventory' ? item.ItemName : '');
                       const lineTotal = getLineTotal(item);
                       const justAdded =
                         item.kind === 'inventory' ? lastAddedItemIds.includes(item.ItemId) : false;
@@ -2374,7 +2418,63 @@ export default function QuoteDetailModal({
                             justAdded ? 'bg-green-500/20' : ''
                           } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
                         >
-                          <td className="px-3 py-2 text-text-secondary">{itemCode}</td>
+                          <td className="px-3 py-2 text-text-secondary">
+                            {item.kind === 'inventory' ? (
+                              isReadOnly ? (
+                                <span className="inline-flex items-center gap-1.5 flex-wrap">
+                                  <span className="font-mono">{displayItemCode}</span>
+                                  {hasCodeOverride && (
+                                    <span
+                                      className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
+                                      title="Bu belge için özel ürün kodu tanımlı"
+                                    >
+                                      Özel kod
+                                    </span>
+                                  )}
+                                </span>
+                              ) : (
+                                <div className="flex items-center gap-2 min-w-[160px]">
+                                  <input
+                                    type="text"
+                                    value={item.ItemCodeOverride ?? originalItemCode}
+                                    onChange={(e) => {
+                                      const v = e.target.value.slice(0, 50);
+                                      setQuoteItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'inventory' && x.ItemId === item.ItemId
+                                            ? { ...x, ItemCodeOverride: v }
+                                            : x
+                                        )
+                                      );
+                                    }}
+                                    className="input w-full py-1 text-sm font-mono"
+                                    aria-label="Ürün Kodu Override"
+                                    placeholder="Boş bırakılırsa orijinal ürün kodu kullanılır"
+                                    maxLength={50}
+                                  />
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setQuoteItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'inventory' && x.ItemId === item.ItemId
+                                            ? { ...x, ItemCodeOverride: null }
+                                            : x
+                                        )
+                                      );
+                                    }}
+                                    className="btn-secondary text-xs whitespace-nowrap"
+                                    disabled={isBusy}
+                                    title="Varsayılana dön"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                              )
+                            ) : (
+                              '—'
+                            )}
+                          </td>
                           <td className="px-3 py-2 font-medium">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
@@ -2383,19 +2483,24 @@ export default function QuoteDetailModal({
                                     item.ItemNameOverride ?? itemEnName
                                   ) : (
                                     <span>
-                                      {item.ItemNameOverride ?? item.ItemName}{' '}
+                                      {item.ItemNameOverride ?? canonicalItemName}{' '}
                                       <span className="text-yellow-500 text-xs">(Bu ürünün İngilizce adı yoktur)</span>
                                     </span>
                                   )
                                 ) : (
-                                  item.ItemNameOverride ?? item.ItemName
+                                  item.ItemNameOverride ?? canonicalItemName
                                 )
                               ) : (
                                 <div className="flex items-center gap-2 min-w-[280px]">
                                   <div className="flex-1 relative">
                                     <input
                                       type="text"
-                                      value={item.ItemNameOverride ?? (language === 'EN' ? (itemEnName || item.ItemName) : item.ItemName)}
+                                      value={
+                                        item.ItemNameOverride ??
+                                        (language === 'EN'
+                                          ? itemEnName || canonicalItemName
+                                          : canonicalItemName)
+                                      }
                                       onChange={(e) => {
                                         const v = e.target.value;
                                         setQuoteItems((prev) =>
@@ -2408,7 +2513,7 @@ export default function QuoteDetailModal({
                                       }}
                                       className="input w-full py-1 text-sm"
                                       aria-label="Ürün Adı"
-                                      placeholder={item.ItemName}
+                                      placeholder={canonicalItemName}
                                     />
                                     {language === 'EN' && !itemEnName && (
                                       <span className="absolute right-2 top-1/2 -translate-y-1/2 text-yellow-500 text-xs pointer-events-none">

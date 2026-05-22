@@ -28,11 +28,13 @@ export type ContextMenuActionHandlerKey =
   | 'contract.complete'
   | 'contract.copyCode'
   | 'quote.open'
+  | 'quote.preview'
   | 'quote.copyCode'
   | 'quote.accept'
   | 'quote.rollback'
   | 'quote.convert'
-  | 'quote.clone';
+  | 'quote.clone'
+  | 'quote.delete';
 
 export interface ScaffoldRowTarget {
   entityType: 'scaffold';
@@ -82,6 +84,7 @@ export interface QuoteRowTarget {
     QuoteId: number;
     QuoteCode?: string;
     Status: 'pending' | 'accepted' | 'rejected';
+    ConvertedContractId?: number;
   };
 }
 
