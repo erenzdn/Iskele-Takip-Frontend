@@ -18,8 +18,10 @@
     "electron:dev": "concurrently \"vite\" \"tsc -p tsconfig.electron.json --watch\" \"tsc -p tsconfig.node.json --watch\" \"wait-on http://localhost:5175 && electron dist-electron/main.js\"",
     "electron:build": "npm run build:electron && electron-builder --config electron-builder.config.js",
     "electron:pack": "npm run build:electron && electron-builder --config electron-builder.config.js --dir",
-    "publish": "npm run build:electron && electron-builder --config electron-builder.config.js --win --publish always",
-    "release": "npm version patch && npm run publish"
+    "publish": "npm run release:github",
+    "release:build": "npm run build:electron && electron-builder --config electron-builder.config.js --win --publish never",
+    "release:github": "node scripts/publish-github.mjs",
+    "release": "npm version patch && npm run release:build && npm run release:github"
   },
   "keywords": [
     "electron",

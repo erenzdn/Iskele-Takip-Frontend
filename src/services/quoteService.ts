@@ -1,5 +1,6 @@
 import { apiClient } from './apiClient';
 import { ContractQuoteType, Quote, QuoteDetail, QuoteStatus } from '../models';
+import { CreateSiteRequest } from './siteService';
 
 export interface CreateQuoteDetailRequest {
   ItemId: number;
@@ -28,6 +29,7 @@ export interface CreateQuoteRequest {
   CustomerId: number;
   CustomerAuthorizedContactId: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   StartDate?: string; // ISO 8601 (RENTAL için opsiyonel; boşsa gönderilmez)
   /** Kiralama (RENTAL) için tarih aralığı kullanılır; başlangıç tarihi backendce dönüşüm anında atanabilir */
   PlannedEndDate?: string; // ISO 8601
@@ -48,6 +50,7 @@ export interface UpdateQuoteRequest {
   Subject?: string | null;
   CustomerAuthorizedContactId?: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   /** RENTAL */
   StartDate?: string;
   /** RENTAL */
@@ -64,8 +67,15 @@ export interface UpdateQuoteRequest {
   details?: CreateQuoteDetailRequest[];
 }
 
+export interface UpdateQuoteResponse {
+  warnings?: string[];
+  CreatedSiteId?: number;
+}
+
 export interface CreateQuoteResponse {
   QuoteId: number;
+  warnings?: string[];
+  CreatedSiteId?: number;
 }
 
 export interface ConvertQuoteResponse {
@@ -95,6 +105,7 @@ export interface CreateQuoteFromPackageRequest {
   CustomerId: number;
   CustomerAuthorizedContactId: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   StartDate?: string;
   /** Kiralama için opsiyonel */
   PlannedEndDate?: string;
@@ -106,6 +117,8 @@ export interface CreateQuoteFromPackageRequest {
 export interface CreateQuoteFromPackageResponse {
   QuoteId: number;
   message: string;
+  warnings?: string[];
+  CreatedSiteId?: number;
 }
 
 export interface WarehouseAssignment {
@@ -243,20 +256,18 @@ export const quoteService = {
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
-      delete payload.SiteId;
       delete payload.RentalDurationDays;
     }
     return apiClient.post<CreateQuoteResponse>('/quotes', payload);
   },
 
-  async updateAsync(id: number, data: UpdateQuoteRequest): Promise<Quote> {
+  async updateAsync(id: number, data: UpdateQuoteRequest): Promise<Quote & UpdateQuoteResponse> {
     const payload: Record<string, unknown> = { ...data };
     const qType = String((data as any).Type ?? '').toUpperCase();
     // Type gönderilmese bile, SALE akışında tarih/saha gibi alanları göndermemek güvenli.
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
-      delete payload.SiteId;
       delete payload.RentalDurationDays;
     }
     const normalizedStartDate = typeof (payload as any).StartDate === 'string' ? String((payload as any).StartDate).trim() : '';
@@ -274,7 +285,10 @@ export const quoteService = {
     } else {
       payload.RentalDurationDays = Math.floor(rdUp);
     }
-    return apiClient.patch<Quote>(`/quotes/${id}`, payload);
+    return apiClient.patch<Quote & UpdateQuoteResponse>(`/quotes/${id}`, payload).then((raw) => ({
+      ...normalizeQuote(raw),
+      CreatedSiteId: (raw as UpdateQuoteResponse)?.CreatedSiteId ?? (raw as any)?.createdSiteId,
+    }));
   },
 
   async deleteAsync(id: number): Promise<void> {
@@ -358,7 +372,6 @@ export const quoteService = {
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
-      delete payload.SiteId;
       delete payload.RentalDurationDays;
     }
     return apiClient.post<CreateQuoteFromPackageResponse>(

@@ -33,11 +33,24 @@ import { getApiErrorMessage, getApiFieldErrors, userMessageForCustomerRelatedApi
 import { formatInventoryLineBilingualLabel, formatMoney } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
+import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
+import StockErrorPanel from '../StockErrorPanel';
 import { useAuthStore } from '../../store/authStore';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
+import SiteSelectField from '../SiteSelectField';
 import ContractAddLineItemModal from './ContractAddLineItemModal';
 import SettleNonReturnModal from './SettleNonReturnModal';
+import {
+  applyCreatedSiteId,
+  buildSiteRequestFields,
+  EMPTY_NEW_SITE_FORM,
+  isSaveBlockedByNewSite,
+  isSiteRelatedApiMessage,
+  NEW_SITE_SELECT_VALUE,
+  NewSiteFormState,
+  validateSiteSelection,
+} from '../../utils/siteSelection';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -92,6 +105,8 @@ export default function ContractDetailModal({
   const [sites, setSites] = useState<ConstructionSite[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState<number | ''>('');
   const [sitesLoading, setSitesLoading] = useState(false);
+  const [isNewSiteMode, setIsNewSiteMode] = useState(false);
+  const [newSiteForm, setNewSiteForm] = useState<NewSiteFormState>(EMPTY_NEW_SITE_FORM);
   const [startDate, setStartDate] = useState(
     new Date().toISOString().split('T')[0]
   );
@@ -155,6 +170,7 @@ export default function ContractDetailModal({
   const itemsGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
+  const [saveStockError, setSaveStockError] = useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
@@ -170,10 +186,37 @@ export default function ContractDetailModal({
     return `${contact.Name}${titlePart}${phonePart}`;
   };
 
+  const resetSiteSelection = () => {
+    setSelectedSiteId('');
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+  };
+
+  const resetNewSiteMode = () => {
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+  };
+
+  const handleNewSiteFormChange = (field: keyof NewSiteFormState, value: string) => {
+    setNewSiteForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSiteSelect = (value: number | '' | typeof NEW_SITE_SELECT_VALUE) => {
+    if (value === NEW_SITE_SELECT_VALUE) {
+      setIsNewSiteMode(true);
+      setSelectedSiteId('');
+      return;
+    }
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+    setSelectedSiteId(value);
+  };
+
   const handleCustomerChange = (value: number | '') => {
     setSelectedCustomerId(value);
     setSelectedAuthorizedContactId('');
     setAuthorizedContactError(null);
+    resetSiteSelection();
   };
 
 
@@ -429,10 +472,9 @@ export default function ContractDetailModal({
   useEffect(() => {
     if (selectedCustomerId) {
       loadSites(Number(selectedCustomerId));
-      setSelectedSiteId(''); // Müşteri değişince şantiye seçimini sıfırla
     } else {
       setSites([]);
-      setSelectedSiteId('');
+      resetSiteSelection();
     }
   }, [selectedCustomerId]);
 
@@ -849,9 +891,15 @@ export default function ContractDetailModal({
       return;
     }
 
-    // Eğer müşterinin şantiyeleri varsa ve şantiye seçilmemişse uyar
-    if (sites.length > 0 && !selectedSiteId) {
-      toast.warning('Bu müşterinin şantiyeleri bulunuyor. Lütfen bir şantiye seçin.');
+    const siteValidationError = validateSiteSelection({
+      sites,
+      isNewSiteMode,
+      selectedSiteId,
+      newSiteName: newSiteForm.SiteName,
+      siteRequired: sites.length > 0,
+    });
+    if (siteValidationError) {
+      toast.warning(siteValidationError);
       return;
     }
 
@@ -867,6 +915,7 @@ export default function ContractDetailModal({
 
     try {
       setIsBusy(true);
+      setSaveStockError(null);
 
       const normalizeOptionalOverride = (raw: unknown): string | null => {
         const s = typeof raw === 'string' ? raw.trim() : '';
@@ -909,9 +958,8 @@ export default function ContractDetailModal({
           requestBody.PlannedEndDate = new Date(plannedEndDate).toISOString();
         }
 
-        if (selectedSiteId) {
-          requestBody.SiteId = Number(selectedSiteId);
-        }
+        const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+        Object.assign(requestBody, siteFields);
         if (normalizeText(contractCode)) {
           requestBody.ContractCode = normalizeText(contractCode);
         }
@@ -925,6 +973,18 @@ export default function ContractDetailModal({
         }
 
         const result = await contractService.createAsync(requestBody as any);
+        if (result.warnings && result.warnings.length > 0) {
+          toast.warning(result.warnings.join('\n'));
+        }
+        if (result.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: result.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
         toast.success(`Sözleşme başarıyla oluşturuldu! (ID: ${result.ContractId})`);
         onClose();
         return;
@@ -939,9 +999,16 @@ export default function ContractDetailModal({
         }
 
         const originalSiteId = (source as { SiteId?: number | null } | null | undefined)?.SiteId ?? null;
-        const nextSiteId = selectedSiteId ? Number(selectedSiteId) : null;
-        if (originalSiteId !== nextSiteId) {
-          if (nextSiteId != null) updateBody.SiteId = nextSiteId;
+        const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+        if (isNewSiteMode) {
+          if (siteFields.newSite) {
+            updateBody.newSite = siteFields.newSite;
+          }
+        } else {
+          const nextSiteId = selectedSiteId ? Number(selectedSiteId) : null;
+          if (originalSiteId !== nextSiteId) {
+            if (nextSiteId != null) updateBody.SiteId = nextSiteId;
+          }
         }
 
         const originalIskonto = Number((source as { Iskonto?: number } | null | undefined)?.Iskonto ?? 0) || 0;
@@ -998,7 +1065,16 @@ export default function ContractDetailModal({
           return;
         }
 
-        await contractService.updateAsync(contract.ContractId, updateBody as any);
+        const updateResult = await contractService.updateAsync(contract.ContractId, updateBody as any);
+        if (updateResult.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: updateResult.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
         const rentalDatesChanged =
           isRentalContract && (updateBody.StartDate != null || updateBody.PlannedEndDate != null);
         toast.success(
@@ -1035,14 +1111,35 @@ export default function ContractDetailModal({
             : 'Seçilen merkez yetkili bu müşteriye ait değil.'
         );
       }
-      if (errorMsg.includes('Yetersiz') || errorMsg.includes('stok')) {
-        toast.error(`Stok hatası: ${errorMsg}\nLütfen ürün miktarlarını kontrol edin.`);
+      if (errorMsg.includes('Yetersiz') || errorMsg.includes('stok') || isStockErrorMessage(errorMsg)) {
+        setSaveStockError(errorMsg);
+      } else if (isSiteRelatedApiMessage(errorMsg)) {
+        toast.error(errorMsg);
       } else {
         toast.error(userMessageForCustomerRelatedApiError(error, errorMsg || 'Kaydetme hatası'));
       }
     } finally {
       setIsBusy(false);
     }
+  };
+
+  const handleReduceSaveStockQuantity = (available: number) => {
+    const itemName = extractFirstQuotedName(saveStockError ?? '');
+    if (!itemName) return;
+    setContractItems((prev) =>
+      prev.map((i) => {
+        if (i.kind !== 'inventory') return i;
+        const inv = availableItems.find((a) => a.ItemId === i.ItemId);
+        const label = inv
+          ? formatInventoryLineBilingualLabel(inv.ItemName, inv.ItemNameEn, inv)
+          : i.ItemName;
+        if (label.includes(itemName) || i.ItemName === itemName) {
+          return { ...i, RentedQuantity: Math.max(1, Math.min(i.RentedQuantity, available)) };
+        }
+        return i;
+      })
+    );
+    setSaveStockError(null);
   };
 
   const handleDeleteClick = () => {
@@ -1678,6 +1775,14 @@ export default function ContractDetailModal({
         {(activeTab === 'info' || isNew) && (
         <>
         <div className="space-y-4">
+          {isNew && saveStockError && (
+            <StockErrorPanel
+              message={saveStockError}
+              onRetry={handleSave}
+              onReduceQuantity={handleReduceSaveStockQuantity}
+              onDismiss={() => setSaveStockError(null)}
+            />
+          )}
           {/* Üst: Genel Bilgiler - teklif ekranı gibi yatay grid */}
           <section className="rounded-xl border border-background-border bg-background-panel p-3 shadow-sm">
             <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 pb-1.5 border-b border-background-border">
@@ -1806,35 +1911,18 @@ export default function ContractDetailModal({
               )}
 
               {selectedCustomerId && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
-                    Şantiye Seçimi {sites.length > 0 ? '*' : '(Opsiyonel)'}
-                  </label>
-                  {sitesLoading ? (
-                    <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
-                  ) : sites.length > 0 ? (
-                    <select
-                      value={selectedSiteId}
-                      onChange={(e) => setSelectedSiteId(Number(e.target.value) || '')}
-                      disabled={isReadOnly}
-                      className="input w-full text-sm py-1.5"
-                      required={sites.length > 0}
-                    >
-                      <option value="">Şantiye seçin</option>
-                      {sites.map((site) => (
-                        <option key={site.SiteId} value={site.SiteId}>
-                          {site.SiteName}
-                          {site.SiteAddress && ` - ${site.SiteAddress}`}
-                          {site.ResponsiblePerson && ` (${site.ResponsiblePerson})`}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="input w-full text-text-secondary bg-background-secondary text-sm py-2">
-                      Bu müşterinin şantiyesi yok
-                    </div>
-                  )}
-                </div>
+                <SiteSelectField
+                  sites={sites}
+                  sitesLoading={sitesLoading}
+                  selectedSiteId={selectedSiteId}
+                  isNewSiteMode={isNewSiteMode}
+                  newSiteForm={newSiteForm}
+                  onSelectSite={handleSiteSelect}
+                  onNewSiteFormChange={handleNewSiteFormChange}
+                  onCancelNewSite={resetNewSiteMode}
+                  required={sites.length > 0}
+                  disabled={isReadOnly}
+                />
               )}
 
               <div className="space-y-0.5">
@@ -2098,7 +2186,12 @@ export default function ContractDetailModal({
                 {!isReadOnly && (
                   <>
                     <button type="button" onClick={onClose} className="btn-secondary">İptal</button>
-                    <button type="button" onClick={handleSave} disabled={isBusy} className="btn-primary">
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
+                      className="btn-primary"
+                    >
                       {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
                     </button>
                   </>

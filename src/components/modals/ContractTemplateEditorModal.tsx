@@ -143,7 +143,7 @@ export default function ContractTemplateEditorModal({
     },
     editorProps: {
       attributes: {
-        class: 'focus:outline-none min-h-[25.7cm]',
+        class: 'focus:outline-none',
       },
     },
     onSelectionUpdate: ({ editor }) => {
@@ -951,11 +951,8 @@ export default function ContractTemplateEditorModal({
       </div>
 
       {/* MS Word style maximized workspace */}
-      <div className={`bg-background-elevated flex-1 p-2 md:p-4 flex justify-center overflow-auto min-h-0 ${showGridlines ? 'show-gridlines' : 'hide-gridlines'}`}>
-        <div 
-          className="bg-background-panel w-full max-w-[21cm] min-h-[29.7cm] p-[1.5cm] shadow-xl border border-background-border text-text-primary shrink-0 self-start my-2"
-          style={{ boxSizing: 'border-box' }}
-        >
+      <div className={`template-editor-workspace flex-1 p-2 md:p-4 flex justify-center overflow-auto min-h-0 ${showGridlines ? 'show-gridlines' : 'hide-gridlines'}`}>
+        <div className="template-editor-paper text-text-primary my-2">
           <EditorContent editor={editor} />
         </div>
       </div>

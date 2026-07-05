@@ -8,6 +8,7 @@ import {
   ReturnItemResponse,
   SettleNonReturnRequest,
 } from '../models';
+import { CreateSiteRequest } from './siteService';
 
 export interface CreateContractDetailRequest {
   ItemId: number;
@@ -30,7 +31,8 @@ export interface CreateContractRequest {
   ContractCode?: string;
   CustomerId: number;
   CustomerAuthorizedContactId: number;
-  SiteId?: number; // Şantiye ID (opsiyonel)
+  SiteId?: number;
+  newSite?: CreateSiteRequest;
   StartDate: string; // ISO 8601
   PlannedEndDate: string; // ISO 8601
   InitialTotalPrice: number;
@@ -49,6 +51,7 @@ export interface UpdateContractRequest {
   ContractCode?: string;
   CustomerAuthorizedContactId?: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   Iskonto?: number;
   VatRate?: number;
   Currency?: 'TRY' | 'EUR';
@@ -60,8 +63,15 @@ export interface UpdateContractRequest {
   Language?: 'TR' | 'EN';
 }
 
+export interface UpdateContractResponse {
+  warnings?: string[];
+  CreatedSiteId?: number;
+}
+
 export interface CreateContractResponse {
   ContractId: number;
+  warnings?: string[];
+  CreatedSiteId?: number;
 }
 
 export interface RevertToQuoteResponse {
@@ -192,8 +202,8 @@ export const contractService = {
     return apiClient.post<CreateContractResponse>('/contracts', data);
   },
 
-  async updateAsync(id: number, data: UpdateContractRequest): Promise<void> {
-    return apiClient.patch<void>(`/contracts/${id}`, data as Record<string, unknown>);
+  async updateAsync(id: number, data: UpdateContractRequest): Promise<UpdateContractResponse> {
+    return apiClient.patch<UpdateContractResponse>(`/contracts/${id}`, data as Record<string, unknown>);
   },
 
   async addDetailsAsync(id: number, body: AddContractDetailsRequestBody): Promise<AddContractDetailsResponse> {

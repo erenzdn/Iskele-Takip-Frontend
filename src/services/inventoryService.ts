@@ -184,7 +184,14 @@ export const inventoryService = {
   },
 
   async getWarehousesByItemAsync(itemId: number): Promise<WarehouseStock[]> {
-    return apiClient.get<WarehouseStock[]>(`/inventory/${itemId}/warehouses`);
+    const raw = await apiClient.get<
+      WarehouseStock[] | { warehouseStock?: WarehouseStock[]; WarehouseStock?: WarehouseStock[] }
+    >(`/inventory/${itemId}/warehouses`);
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') {
+      return raw.warehouseStock ?? raw.WarehouseStock ?? [];
+    }
+    return [];
   },
 
   async getAuditLogsByItemAsync(itemId: number): Promise<AuditLog[]> {
