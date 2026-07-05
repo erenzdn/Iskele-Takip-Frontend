@@ -311,16 +311,16 @@ export default function SystemSettingsPage() {
   };
 
   const handleSavePreset = async () => {
-    if (rentalRateTry === '' || rentalRateUsd === '' || rentalRateEur === '') {
-      toast.warning('Tüm kiralama oranları zorunludur.');
+    if (rentalRateTry === '') {
+      toast.warning('TL kiralama oranı zorunludur.');
       return;
     }
     try {
       setBusy(true);
       await inventoryService.updatePricingPresetAsync({
         RentalRateTry: Number(rentalRateTry) / 100,
-        RentalRateUsd: Number(rentalRateUsd) / 100,
-        RentalRateEur: Number(rentalRateEur) / 100,
+        RentalRateUsd: rentalRateUsd === '' ? null : Number(rentalRateUsd) / 100,
+        RentalRateEur: rentalRateEur === '' ? null : Number(rentalRateEur) / 100,
         Notes: presetNotes,
       });
       toast.success('Kiralama oranları güncellendi');
@@ -738,7 +738,7 @@ export default function SystemSettingsPage() {
                 <span className="text-xs text-text-secondary">%{Number(rentalRateTry) || 0}</span>
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1">USD Oranı</label>
+                <label className="block text-xs font-medium mb-1">USD Oranı <span className="text-text-secondary font-normal">(opsiyonel)</span></label>
                 <input
                   type="number"
                   value={rentalRateUsd}
@@ -750,7 +750,7 @@ export default function SystemSettingsPage() {
                 <span className="text-xs text-text-secondary">%{Number(rentalRateUsd) || 0}</span>
               </div>
               <div>
-                <label className="block text-xs font-medium mb-1">EUR Oranı</label>
+                <label className="block text-xs font-medium mb-1">EUR Oranı <span className="text-text-secondary font-normal">(opsiyonel)</span></label>
                 <input
                   type="number"
                   value={rentalRateEur}

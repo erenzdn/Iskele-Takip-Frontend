@@ -78,8 +78,8 @@ export interface UpdateExchangeRatesRequest {
 export interface PricingPresetResponse {
   PresetId: number;
   RentalRateTry: number;
-  RentalRateUsd: number;
-  RentalRateEur: number;
+  RentalRateUsd: number | null;
+  RentalRateEur: number | null;
   IsActive: boolean;
   Notes: string | null;
   CreatedAt: string;
@@ -88,8 +88,8 @@ export interface PricingPresetResponse {
 
 export interface UpdatePricingPresetRequest {
   RentalRateTry: number;
-  RentalRateUsd: number;
-  RentalRateEur: number;
+  RentalRateUsd?: number | null;
+  RentalRateEur?: number | null;
   Notes?: string;
 }
 
