@@ -10,6 +10,7 @@ export type ContextMenuActionHandlerKey =
   | 'scaffold.stockEntry'
   | 'scaffold.movements'
   | 'scaffold.delete'
+  | 'scaffold.restore'
   | 'scaffold.exportPdf'
   | 'scaffold.selection.toggle'
   | 'scaffold.selection.selectAll'
@@ -27,12 +28,15 @@ export type ContextMenuActionHandlerKey =
   | 'contract.returnTab'
   | 'contract.complete'
   | 'contract.copyCode'
+  | 'contract.archive'
+  | 'contract.unarchive'
   | 'quote.open'
   | 'quote.preview'
   | 'quote.copyCode'
   | 'quote.accept'
   | 'quote.rollback'
   | 'quote.convert'
+  | 'quote.openContract'
   | 'quote.clone'
   | 'quote.delete';
 
@@ -48,6 +52,10 @@ export interface ScaffoldRowTarget {
     OnRent: number;
     UnitPrice?: number;
     MonthlyListPrice?: number;
+    DeletedAt?: string | null;
+    deletedAt?: string | null;
+    IsArchived?: boolean;
+    isArchived?: boolean;
   };
 }
 
@@ -72,7 +80,10 @@ export interface ContractRowTarget {
     ContractId: number;
     ContractCode?: string;
     IsCompleted: boolean;
+    IsCancelled?: boolean;
+    IsArchived?: boolean;
     IsRental: boolean;
+    ListTab?: 'active' | 'completed' | 'cancelled' | 'archived' | 'quotes' | 'quotesConverted';
   };
 }
 

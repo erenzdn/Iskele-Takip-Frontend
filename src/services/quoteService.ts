@@ -127,11 +127,18 @@ export interface WarehouseAssignment {
   Quantity: number;
 }
 
-/** GET /quotes sorgu parametreleri (backend: status + type=SALE|RENTAL + search) */
+/**
+ * GET /quotes sorgu parametreleri.
+ * `converted` = geçmiş liste filtresi (DB Status değil; ConvertedContractId dolu kayıtlar).
+ * Varsayılan liste dönüşmüş teklifleri döndürmez; `includeConverted` yalnızca denetim için.
+ */
+export type QuoteListStatus = QuoteStatus | 'converted';
+
 export type QuoteListQuery = {
-  status?: QuoteStatus;
+  status?: QuoteListStatus;
   quoteType?: ContractQuoteType;
   search?: string;
+  includeConverted?: boolean;
 };
 
 function buildQuotesListPath(query?: QuoteListQuery): string {
@@ -140,12 +147,13 @@ function buildQuotesListPath(query?: QuoteListQuery): string {
   if (query?.quoteType) sp.set('type', query.quoteType);
   const s = query?.search?.trim();
   if (s) sp.set('search', s);
+  if (query?.includeConverted === true) sp.set('includeConverted', 'true');
   const qs = sp.toString();
   return qs ? `/quotes?${qs}` : '/quotes';
 }
 
 function parseQuoteListArg(
-  arg?: QuoteStatus | QuoteListQuery
+  arg?: QuoteListStatus | QuoteListQuery
 ): QuoteListQuery | undefined {
   if (arg === undefined) return undefined;
   if (typeof arg === 'string') return { status: arg };
@@ -153,9 +161,21 @@ function parseQuoteListArg(
 }
 
 function normalizeQuote(raw: any): Quote {
+  const convertedContractId = raw?.ConvertedContractId ?? raw?.convertedContractId;
+  const isConvertedRaw = raw?.IsConverted ?? raw?.isConverted;
+  const isConverted =
+    isConvertedRaw === true ||
+    isConvertedRaw === 1 ||
+    isConvertedRaw === 'true' ||
+    (convertedContractId != null && convertedContractId !== '');
   return {
     ...(raw as Quote),
+    ConvertedContractId:
+      convertedContractId != null && convertedContractId !== ''
+        ? Number(convertedContractId)
+        : undefined,
     ConvertedAt: raw?.ConvertedAt ?? raw?.convertedAt ?? null,
+    IsConverted: isConverted,
     RentalDurationDays: raw?.RentalDurationDays ?? raw?.rentalDurationDays ?? null,
   };
 }
@@ -170,7 +190,7 @@ export const quoteService = {
    * Teklif listesi.
    * Sunucu filtresi: getAllAsync({ quoteType: 'SALE', status: 'pending' })
    */
-  async getAllAsync(arg?: QuoteStatus | QuoteListQuery): Promise<Quote[]> {
+  async getAllAsync(arg?: QuoteListStatus | QuoteListQuery): Promise<Quote[]> {
     const query = parseQuoteListArg(arg);
     const url = buildQuotesListPath(query);
     try {
@@ -178,8 +198,8 @@ export const quoteService = {
       return normalizeQuoteList(rows);
     } catch (error) {
       // Bazı backend sürümlerinde /quotes (parametresiz) 500 dönebilir.
-      // status veya type ile filtre varsa birleştirme denemesi yapılmaz.
-      if (query?.status != null || query?.quoteType != null) throw error;
+      // status, type veya includeConverted ile filtre varsa birleştirme denemesi yapılmaz.
+      if (query?.status != null || query?.quoteType != null || query?.includeConverted) throw error;
       const failures: unknown[] = [];
       const s = query?.search?.trim();
       const base: QuoteListQuery = s ? { search: s } : {};
@@ -291,8 +311,10 @@ export const quoteService = {
     }));
   },
 
-  async deleteAsync(id: number): Promise<void> {
-    return apiClient.delete<void>(`/quotes/${id}`);
+  async deleteAsync(id: number, options?: { reason?: string }): Promise<void> {
+    const trimmed = options?.reason?.trim();
+    const body = trimmed ? { reason: trimmed } : undefined;
+    return apiClient.delete<void>(`/quotes/${id}`, body);
   },
 
   /**
@@ -327,8 +349,8 @@ export const quoteService = {
     return apiClient.patch<Quote>(`/quotes/${id}`, { Status: 'accepted' });
   },
 
-  async rejectQuoteAsync(id: number): Promise<Quote> {
-    return apiClient.patch<Quote>(`/quotes/${id}`, { Status: 'rejected' });
+  async rejectQuoteAsync(id: number, rejectionReason: string): Promise<Quote> {
+    return apiClient.patch<Quote>(`/quotes/${id}`, { Status: 'rejected', rejectionReason });
   },
 
   async cloneQuoteAsync(id: number): Promise<CloneQuoteResponse> {

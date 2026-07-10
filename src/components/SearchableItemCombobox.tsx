@@ -52,6 +52,8 @@ interface SearchableItemComboboxProps {
   items: Inventory[];
   value: number | '';
   onChange: (itemId: number | '') => void;
+  /** Aktif listede yoksa (eski kayıt / pasif ürün) gösterilecek ad */
+  fallbackDisplayName?: string;
   displayMode?: ItemDisplayMode;
   placeholder?: string;
   disabled?: boolean;
@@ -62,6 +64,7 @@ export default function SearchableItemCombobox({
   items = [],
   value,
   onChange,
+  fallbackDisplayName,
   displayMode = 'contract',
   placeholder = 'Malzeme adı, kodu veya kategori ile ara...',
   disabled = false,
@@ -89,7 +92,7 @@ export default function SearchableItemCombobox({
   const selectedItem = (items || []).find((item) => getItemId(item as ItemRecord) === value) as
     | ItemRecord
     | undefined;
-  const displayValue = selectedItem ? getName(selectedItem) : '';
+  const displayValue = selectedItem ? getName(selectedItem) : (value && fallbackDisplayName ? fallbackDisplayName : '');
 
   const handleSelect = useCallback(
     (item: ItemRecord) => {

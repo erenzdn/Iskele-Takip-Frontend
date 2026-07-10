@@ -12,7 +12,7 @@ import {
 import { apiClient } from '../services/apiClient';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/useToast';
-import { getApiErrorMessage } from '../utils/apiError';
+import { formatInventoryRelatedApiText, getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
 import { resolveInventoryImportErrors } from '../utils/inventoryExcelImportUi';
@@ -25,6 +25,13 @@ const PERMISSIONS: Record<ExcelModuleType, { view: string; create: string }> = {
   checks: { view: 'checks_view', create: 'checks_create' },
   stockReceipts: { view: 'stockReceipts_view', create: 'stockReceipts_create' },
 };
+
+function excelImportErrorMessage(moduleType: ExcelModuleType, error: unknown, fallback: string): string {
+  if (moduleType === 'inventory') {
+    return getUserFacingApiErrorMessage(error, 'excel-import');
+  }
+  return getApiErrorMessage(error) || fallback;
+}
 
 export type ExcelErrorCategory = 'COERCION' | 'VALIDATION' | 'BUSINESS';
 
@@ -483,7 +490,9 @@ export default function ExcelManager({
           } else {
             setLastFile(file);
             toast.error(
-              normalized?.message ||
+              (type === 'inventory' && normalized?.message
+                ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
+                : normalized?.message) ||
                 (type === 'inventory'
                   ? 'İçe aktarma başarısız. Excel’de işaretli satırları düzeltin veya hatalı satırları atlayarak yükleyin.'
                   : 'İçe aktarma başarısız. Hata detayları aşağıda.')
@@ -491,7 +500,10 @@ export default function ExcelManager({
           }
 
           setErrorModal({
-            message: normalized?.message || 'İçe aktarma sırasında sorunlar oluştu.',
+            message:
+              (type === 'inventory' && normalized?.message
+                ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
+                : normalized?.message) || 'İçe aktarma sırasında sorunlar oluştu.',
             errors: rows,
             errorsByRow: rowsByRow,
             count: normalized?.count,
@@ -522,7 +534,7 @@ export default function ExcelManager({
           const rowsByRow = prepared.errorsByRow;
           setLastFile(file);
           setErrorModal({
-            message: normalized.message || getApiErrorMessage(e),
+            message: excelImportErrorMessage(type, e, 'İçe aktarma sırasında sorunlar oluştu.'),
             errors: rows,
             errorsByRow: rowsByRow,
             count: normalized.count,
@@ -536,10 +548,10 @@ export default function ExcelManager({
               !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
             validRowCount: normalized.validRowCount,
           });
-          toast.error(normalized.message || getApiErrorMessage(e));
+          toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
           return;
         }
-        toast.error(getApiErrorMessage(e));
+        toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
       } finally {
         setBusy(null);
         if (fileInputRef.current) fileInputRef.current.value = '';

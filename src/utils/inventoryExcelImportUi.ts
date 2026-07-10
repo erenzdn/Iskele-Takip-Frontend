@@ -50,6 +50,34 @@ export function localizeInventoryImportError(error: string, column: string): str
   const lower = error.toLowerCase();
 
   if (
+    lower.includes('pasif') ||
+    lower.includes('arşiv') ||
+    lower.includes('arsiv') ||
+    lower.includes('archived') ||
+    lower.includes('deletedat') ||
+    lower.includes('assertactiveinventory')
+  ) {
+    if (lower.includes('seçilemez') || lower.includes('secilemez')) {
+      return error;
+    }
+    if (
+      (lower.includes('bulunamadı') || lower.includes('bulunamadi')) &&
+      (lower.includes('arşiv') || lower.includes('arsiv') || lower.includes('pasif'))
+    ) {
+      return 'Seçilen ürün bulunamadı veya pasif durumda.';
+    }
+    return 'Bu ürün pasif durumda; yeni işlemde eşleştirilemez.';
+  }
+
+  if (
+    lower.includes('foreign key') ||
+    lower.includes('violates foreign key') ||
+    lower.includes('inventories')
+  ) {
+    return 'Bu ürün pasif veya geçmiş kayıtlarda kullanıldığı için eşleştirilemez.';
+  }
+
+  if (
     lower.includes('totalstock') &&
     (lower.includes('must be a number') || lower.includes('number.base'))
   ) {

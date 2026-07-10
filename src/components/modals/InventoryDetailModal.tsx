@@ -1,12 +1,14 @@
 import { useState, useEffect, useMemo } from 'react';
 import { XIcon } from '@phosphor-icons/react';
-import { AuditLog, Inventory, MaterialCategory, SubCategory, Warehouse, Unit } from '../../models';
+import { AuditLog, Inventory, MaterialCategory, SubCategory, Warehouse, Unit, isInventoryArchived, pickInventoryDeletedAt } from '../../models';
 import { inventoryService, ExchangeRateResponse, PricingPresetResponse } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { subcategoryService } from '../../services/subcategoryService';
 import { unitService } from '../../services/unitService';
-import { getApiErrorMessage, isDuplicateInventoryItemNameEnError } from '../../utils/apiError';
+import { getApiErrorMessage, getInventoryDeleteErrorMessage, getInventoryRestoreErrorResult, isDuplicateInventoryItemNameEnError } from '../../utils/apiError';
+import { formatShortDateTime } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
+import { useAuthStore } from '../../store/authStore';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 
@@ -31,6 +33,17 @@ export default function InventoryDetailModal({
   startInEditMode = false,
   onClose,
 }: InventoryDetailModalProps) {
+  const user = useAuthStore((state) => state.user);
+  const canDelete = (user?.permissions ?? []).includes('inventory_delete');
+  const [resolvedItem, setResolvedItem] = useState<Inventory | null>(item);
+  const effectiveItem = resolvedItem ?? item;
+  const archived = Boolean(effectiveItem && !isNew && isInventoryArchived(effectiveItem));
+  const archivedAtLabel = (() => {
+    const raw = effectiveItem ? pickInventoryDeletedAt(effectiveItem) : undefined;
+    if (!raw) return null;
+    const formatted = formatShortDateTime(raw);
+    return formatted && formatted !== '-' ? formatted : raw;
+  })();
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
   const [itemCode, setItemCode] = useState('');
   const [itemName, setItemName] = useState('');
@@ -71,7 +84,33 @@ export default function InventoryDetailModal({
   const [itemLogs, setItemLogs] = useState<AuditLog[]>([]);
   const [itemLogsLoading, setItemLogsLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [restoreConflictMessage, setRestoreConflictMessage] = useState<string | null>(null);
 
+  useEffect(() => {
+    setResolvedItem(item);
+  }, [item]);
+
+  useEffect(() => {
+    if (!item?.ItemId || isNew) return;
+    let cancelled = false;
+    void inventoryService.getByIdAsync(item.ItemId).then((fresh) => {
+      if (!cancelled) setResolvedItem(fresh);
+    }).catch(() => {
+      /* liste kaydı ile devam */
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [item?.ItemId, isNew]);
+
+  useEffect(() => {
+    if (archived) {
+      setIsReadOnly(true);
+      return;
+    }
+    setIsReadOnly(!isNew && !startInEditMode);
+  }, [archived, isNew, startInEditMode]);
 
   useEffect(() => {
     const fetchRatesAndPresets = async () => {
@@ -114,8 +153,8 @@ export default function InventoryDetailModal({
           UsdRate: activeRates?.UsdRate,
           EurRate: activeRates?.EurRate,
           RentalRateTry: activePreset?.RentalRateTry,
-          RentalRateUsd: activePreset?.RentalRateUsd,
-          RentalRateEur: activePreset?.RentalRateEur,
+          RentalRateUsd: activePreset?.RentalRateUsd ?? undefined,
+          RentalRateEur: activePreset?.RentalRateEur ?? undefined,
           MonthlyListPrice: overrides['MonthlyListPrice'] ? Number(monthlyListPrice) : undefined,
           MonthlyListPriceUsd: overrides['MonthlyListPriceUsd'] ? Number(monthlyListPriceUsd) : undefined,
           MonthlyListPriceEur: overrides['MonthlyListPriceEur'] ? Number(monthlyListPriceEur) : undefined,
@@ -205,26 +244,7 @@ export default function InventoryDetailModal({
   };
 
   useEffect(() => {
-    setIsReadOnly(!isNew && !startInEditMode);
-    if (item) {
-      setItemCode(item.ItemCode ?? '');
-      setItemName(item.ItemName);
-      setItemNameEn(item.ItemNameEn?.trim() ? item.ItemNameEn : '');
-      setWeight(item.Weight ?? '');
-      setSelectedUnitId(item.UnitId ?? '');
-      setSelectedCategoryIds(item.Categories?.map((c) => c.CategoryId) ?? []);
-      setTotalStock(item.TotalStock);
-      setOnRent(item.OnRent);
-      setMonthlyListPrice(item.MonthlyListPrice ?? 0);
-      setUnitPrice(item.UnitPrice ?? 0);
-      setMonthlyListPriceEur(item.MonthlyListPriceEur ?? 0);
-      setUnitPriceEur(item.UnitPriceEur ?? 0);
-      setMonthlyListPriceUsd(item.MonthlyListPriceUsd ?? '');
-      setUnitPriceUsd(item.UnitPriceUsd ?? '');
-      setSelectedSubCategoryIds(
-        item.SubCategories?.map((sc) => sc.SubCategoryId) ?? []
-      );
-    } else {
+    if (isNew) {
       setItemCode('');
       setItemName('');
       setItemNameEn('');
@@ -241,7 +261,28 @@ export default function InventoryDetailModal({
       setUnitPriceUsd('');
       setSelectedSubCategoryIds([]);
     }
-  }, [item, isNew, startInEditMode]);
+  }, [isNew]);
+
+  useEffect(() => {
+    if (isNew || !effectiveItem) return;
+    setItemCode(effectiveItem.ItemCode ?? '');
+    setItemName(effectiveItem.ItemName);
+    setItemNameEn(effectiveItem.ItemNameEn?.trim() ? effectiveItem.ItemNameEn : '');
+    setWeight(effectiveItem.Weight ?? '');
+    setSelectedUnitId(effectiveItem.UnitId ?? '');
+    setSelectedCategoryIds(effectiveItem.Categories?.map((c) => c.CategoryId) ?? []);
+    setTotalStock(effectiveItem.TotalStock);
+    setOnRent(effectiveItem.OnRent);
+    setMonthlyListPrice(effectiveItem.MonthlyListPrice ?? 0);
+    setUnitPrice(effectiveItem.UnitPrice ?? 0);
+    setMonthlyListPriceEur(effectiveItem.MonthlyListPriceEur ?? 0);
+    setUnitPriceEur(effectiveItem.UnitPriceEur ?? 0);
+    setMonthlyListPriceUsd(effectiveItem.MonthlyListPriceUsd ?? '');
+    setUnitPriceUsd(effectiveItem.UnitPriceUsd ?? '');
+    setSelectedSubCategoryIds(
+      effectiveItem.SubCategories?.map((sc) => sc.SubCategoryId) ?? []
+    );
+  }, [effectiveItem, isNew]);
 
   const toOptionalNumber = (v: number | ''): number | undefined => {
     if (v === '') return undefined;
@@ -296,10 +337,10 @@ export default function InventoryDetailModal({
   };
 
   const loadItemLogs = async () => {
-    if (!item?.ItemId) return;
+    if (!effectiveItem?.ItemId) return;
     try {
       setItemLogsLoading(true);
-      const data = await inventoryService.getAuditLogsByItemAsync(item.ItemId);
+      const data = await inventoryService.getAuditLogsByItemAsync(effectiveItem.ItemId);
       setItemLogs(data ?? []);
     } catch (error) {
       console.error('Load item audit logs error:', error);
@@ -310,17 +351,17 @@ export default function InventoryDetailModal({
   };
 
   useEffect(() => {
-    if (item?.ItemId && !isNew) {
+    if (effectiveItem?.ItemId && !isNew) {
       loadItemLogs();
     } else {
       setItemLogs([]);
     }
-  }, [item?.ItemId, isNew]);
+  }, [effectiveItem?.ItemId, isNew]);
 
   const loadWarehouses = async () => {
     try {
       setLoadingWarehouses(true);
-      const data = await warehouseService.getAllAsync();
+      const data = await warehouseService.getActiveAsync();
       setWarehouses(data);
       // İlk depoyu varsayılan olarak ekle (eğer depo varsa)
       if (data.length > 0) {
@@ -372,6 +413,11 @@ export default function InventoryDetailModal({
       return;
     }
 
+    if (!isNew && effectiveItem && isInventoryArchived(effectiveItem)) {
+      toast.warning('Pasif ürün düzenlenemez.');
+      return;
+    }
+
     // Yeni malzeme eklerken en az bir depoda miktar girilmiş olmalı
     if (isNew) {
       const validStocks = warehouseStocks.filter(ws => Number(ws.quantity) > 0);
@@ -411,8 +457,8 @@ export default function InventoryDetailModal({
             Quantity: Number(ws.quantity),
           });
         }
-      } else if (item) {
-        await inventoryService.updateAsync(item.ItemId, {
+      } else if (effectiveItem) {
+        await inventoryService.updateAsync(effectiveItem.ItemId, {
           ItemCode: itemCode.trim() || undefined,
           CategoryIds: selectedCategoryIds,
           ItemName: itemName,
@@ -444,20 +490,55 @@ export default function InventoryDetailModal({
   };
 
   const handleDeleteClick = () => {
-    if (!item) return;
+    if (!effectiveItem) return;
+    if (effectiveItem.OnRent > 0) {
+      toast.warning('Kirada olan ürün pasife alınamaz. Önce iade işlemini tamamlayın.');
+      return;
+    }
     setShowDeleteConfirm(true);
   };
 
   const handleDeleteConfirm = async () => {
-    if (!item) return;
+    if (!effectiveItem) return;
     try {
       setIsBusy(true);
-      await inventoryService.deleteAsync(item.ItemId);
+      await inventoryService.deleteAsync(effectiveItem.ItemId);
       setShowDeleteConfirm(false);
+      toast.success('Ürün listeden kaldırıldı.');
       onClose();
     } catch (error) {
       console.error('Delete inventory error:', error);
-      toast.error('Silme hatası');
+      toast.error(getInventoryDeleteErrorMessage(error));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleRestoreError = (error: unknown) => {
+    const result = getInventoryRestoreErrorResult(error);
+    if (result.severity === 'warning') {
+      toast.warning(result.message);
+    } else {
+      toast.error(result.message);
+    }
+    if (result.showConflictModal) {
+      setRestoreConflictMessage(result.message);
+    }
+  };
+
+  const handleRestoreConfirm = async () => {
+    if (!effectiveItem || isBusy) return;
+    try {
+      setIsBusy(true);
+      const data = await inventoryService.restoreAsync(effectiveItem.ItemId);
+      setShowRestoreConfirm(false);
+      toast.success(data.message || 'Ürün aktif listeye geri getirildi.');
+      const fresh = await inventoryService.getByIdAsync(effectiveItem.ItemId);
+      setResolvedItem(fresh);
+      setIsReadOnly(false);
+    } catch (error) {
+      console.error('Restore inventory error:', error);
+      handleRestoreError(error);
     } finally {
       setIsBusy(false);
     }
@@ -552,9 +633,33 @@ export default function InventoryDetailModal({
     <div className="fixed inset-0 z-50 bg-background-panel overflow-hidden">
       <div className="w-full h-screen p-2 sm:p-3 flex flex-col">
         <div className="shrink-0 flex items-center justify-between gap-2 bg-background-panel py-1.5 mb-1.5 border-b border-background-border">
-          <h2 className="text-lg font-bold shrink-0">{isNew ? 'Yeni Malzeme' : 'Malzeme Detayı'}</h2>
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-bold shrink-0">{isNew ? 'Yeni Malzeme' : 'Malzeme Detayı'}</h2>
+              {archived && (
+                <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-xs font-semibold text-amber-100">
+                  Pasif{archivedAtLabel ? ` • ${archivedAtLabel}` : ''}
+                </span>
+              )}
+            </div>
+            {archived && (
+              <p className="mt-0.5 text-xs text-amber-100/90">Bu ürün pasif durumda. Bilgiler salt okunurdur.</p>
+            )}
+          </div>
           <div className="ml-auto flex items-center gap-2 shrink-0 min-w-0">
-            {!isNew && item && (
+            {archived && canDelete && (
+              <button
+                type="button"
+                onClick={() => setShowRestoreConfirm(true)}
+                disabled={isBusy}
+                className="btn-primary text-sm py-1.5 px-3 disabled:opacity-50"
+                aria-label={effectiveItem ? `Geri getir: ${effectiveItem.ItemName}` : 'Geri getir'}
+                title="Ürünü aktif listeye geri getirir"
+              >
+                {isBusy ? 'İşleniyor...' : 'Geri Getir'}
+              </button>
+            )}
+            {!isNew && effectiveItem && (
               <div className="hidden md:flex items-end gap-2 text-[11px] whitespace-nowrap">
                 <div className="flex items-baseline gap-1">
                   <span className="text-text-secondary">Toplam</span>
@@ -617,11 +722,11 @@ export default function InventoryDetailModal({
           </div>
         ) : (
           <>
-        {isReadOnly && !isNew && item && item.ItemCode && (
+        {isReadOnly && !isNew && effectiveItem && effectiveItem.ItemCode && (
           <div className="mb-2 flex items-center gap-1.5">
             <span className="text-xs text-text-secondary">Ürün Kodu:</span>
             <span className="font-mono font-bold text-accent bg-accent/10 px-2 py-0.5 rounded text-sm">
-              {item.ItemCode}
+              {effectiveItem.ItemCode}
             </span>
           </div>
         )}
@@ -1221,20 +1326,25 @@ export default function InventoryDetailModal({
         )}
 
         <div className="flex gap-2 mt-2 pt-2 border-t border-background-border bg-background-panel shrink-0">
-          {!isNew && isReadOnly && (
+          {!isNew && isReadOnly && !archived && (
             <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
               Düzenle
             </button>
           )}
           {!isReadOnly && (
             <>
-              {!isNew && item && (
+              {!isNew && effectiveItem && !archived && canDelete && (
                 <button
                   onClick={handleDeleteClick}
-                  disabled={isBusy}
-                  className="btn-danger flex-1"
+                  disabled={isBusy || effectiveItem.OnRent > 0}
+                  title={
+                    effectiveItem.OnRent > 0
+                      ? 'Geçmiş kayıtlarda kullanılmış ürünler tamamen silinmez, pasife alınır. Kirada olan ürün pasife alınamaz.'
+                      : 'Geçmiş kayıtlarda kullanılmış ürünler tamamen silinmez, pasife alınır.'
+                  }
+                  className="btn-danger flex-1 disabled:opacity-50"
                 >
-                  Sil
+                  Listeden Kaldır
                 </button>
               )}
               <button onClick={onClose} className="btn-secondary flex-1">
@@ -1242,8 +1352,8 @@ export default function InventoryDetailModal({
               </button>
               <button
                 onClick={handleSave}
-                disabled={isBusy}
-                className="btn-primary flex-1"
+                disabled={isBusy || archived}
+                className="btn-primary flex-1 disabled:opacity-50"
               >
                 {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
               </button>
@@ -1260,12 +1370,48 @@ export default function InventoryDetailModal({
       </div>
       <ConfirmModal
         open={showDeleteConfirm}
-        title="Onaylıyor musunuz?"
-        message="Bu malzemeyi silmek istediğinizden emin misiniz?"
+        title="Ürünü pasife almak istiyor musunuz?"
+        message={
+          effectiveItem
+            ? `"${effectiveItem.ItemName}" ürününü pasife almak istediğinize emin misiniz? Pasif ürünler yeni teklif ve sözleşmelerde seçilemez; geçmiş kayıtlar korunur.`
+            : ''
+        }
         variant="danger"
         loading={isBusy}
+        confirmLabel="Listeden Kaldır"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
+        zIndexClass="z-[70]"
+      />
+
+      <ConfirmModal
+        open={showRestoreConfirm}
+        title="Ürünü aktif listeye geri getir"
+        message={
+          effectiveItem
+            ? `"${effectiveItem.ItemName}" ürününü aktif listeye geri getirmek istediğinize emin misiniz? Ürün tekrar teklif ve sözleşmelerde seçilebilir hale gelir.`
+            : ''
+        }
+        confirmLabel="Geri Getir"
+        cancelLabel="İptal"
+        loading={isBusy}
+        onConfirm={() => void handleRestoreConfirm()}
+        onCancel={() => {
+          if (isBusy) return;
+          setShowRestoreConfirm(false);
+        }}
+        zIndexClass="z-[70]"
+      />
+
+      <ConfirmModal
+        open={Boolean(restoreConflictMessage)}
+        title="Ürün geri getirilemedi"
+        message={restoreConflictMessage ?? ''}
+        confirmLabel="Tamam"
+        singleAction
+        onConfirm={() => setRestoreConflictMessage(null)}
+        onCancel={() => setRestoreConflictMessage(null)}
+        zIndexClass="z-[70]"
       />
     </div>
   );

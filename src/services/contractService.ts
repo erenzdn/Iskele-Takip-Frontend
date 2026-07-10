@@ -5,6 +5,7 @@ import {
   ContractQuoteType,
   ContractReturn,
   ContractPriceCalculation,
+  ContractStatusFilter,
   ReturnItemResponse,
   SettleNonReturnRequest,
 } from '../models';
@@ -77,6 +78,14 @@ export interface CreateContractResponse {
 export interface RevertToQuoteResponse {
   message: string;
   QuoteId: number | null;
+}
+
+export interface CancelContractResponse {
+  message: string;
+  ContractId: number;
+  CancelledAt: string;
+  QuoteId: number | null;
+  QuoteReleased: boolean;
 }
 
 export type AddContractDetailInventoryRequest = {
@@ -166,9 +175,23 @@ function parseContractPriceCalculation(raw: unknown): ContractPriceCalculation {
 }
 
 export interface ContractListQuery {
-  status?: 'active' | 'completed';
+  status?: ContractStatusFilter;
   type?: ContractQuoteType;
   search?: string;
+  includeArchived?: boolean;
+}
+
+export interface ArchiveContractResponse {
+  message: string;
+  ContractId: number;
+  ArchivedAt: string;
+  ArchivedByUserId: number;
+  ArchiveReason: string | null;
+}
+
+export interface UnarchiveContractResponse {
+  message: string;
+  ContractId: number;
 }
 
 export const contractService = {
@@ -186,6 +209,7 @@ export const contractService = {
     if (query.type) sp.set('type', query.type);
     const s = query.search?.trim();
     if (s) sp.set('search', s);
+    if (query.includeArchived) sp.set('includeArchived', 'true');
     const qs = sp.toString();
     return apiClient.get<Contract[]>(qs ? `/contracts?${qs}` : '/contracts');
   },
@@ -215,6 +239,22 @@ export const contractService = {
 
   async deleteAsync(id: number): Promise<void> {
     return apiClient.delete<void>(`/contracts/${id}`);
+  },
+
+  /** Tamamlanmış veya iptal edilmiş sözleşmeyi arşivler. İzin: contracts_archive */
+  async archiveAsync(id: number, reason?: string): Promise<ArchiveContractResponse> {
+    const trimmed = reason?.trim();
+    const body = trimmed && trimmed.length >= 3 ? { reason: trimmed } : {};
+    return apiClient.post<ArchiveContractResponse>(`/contracts/${id}/archive`, body);
+  },
+
+  /** Arşivlenmiş sözleşmeyi geri getirir. İzin: contracts_archive */
+  async unarchiveAsync(id: number): Promise<UnarchiveContractResponse> {
+    return apiClient.post<UnarchiveContractResponse>(`/contracts/${id}/unarchive`, {});
+  },
+
+  async cancelAsync(id: number, reason: string): Promise<CancelContractResponse> {
+    return apiClient.post<CancelContractResponse>(`/contracts/${id}/cancel`, { reason });
   },
 
   async revertToQuoteAsync(id: number): Promise<RevertToQuoteResponse> {

@@ -3,6 +3,7 @@ import { InfoIcon } from '@phosphor-icons/react';
 import { PriceTier, Inventory } from '../../models';
 import { priceTierService } from '../../services/priceTierService';
 import ConfirmModal from './ConfirmModal';
+import { getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 
 interface PriceTierDetailModalProps {
@@ -65,7 +66,7 @@ export default function PriceTierDetailModal({
       onClose();
     } catch (error) {
       console.error('Save price tier error:', error);
-      toast.error('Kaydetme hatası');
+      toast.error(getUserFacingApiErrorMessage(error, 'generic'));
     } finally {
       setIsBusy(false);
     }

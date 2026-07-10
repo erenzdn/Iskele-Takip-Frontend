@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { XIcon, PercentIcon } from '@phosphor-icons/react';
 import { MaterialCategory } from '../../models';
 import { inventoryService } from '../../services/inventoryService';
-import { getApiErrorMessage } from '../../utils/apiError';
+import { getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 
 interface CategoryDiscountModalProps {
@@ -42,7 +42,7 @@ export default function CategoryDiscountModal({
       onClose();
     } catch (error) {
       console.error('Apply discount error:', error);
-      toast.error(getApiErrorMessage(error));
+      toast.error(getUserFacingApiErrorMessage(error, 'generic'));
     } finally {
       setIsBusy(false);
     }

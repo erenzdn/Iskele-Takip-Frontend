@@ -3,15 +3,18 @@ import { MagnifyingGlassIcon, PackageIcon } from '@phosphor-icons/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
-import { Inventory, MaterialCategory } from '../models';
+import { Inventory, MaterialCategory, isInventoryArchived } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
+import { getInventoryDeleteErrorMessage, getInventoryRestoreErrorResult } from '../utils/apiError';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { toast } from '../hooks/useToast';
 import EmptyState from '../components/EmptyState';
 import ExcelManager from '../components/ExcelManager';
 import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
+import ConfirmModal from '../components/modals/ConfirmModal';
 import { useAuthStore } from '../store/authStore';
+import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 import { useContextMenu, useContextMenuHandlers, type ContextMenuActionHandlers, type ScaffoldRowTarget } from '../context-menu';
 import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
@@ -41,13 +44,20 @@ export default function InventoryPage() {
   const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
   const [selectedLanguage, setSelectedLanguage] = useState<'tr' | 'en'>('tr');
   const [listLoading, setListLoading] = useState(false);
+  const showArchived = useArchivePreferencesStore((s) => s.showArchivedInventory);
   const [categoriesReady, setCategoriesReady] = useState(false);
   const [subCategoryOptions, setSubCategoryOptions] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
+  const [restoreTarget, setRestoreTarget] = useState<{ itemId: number; itemName: string } | null>(null);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreConflictMessage, setRestoreConflictMessage] = useState<string | null>(null);
   const { openContextMenu } = useContextMenu();
   const { setActions } = useHeaderActions();
   const consumedOpenItemIdRef = useRef<number | null>(null);
+  const fetchingOpenItemByIdRef = useRef<number | null>(null);
+  const hadFirstListLoadRef = useRef(false);
   const returnOnCloseRef = useRef<boolean>(false);
   const returnToRef = useRef<{ path: string; state?: any } | null>(null);
 
@@ -81,8 +91,12 @@ export default function InventoryPage() {
         const invData = await inventoryService.getAllAsync({
           categoryId: selectedCategory?.CategoryId,
           search: debouncedSearch.trim() || undefined,
+          includeArchived: showArchived || undefined,
         });
-        if (!cancelled) setAllInventory(invData);
+        if (!cancelled) {
+          setAllInventory(invData);
+          hadFirstListLoadRef.current = true;
+        }
       } catch (error) {
         console.error('Load inventory error:', error);
         if (!cancelled) setAllInventory([]);
@@ -93,26 +107,31 @@ export default function InventoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [categoriesReady, selectedCategory, debouncedSearch]);
+  }, [categoriesReady, selectedCategory, debouncedSearch, showArchived]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh = false) => {
     try {
       setListLoading(true);
       const [invData, catData] = await Promise.all([
-        inventoryService.getAllAsync({
-          categoryId: selectedCategory?.CategoryId,
-          search: debouncedSearch.trim() || undefined,
-        }),
+        inventoryService.getAllAsync(
+          {
+            categoryId: selectedCategory?.CategoryId,
+            search: debouncedSearch.trim() || undefined,
+            includeArchived: showArchived || undefined,
+          },
+          { forceRefresh }
+        ),
         inventoryService.getAllCategoriesAsync(),
       ]);
       setAllInventory(invData);
       setCategories(catData);
+      hadFirstListLoadRef.current = true;
     } catch (error) {
       console.error('Load inventory error:', error);
     } finally {
       setListLoading(false);
     }
-  }, [debouncedSearch, selectedCategory?.CategoryId]);
+  }, [debouncedSearch, selectedCategory?.CategoryId, showArchived]);
 
   const toggleSelection = useCallback((itemId: number) => {
     setSelectionMode(true);
@@ -183,6 +202,7 @@ export default function InventoryPage() {
     const idNum = Number(openItemId);
     if (!Number.isFinite(idNum) || idNum <= 0) return;
     if (consumedOpenItemIdRef.current === idNum) return;
+
     const found = allInventory.find((i) => i.ItemId === idNum);
     if (found) {
       consumedOpenItemIdRef.current = idNum;
@@ -190,10 +210,33 @@ export default function InventoryPage() {
       const rt = st?.returnTo;
       returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
       handleOpenItemDetail(found);
-      // State'i temizle: modal kapanınca liste yenilenince tekrar açılmasın.
       navigate(location.pathname + location.search, { replace: true, state: null });
+      return;
     }
-  }, [allInventory, handleOpenItemDetail, location.pathname, location.search, location.state, navigate]);
+
+    if (listLoading || !hadFirstListLoadRef.current) return;
+    if (fetchingOpenItemByIdRef.current === idNum) return;
+
+    fetchingOpenItemByIdRef.current = idNum;
+    void inventoryService
+      .getByIdAsync(idNum)
+      .then((item) => {
+        fetchingOpenItemByIdRef.current = null;
+        if (consumedOpenItemIdRef.current === idNum) return;
+        consumedOpenItemIdRef.current = idNum;
+        returnOnCloseRef.current = Boolean(st?.returnOnClose);
+        const rt = st?.returnTo;
+        returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
+        handleOpenItemDetail(item);
+        navigate(location.pathname + location.search, { replace: true, state: null });
+      })
+      .catch(() => {
+        fetchingOpenItemByIdRef.current = null;
+        consumedOpenItemIdRef.current = idNum;
+        toast.warning('Ürün bulunamadı.');
+        navigate(location.pathname + location.search, { replace: true, state: null });
+      });
+  }, [allInventory, listLoading, handleOpenItemDetail, location.pathname, location.search, location.state, navigate]);
 
   const openInventoryContextMenu = (event: MouseEvent<HTMLTableRowElement>, item: Inventory) => {
     event.preventDefault();
@@ -214,6 +257,10 @@ export default function InventoryPage() {
           OnRent: item.OnRent,
           UnitPrice: item.UnitPrice,
           MonthlyListPrice: item.MonthlyListPrice,
+          DeletedAt: item.DeletedAt,
+          deletedAt: item.deletedAt,
+          IsArchived: item.IsArchived,
+          isArchived: item.isArchived,
         },
       },
     });
@@ -234,13 +281,13 @@ export default function InventoryPage() {
       }
       return;
     }
-    loadData();
+    loadData(true);
   };
 
   const handleCategoryModalClose = () => {
     setIsCategoryModalOpen(false);
     setEditingCategory(null);
-    loadData();
+    loadData(true);
   };
 
   const printInventoryItemPdf = (target: ScaffoldRowTarget) => {
@@ -333,27 +380,74 @@ export default function InventoryPage() {
 
   const applyBulkDelete = useCallback(async () => {
     if (selectedItemIds.length === 0) {
-      toast.warning('Toplu silme icin once satir secin.');
+      toast.warning('Toplu işlem için önce satır seçin.');
+      return;
+    }
+
+    const selectedItems = allInventory.filter((item) => selectedItemIds.includes(item.ItemId));
+    const activeItems = selectedItems.filter((item) => !isInventoryArchived(item));
+    if (activeItems.length === 0) {
+      toast.warning('Seçili kayıtlar zaten pasif durumda.');
+      return;
+    }
+    const onRentItems = activeItems.filter((item) => item.OnRent > 0);
+    if (onRentItems.length > 0) {
+      toast.warning('Kirada olan ürün pasife alınamaz. Önce iade işlemini tamamlayın.');
       return;
     }
 
     const confirmDelete = window.confirm(
-      `${selectedItemIds.length} adet seçili malzemeyi silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`
+      `${activeItems.length} adet seçili ürünü listeden kaldırmak (pasife almak) istediğinize emin misiniz? Pasif ürünler yeni teklif ve sözleşmelerde seçilemez; geçmiş kayıtlar korunur.`
     );
     if (!confirmDelete) return;
 
     try {
-      await Promise.all(selectedItemIds.map((id) => inventoryService.deleteAsync(id)));
-      toast.success(`${selectedItemIds.length} kayit silindi.`);
+      await Promise.all(activeItems.map((item) => inventoryService.deleteAsync(item.ItemId)));
+      toast.success('Ürün listeden kaldırıldı.');
       clearSelection();
-      await loadData();
+      await loadData(true);
     } catch (error) {
-      console.error('Toplu silme hatası:', error);
-      toast.error('Bazı malzemeler silinemedi (aktif sözleşmelerde kullanılıyor olabilir).');
+      console.error('Toplu pasife alma hatası:', error);
+      toast.error(getInventoryDeleteErrorMessage(error));
       clearSelection();
-      await loadData();
+      await loadData(true);
     }
-  }, [clearSelection, loadData, selectedItemIds]);
+  }, [allInventory, clearSelection, loadData, selectedItemIds]);
+
+  const openRestoreConfirm = useCallback((item: Inventory) => {
+    if (!canDelete) return;
+    setRestoreTarget({ itemId: item.ItemId, itemName: item.ItemName });
+    setShowRestoreConfirm(true);
+  }, [canDelete]);
+
+  const handleRestoreError = useCallback((error: unknown) => {
+    const result = getInventoryRestoreErrorResult(error);
+    if (result.severity === 'warning') {
+      toast.warning(result.message);
+    } else {
+      toast.error(result.message);
+    }
+    if (result.showConflictModal) {
+      setRestoreConflictMessage(result.message);
+    }
+  }, []);
+
+  const handleRestoreConfirm = useCallback(async () => {
+    if (!restoreTarget?.itemId || isRestoring) return;
+    try {
+      setIsRestoring(true);
+      const data = await inventoryService.restoreAsync(restoreTarget.itemId);
+      toast.success(data.message || 'Ürün aktif listeye geri getirildi.');
+      setShowRestoreConfirm(false);
+      setRestoreTarget(null);
+      await loadData(true);
+    } catch (error) {
+      console.error('Restore inventory error:', error);
+      handleRestoreError(error);
+    } finally {
+      setIsRestoring(false);
+    }
+  }, [handleRestoreError, isRestoring, loadData, restoreTarget?.itemId]);
 
   useContextMenuHandlers(
     'scaffoldRow',
@@ -364,7 +458,11 @@ export default function InventoryPage() {
           const row = target as ScaffoldRowTarget;
           const item = allInventory.find((inventoryItem) => inventoryItem.ItemId === row.entityId);
           if (!item) {
-            toast.warning('Kayit bulunamadi.');
+            toast.warning('Kayıt bulunamadı.');
+            return;
+          }
+          if (isInventoryArchived(item)) {
+            handleOpenItemDetail(item, { startInEditMode: false });
             return;
           }
           handleOpenItemDetail(item, { startInEditMode: false });
@@ -374,7 +472,11 @@ export default function InventoryPage() {
           const row = target as ScaffoldRowTarget;
           const item = allInventory.find((inventoryItem) => inventoryItem.ItemId === row.entityId);
           if (!item) {
-            toast.warning('Kayit bulunamadi.');
+            toast.warning('Kayıt bulunamadı.');
+            return;
+          }
+          if (isInventoryArchived(item)) {
+            toast.warning('Pasif ürün düzenlenemez.');
             return;
           }
           handleOpenItemDetail(item, { startInEditMode: true });
@@ -385,9 +487,28 @@ export default function InventoryPage() {
         },
         'scaffold.delete': async (target) => {
           if (!canDelete) return;
-          await inventoryService.deleteAsync(target.entityId);
-          toast.success('Kayit silindi.');
-          await loadData();
+          const row = target as ScaffoldRowTarget;
+          if (row.rawData.OnRent > 0) {
+            toast.warning('Kirada olan ürün pasife alınamaz. Önce iade işlemini tamamlayın.');
+            return;
+          }
+          try {
+            await inventoryService.deleteAsync(target.entityId);
+            toast.success('Ürün listeden kaldırıldı.');
+            await loadData(true);
+          } catch (error) {
+            toast.error(getInventoryDeleteErrorMessage(error));
+          }
+        },
+        'scaffold.restore': (target) => {
+          if (!canDelete) return;
+          const row = target as ScaffoldRowTarget;
+          const item = allInventory.find((inventoryItem) => inventoryItem.ItemId === row.entityId);
+          if (!item) {
+            toast.warning('Kayıt bulunamadı.');
+            return;
+          }
+          openRestoreConfirm(item);
         },
         'scaffold.selection.toggle': (target) => {
           const row = target as ScaffoldRowTarget;
@@ -417,7 +538,7 @@ export default function InventoryPage() {
           await updateInventoryStatus(target as ScaffoldRowTarget, 'maintenance');
         },
       }),
-      [allInventory, canDelete, canUpdate, filteredInventory]
+      [allInventory, canDelete, canUpdate, filteredInventory, openRestoreConfirm]
     )
   );
 
@@ -495,7 +616,7 @@ export default function InventoryPage() {
             ) : null}
             {canDelete ? (
               <button onClick={() => void applyBulkDelete()} className="btn-secondary py-2 px-3 text-sm">
-                Toplu Sil
+                Toplu Listeden Kaldır
               </button>
             ) : null}
           </>
@@ -508,10 +629,10 @@ export default function InventoryPage() {
             Tümünü Seç
           </button>
         )}
-        <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => void loadData(true)} className="btn-secondary py-2 px-3 text-sm">
           Yenile
         </button>
-        <ExcelManager type="inventory" onImportSuccess={() => void loadData()} />
+        <ExcelManager type="inventory" onImportSuccess={() => void loadData(true)} />
         <button onClick={handleAddCategory} className="btn-secondary py-2 px-3 text-sm">
           + Kategori Ekle
         </button>
@@ -726,11 +847,17 @@ export default function InventoryPage() {
                   <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (€)</th>
 
                   <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
+                  {showArchived && canDelete ? (
+                    <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover w-24">
+                      İşlem
+                    </th>
+                  ) : null}
                   <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Bilgisi</th>
                 </tr>
               </thead>
               <tbody>
                 {filteredInventory.map((item, index) => {
+                  const archived = isInventoryArchived(item);
                   const availableStock = item.TotalStock - item.OnRent;
                   const stockPercentage = item.TotalStock > 0 ? (availableStock / item.TotalStock) * 100 : 0;
                   let statusBadge: React.ReactNode;
@@ -747,7 +874,9 @@ export default function InventoryPage() {
                   return (
                     <tr
                       key={item.ItemId}
-                      className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${selectedItemIds.includes(item.ItemId) ? 'bg-primary/10' : index % 2 === 0 ? 'bg-background-panel' : 'bg-background-secondary/35'}`}
+                      className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${
+                        archived ? 'opacity-60 bg-background-secondary/50' : ''
+                      } ${selectedItemIds.includes(item.ItemId) ? 'bg-primary/10' : !archived && index % 2 === 0 ? 'bg-background-panel' : !archived ? 'bg-background-secondary/35' : ''}`}
                       onClick={() => handleOpenItemDetail(item)}
                       onContextMenu={(event) => openInventoryContextMenu(event, item)}
                     >
@@ -770,8 +899,15 @@ export default function InventoryPage() {
                         )}
                       </td>
                       <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
-                        <div className="font-medium text-text-primary leading-tight">
-                          {selectedLanguage === 'tr' ? item.ItemName : (item.ItemNameEn || item.ItemName)}
+                        <div className="font-medium text-text-primary leading-tight flex flex-wrap items-center gap-1">
+                          <span>
+                            {selectedLanguage === 'tr' ? item.ItemName : (item.ItemNameEn || item.ItemName)}
+                          </span>
+                          {archived ? (
+                            <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
+                              Pasif
+                            </span>
+                          ) : null}
                         </div>
                       </td>
                       <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums whitespace-nowrap">
@@ -794,6 +930,28 @@ export default function InventoryPage() {
                       </td>
 
                       <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">{statusBadge}</td>
+                      {showArchived && canDelete ? (
+                        <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">
+                          {archived ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openRestoreConfirm(item);
+                              }}
+                              disabled={isRestoring && restoreTarget?.itemId === item.ItemId}
+                              className="btn-primary py-0.5 px-2 text-[11px] disabled:opacity-50"
+                              aria-label={`Geri getir: ${item.ItemName}`}
+                            >
+                              {isRestoring && restoreTarget?.itemId === item.ItemId
+                                ? 'İşleniyor...'
+                                : 'Geri Getir'}
+                            </button>
+                          ) : (
+                            <span className="text-text-secondary/50">—</span>
+                          )}
+                        </td>
+                      ) : null}
                       <td className="py-0 px-1.5 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">
                         {item.CreatedByUserFullName || item.CreatedByUserName || '-'} • {formatShortDateTime(item.CreatedAt)}
                       </td>
@@ -831,6 +989,35 @@ export default function InventoryPage() {
           onClose={handleCategoryModalClose}
         />
       )}
+
+      <ConfirmModal
+        open={showRestoreConfirm}
+        title="Ürünü aktif listeye geri getir"
+        message={
+          restoreTarget
+            ? `"${restoreTarget.itemName}" ürününü aktif listeye geri getirmek istediğinize emin misiniz? Ürün tekrar teklif ve sözleşmelerde seçilebilir hale gelir.`
+            : ''
+        }
+        confirmLabel="Geri Getir"
+        cancelLabel="İptal"
+        loading={isRestoring}
+        onConfirm={() => void handleRestoreConfirm()}
+        onCancel={() => {
+          if (isRestoring) return;
+          setShowRestoreConfirm(false);
+          setRestoreTarget(null);
+        }}
+      />
+
+      <ConfirmModal
+        open={Boolean(restoreConflictMessage)}
+        title="Ürün geri getirilemedi"
+        message={restoreConflictMessage ?? ''}
+        confirmLabel="Tamam"
+        singleAction
+        onConfirm={() => setRestoreConflictMessage(null)}
+        onCancel={() => setRestoreConflictMessage(null)}
+      />
     </div>
   );
 }

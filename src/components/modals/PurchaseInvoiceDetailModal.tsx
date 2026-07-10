@@ -6,7 +6,7 @@ import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { formatCurrency } from '../../utils/formatters';
 import ConfirmModal from './ConfirmModal';
-import { getApiErrorMessage, getUserFacingErrorMessage, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
+import { getApiErrorMessage, getUserFacingApiErrorMessage, getUserFacingErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import {
   firstValidationError,
@@ -158,7 +158,7 @@ export default function PurchaseInvoiceDetailModal({
   const loadWarehouses = async () => {
     try {
       setWarehousesLoading(true);
-      const data = await warehouseService.getAllAsync();
+      const data = await warehouseService.getActiveAsync();
       setWarehouses(data);
     } catch (error) {
       console.error('Load warehouses error:', error);
@@ -325,7 +325,11 @@ export default function PurchaseInvoiceDetailModal({
       onClose();
     } catch (error) {
       console.error('Save invoice error:', error);
-      toast.error(userMessageForCustomerRelatedApiError(error, 'Kaydetme hatası'));
+      toast.error(
+        isArchivedInventoryApiError(error)
+          ? getUserFacingApiErrorMessage(error, 'purchase-invoice')
+          : userMessageForCustomerRelatedApiError(error, 'Kaydetme hatası')
+      );
     } finally {
       setIsBusy(false);
     }

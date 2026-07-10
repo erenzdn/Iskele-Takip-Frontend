@@ -48,7 +48,7 @@ export default function StockReceiptsPage() {
 
   const loadWarehouses = useCallback(async () => {
     try {
-      const list = await warehouseService.getAllAsync();
+      const list = await warehouseService.getActiveAsync();
       setWarehouses(list ?? []);
     } catch {
       setWarehouses([]);

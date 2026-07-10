@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { MagnifyingGlassIcon } from '@phosphor-icons/react';
+import { ArchiveIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
 import {
   Warehouse,
   WarehouseStock,
@@ -9,6 +9,9 @@ import {
   MaterialCategory,
   SubCategory,
   resolveContractQuoteType,
+  isInventoryArchived,
+  isWarehouseArchived,
+  pickWarehouseDeletedAt,
   type WarehouseMovementsResponse,
   type WarehouseMovementRow,
 } from '../models';
@@ -17,16 +20,23 @@ import { contractService } from '../services/contractService';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
 import EmptyState from '../components/EmptyState';
+import ArchivedWarehouseBanner from '../components/ArchivedWarehouseBanner';
 import WarehouseMovementDetailModal from '../components/modals/WarehouseMovementDetailModal';
+import ConfirmModal from '../components/modals/ConfirmModal';
 
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { toast } from '../hooks/useToast';
-import { getApiErrorMessage } from '../utils/apiError';
+import { getApiErrorMessage, getWarehouseDeleteErrorMessage } from '../utils/apiError';
+import { useAuthStore } from '../store/authStore';
+import { canDeleteWarehouse } from '../utils/warehousePermissions';
+import { resolveWarehouseDeactivateError, type WarehouseDeactivateErrorDialog } from '../utils/warehouseDeactivate';
 
 export default function WarehouseDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const location = useLocation();
+  const user = useAuthStore((state) => state.user);
+  const canDelete = canDeleteWarehouse(user);
 
   const [warehouse, setWarehouse] = useState<Warehouse | null>(null);
   const [stock, setStock] = useState<WarehouseStock[]>([]);
@@ -74,6 +84,10 @@ export default function WarehouseDetailPage() {
   const debouncedItemSearch = useDebouncedValue(itemSearch, 300);
   const [itemOptions, setItemOptions] = useState<Inventory[]>([]);
   const [loadingItemOptions, setLoadingItemOptions] = useState(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deactivateError, setDeactivateError] = useState<WarehouseDeactivateErrorDialog | null>(null);
+  const rentedSectionRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const warehouseId = Number(id);
@@ -295,6 +309,37 @@ export default function WarehouseDetailPage() {
     }
   };
 
+  const handleDeleteConfirm = async () => {
+    if (!warehouse) return;
+    const warehouseId = warehouse.WarehouseId;
+    try {
+      setDeleteBusy(true);
+      await warehouseService.deleteAsync(warehouseId);
+      setShowDeleteConfirm(false);
+      toast.success('Depo kullanımdan kaldırıldı.');
+      navigate('/warehouses', { replace: true });
+    } catch (error) {
+      console.error('Deactivate warehouse error:', error);
+      setShowDeleteConfirm(false);
+      const dialog = resolveWarehouseDeactivateError(error, {
+        onGoToStock: () => setActiveTab('stock'),
+        onGoToRentals: () => {
+          setActiveTab('rented');
+          queueMicrotask(() => {
+            rentedSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          });
+        },
+      });
+      if (dialog) {
+        setDeactivateError(dialog);
+      } else {
+        toast.error(getWarehouseDeleteErrorMessage(error));
+      }
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   const filteredStock = useMemo(() => {
     const text = searchText.trim().toLowerCase();
     return stock.filter((s) => {
@@ -391,12 +436,20 @@ export default function WarehouseDetailPage() {
 
   const uniqueItems = warehouse.UniqueItems ?? 0;
   const totalQuantity = warehouse.TotalQuantity ?? 0;
+  const archived = isWarehouseArchived(warehouse);
 
   return (
     <div className="p-8 space-y-6">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold mb-1">{warehouse.WarehouseName}</h1>
+          <h1 className="text-3xl font-bold mb-1 flex flex-wrap items-center gap-2">
+            {warehouse.WarehouseName}
+            {archived ? (
+              <span className="inline-block px-2 py-0.5 rounded text-sm font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
+                Pasif
+              </span>
+            ) : null}
+          </h1>
           <p className="text-text-secondary">
             Depodaki malzemeleri ve stok durumunu detaylı olarak görüntüleyin.
           </p>
@@ -408,8 +461,27 @@ export default function WarehouseDetailPage() {
           <button onClick={handleRefresh} className="btn-secondary" disabled={loadingStock}>
             {loadingStock ? 'Yenileniyor...' : 'Stokları Yenile'}
           </button>
+          {canDelete && !archived && (
+            <button
+              type="button"
+              onClick={() => setShowDeleteConfirm(true)}
+              disabled={deleteBusy}
+              className="btn-danger inline-flex items-center gap-2"
+              title="Depoyu kullanımdan kaldır"
+            >
+              <ArchiveIcon size={18} weight="bold" aria-hidden />
+              Kullanımdan Kaldır
+            </button>
+          )}
         </div>
       </div>
+
+      {archived ? (
+        <ArchivedWarehouseBanner
+          warehouseName={warehouse.WarehouseName}
+          deletedAt={pickWarehouseDeletedAt(warehouse)}
+        />
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="card p-4">
@@ -852,7 +924,7 @@ export default function WarehouseDetailPage() {
         )}
 
         {activeTab === 'rented' && (
-          <>
+          <div ref={rentedSectionRef} id="kiradakiler">
             <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
               <div>
                 <h2 className="text-xl font-semibold">Kiradaki Ürünler</h2>
@@ -972,7 +1044,7 @@ export default function WarehouseDetailPage() {
                 </div>
               </>
             )}
-          </>
+          </div>
         )}
 
         {activeTab === 'stock' && (
@@ -1146,15 +1218,25 @@ export default function WarehouseDetailPage() {
                   {filteredStock.map((s, idx) => {
                     const inv = allInventory.find((i) => i.ItemId === s.ItemId);
                     const subCats = inv?.SubCategories ?? [];
+                    const stockArchived = s.IsArchived === true || s.isArchived === true || (inv ? isInventoryArchived(inv) : false);
                     return (
                       <tr
                         key={s.StockId}
                         className={`border-b border-background-border hover:bg-background-hover ${
+                          stockArchived ? 'opacity-70' : ''
+                        } ${
                           idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
                         }`}
                       >
                         <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">
-                          {s.ItemName}
+                          <span className="inline-flex flex-wrap items-center gap-1">
+                            {s.ItemName}
+                            {stockArchived ? (
+                              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
+                                Pasif
+                              </span>
+                            ) : null}
+                          </span>
                         </td>
                         <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">
                           {s.CategoryName || '-'}
@@ -1211,6 +1293,35 @@ export default function WarehouseDetailPage() {
           setSelectedMovementRow(null);
           openItemDetail(row);
         }}
+      />
+
+      <ConfirmModal
+        open={showDeleteConfirm}
+        title="Depoyu kullanımdan kaldırmak istiyor musunuz?"
+        message={
+          warehouse
+            ? `"${warehouse.WarehouseName}" deposu kullanımdan kaldırılacak.\n\nBu depo geçmiş kayıtlarda kullanılmış olabilir. Kullanımdan kaldırıldığında yeni işlemlerde seçilemez; geçmiş sözleşme ve hareket kayıtları korunur.\n\nHiç kullanılmamış boş depolar tamamen silinir. Devam etmek istiyor musunuz?`
+            : ''
+        }
+        variant="danger"
+        loading={deleteBusy}
+        confirmLabel="Kullanımdan Kaldır"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setShowDeleteConfirm(false)}
+      />
+
+      <ConfirmModal
+        open={Boolean(deactivateError)}
+        title={deactivateError?.title ?? ''}
+        message={deactivateError?.message ?? ''}
+        variant="danger"
+        confirmLabel={deactivateError?.actionLabel ?? 'Tamam'}
+        cancelLabel="Kapat"
+        onConfirm={() => {
+          deactivateError?.onAction?.();
+          setDeactivateError(null);
+        }}
+        onCancel={() => setDeactivateError(null)}
       />
     </div>
   );

@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { CheckIcon, ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
+import { ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -15,12 +15,13 @@ import {
   ConstructionSite,
   QuoteStatus,
   Warehouse,
+  isQuoteConverted,
 } from '../../models';
 import { quoteService, WarehouseAssignment } from '../../services/quoteService';
 import { contractService } from '../../services/contractService';
 import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
-import { getApiErrorMessage, getApiFieldErrors, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
+import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
@@ -54,6 +55,8 @@ interface QuoteDetailModalProps {
   isNew: boolean;
   onClose: () => void;
   onDataChanged?: () => void | Promise<void>;
+  /** Dönüşüm sonrası yeni sözleşmeye yönlendirme (parent listesini yeniler) */
+  onConverted?: (contractId: number) => void | Promise<void>;
   /** Yeni teklif: menüden gelen varsayılan tip */
   defaultTypeForNew?: ContractQuoteType;
   /** true ise yeni teklifte tip seçilemez (ayrı menü sayfaları) */
@@ -102,6 +105,7 @@ export default function QuoteDetailModal({
   isNew,
   onClose,
   onDataChanged,
+  onConverted,
   defaultTypeForNew,
   lockNewQuoteType,
   onQuoteCloned,
@@ -161,6 +165,13 @@ export default function QuoteDetailModal({
   >({});
   const [convertStocksLoading, setConvertStocksLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteReasonModal, setShowDeleteReasonModal] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteReasonError, setDeleteReasonError] = useState<string | null>(null);
+  const [showRejectReasonModal, setShowRejectReasonModal] = useState(false);
+  const [showRejectConfirm, setShowRejectConfirm] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionReasonError, setRejectionReasonError] = useState<string | null>(null);
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
   const [lastAddedItemIds, setLastAddedItemIds] = useState<number[]>([]);
   const [iskonto, setIskonto] = useState<number>(0);
@@ -204,6 +215,7 @@ export default function QuoteDetailModal({
   const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 6 } | null>(null);
   const quoteGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   const activeQuote = fullQuote ?? quote;
+  const converted = Boolean(activeQuote && isQuoteConverted(activeQuote));
 
   const openConvertedContract = async () => {
     if (!activeQuote?.ConvertedContractId) return;
@@ -348,6 +360,23 @@ export default function QuoteDetailModal({
     };
   }, [quote?.QuoteId, isNew]);
 
+  const refreshQuoteDetail = useCallback(async () => {
+    if (!quote?.QuoteId || isNew) return;
+    try {
+      const detail = await quoteService.getByIdAsync(quote.QuoteId);
+      setFullQuote(detail);
+    } catch (error) {
+      console.error('Refresh quote error:', error);
+    }
+    await onDataChanged?.();
+  }, [quote?.QuoteId, isNew, onDataChanged]);
+
+  useEffect(() => {
+    if (converted) {
+      setIsReadOnly(true);
+    }
+  }, [converted]);
+
   useEffect(() => {
     if (isNew) {
       return;
@@ -406,6 +435,7 @@ export default function QuoteDetailModal({
         }
       }
       setStatus(source.Status);
+      setRejectionReason(String((source as Quote).RejectionReason ?? '').trim());
       setSubject(String((source as any).Subject ?? (source as any).subject ?? '').trim());
       setNotes(source.Notes || '');
       setIskonto(Number.isFinite(parsedIskonto) ? parsedIskonto : 0);
@@ -789,7 +819,7 @@ export default function QuoteDetailModal({
       const [custData, invData, whData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(),
-        warehouseService.getAllAsync(),
+        warehouseService.getActiveAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
@@ -1045,6 +1075,9 @@ export default function QuoteDetailModal({
   };
 
   const currentUser = useAuthStore((s) => s.user);
+  const canUpdateQuote = Boolean(currentUser?.permissions?.includes('quotes_update'));
+  const canDeleteQuote = Boolean(currentUser?.permissions?.includes('quotes_delete'));
+  const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
 
   const handleSave = async () => {
 
@@ -1233,6 +1266,15 @@ export default function QuoteDetailModal({
         if (normalizeText(quoteCode)) {
           updateBody.QuoteCode = normalizeText(quoteCode);
         }
+        if (status === QuoteStatus.Rejected) {
+          const reason = rejectionReason.trim();
+          if (reason.length < 3) {
+            setRejectionReasonError('Red gerekçesi en az 3 karakter olmalıdır.');
+            setIsBusy(false);
+            return;
+          }
+          updateBody.rejectionReason = reason;
+        }
         const updateResult = await quoteService.updateAsync(quote.QuoteId, updateBody as any);
         if (updateResult.CreatedSiteId && selectedCustomerId) {
           await applyCreatedSiteId({
@@ -1280,7 +1322,9 @@ export default function QuoteDetailModal({
       toast.error(
         isSiteRelatedApiMessage(rawMessage)
           ? rawMessage
-          : userMessageForCustomerRelatedApiError(error, rawMessage || 'Kaydetme hatası')
+          : isArchivedInventoryApiError(error)
+            ? getUserFacingApiErrorMessage(error, 'quote-save')
+            : userMessageForCustomerRelatedApiError(error, rawMessage || 'Kaydetme hatası')
       );
     } finally {
       setIsBusy(false);
@@ -1289,10 +1333,28 @@ export default function QuoteDetailModal({
 
   const handleDeleteClick = () => {
     if (!activeQuote) return;
-    if (activeQuote.ConvertedContractId) {
-      toast.warning('Sözleşmeye dönüştürülmüş teklifler silinemez.');
+    if (converted) {
+      toast.info('Teklifi silmek için önce bağlı sözleşmeyi iptal etmeniz gerekir. Sözleşme ekranı açılıyor…');
+      void openConvertedContract();
       return;
     }
+    if (!canDeleteQuote) {
+      toast.error('Teklif silmek için yetkiniz bulunmuyor.');
+      return;
+    }
+    setDeleteReason('');
+    setDeleteReasonError(null);
+    setShowDeleteReasonModal(true);
+  };
+
+  const handleDeleteReasonContinue = () => {
+    const trimmed = deleteReason.trim();
+    if (trimmed.length > 0 && trimmed.length < 3) {
+      setDeleteReasonError('Gerekçe en az 3 karakter olmalıdır.');
+      return;
+    }
+    setDeleteReasonError(null);
+    setShowDeleteReasonModal(false);
     setShowDeleteConfirm(true);
   };
 
@@ -1300,21 +1362,30 @@ export default function QuoteDetailModal({
     if (!activeQuote) return;
     try {
       setIsBusy(true);
-      await quoteService.deleteAsync(activeQuote.QuoteId);
+      const trimmed = deleteReason.trim();
+      await quoteService.deleteAsync(
+        activeQuote.QuoteId,
+        trimmed.length >= 3 ? { reason: trimmed } : undefined
+      );
       setShowDeleteConfirm(false);
+      setDeleteReason('');
       await onDataChanged?.();
       onClose();
     } catch (error) {
       console.error('Delete quote error:', error);
       setShowDeleteConfirm(false);
-      toast.error(getApiErrorMessage(error));
+      if (isConvertedQuoteApiError(error)) {
+        toast.error(getApiErrorMessage(error));
+      } else {
+        toast.error(getUserFacingApiErrorMessage(error, 'quote-delete'));
+      }
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleAccept = async () => {
-    if (!activeQuote || activeQuote.ConvertedContractId) return;
+    if (!activeQuote || converted) return;
     try {
       setIsBusy(true);
       await quoteService.acceptQuoteAsync(activeQuote.QuoteId);
@@ -1330,18 +1401,44 @@ export default function QuoteDetailModal({
     }
   };
 
-  const handleReject = async () => {
-    if (!activeQuote || activeQuote.ConvertedContractId) return;
+  const handleRejectClick = () => {
+    if (!activeQuote || converted) return;
+    if (!canUpdateQuote) {
+      toast.error('Bu işlem için yetkiniz yok.');
+      return;
+    }
+    setRejectionReason('');
+    setRejectionReasonError(null);
+    setShowRejectReasonModal(true);
+  };
+
+  const handleRejectReasonContinue = () => {
+    const reason = rejectionReason.trim();
+    if (reason.length < 3) {
+      setRejectionReasonError('Red gerekçesi en az 3 karakter olmalıdır.');
+      return;
+    }
+    setRejectionReasonError(null);
+    setShowRejectReasonModal(false);
+    setShowRejectConfirm(true);
+  };
+
+  const handleRejectConfirm = async () => {
+    if (!activeQuote || converted) return;
+    const reason = rejectionReason.trim();
+    if (reason.length < 3) return;
     try {
       setIsBusy(true);
-      await quoteService.rejectQuoteAsync(activeQuote.QuoteId);
+      await quoteService.rejectQuoteAsync(activeQuote.QuoteId, reason);
       setStatus(QuoteStatus.Rejected);
+      setShowRejectConfirm(false);
       await onDataChanged?.();
       toast.success('Teklif reddedildi.');
       onClose();
     } catch (error) {
       console.error('Reject quote error:', error);
-      toast.error(getApiErrorMessage(error));
+      setShowRejectConfirm(false);
+      toast.error(getUserFacingApiErrorMessage(error, 'quote-reject'));
     } finally {
       setIsBusy(false);
     }
@@ -1423,7 +1520,7 @@ export default function QuoteDetailModal({
   };
 
   const openConvertModal = () => {
-    if (!activeQuote || status !== QuoteStatus.Accepted || activeQuote.ConvertedContractId) return;
+    if (!activeQuote || status !== QuoteStatus.Accepted || converted) return;
     setConvertModalError(null);
     setConvertMode('defaultWarehouse');
     setDefaultWarehouseIdForConvert(warehouses[0]?.WarehouseId ?? '');
@@ -1489,8 +1586,8 @@ export default function QuoteDetailModal({
       return;
     }
 
-    if (activeQuote.ConvertedContractId) {
-      toast.warning('Bu teklif zaten sözleşmeye dönüştürülmüş.');
+    if (converted) {
+      toast.warning('Bu teklif aktif bir sözleşmeye bağlı. Önce sözleşmeyi iptal edin veya (satış ise) teklife geri alın.');
       return;
     }
     if (quoteType === 'SALE' && decrementStock == null) {
@@ -1579,18 +1676,33 @@ export default function QuoteDetailModal({
       if (result.warnings && result.warnings.length > 0) {
         toast.warning(result.warnings.join('\n'));
       }
+      toast.success('Teklif sözleşmeye dönüştürüldü.');
+      if (onConverted) {
+        await onConverted(result.ContractId);
+        return;
+      }
       const updatedQuote = await quoteService.getByIdAsync(activeQuote.QuoteId);
       setFullQuote(updatedQuote);
       await onDataChanged?.();
-      toast.success(`Teklif başarıyla sözleşmeye dönüştürüldü!\nSözleşme ID: ${result.ContractId}`);
+      try {
+        const c = await contractService.getByIdAsync(result.ContractId);
+        setConvertedContract(c);
+        setIsContractModalOpen(true);
+      } catch (openError) {
+        console.error('Open contract after convert error:', openError);
+      }
     } catch (error: unknown) {
       console.error('Convert quote error:', error);
       const msg = getApiErrorMessage(error);
-      const displayMsg = userMessageForCustomerRelatedApiError(
-        error,
-        msg || 'Dönüştürme başarısız. Depolarda yeterli stok olduğundan emin olun veya farklı depo seçin.'
-      );
-      setConvertModalError(isStockErrorMessage(displayMsg) ? msg || displayMsg : displayMsg);
+      const displayMsg = isStockErrorMessage(msg)
+        ? msg || getUserFacingApiErrorMessage(error, 'quote-convert')
+        : isArchivedInventoryApiError(error)
+          ? getUserFacingApiErrorMessage(error, 'quote-convert')
+          : userMessageForCustomerRelatedApiError(
+              error,
+              msg || 'Dönüştürme başarısız. Depolarda yeterli stok olduğundan emin olun veya farklı depo seçin.'
+            );
+      setConvertModalError(displayMsg);
     } finally {
       setIsBusy(false);
     }
@@ -1789,7 +1901,7 @@ export default function QuoteDetailModal({
       toast.info(message);
     } catch (error) {
       console.error('Apply package to quote form error:', error);
-      toast.error(getApiErrorMessage(error));
+      toast.error(getUserFacingApiErrorMessage(error, 'package-save'));
     } finally {
       setIsBusy(false);
     }
@@ -1828,7 +1940,7 @@ export default function QuoteDetailModal({
       toast.success('Paket başarıyla oluşturuldu.');
     } catch (error) {
       console.error('Create package error:', error);
-      toast.error(getApiErrorMessage(error));
+      toast.error(getUserFacingApiErrorMessage(error, 'package-save'));
     } finally {
       setIsCreatingPackage(false);
     }
@@ -1873,6 +1985,13 @@ export default function QuoteDetailModal({
   };
 
   const getStatusBadge = () => {
+    if (converted) {
+      return (
+        <span className="badge bg-indigo-800 text-indigo-100 text-lg px-4 py-1">
+          Sözleşmeye dönüştü
+        </span>
+      );
+    }
     switch (status) {
       case QuoteStatus.Pending:
         return <span className="badge bg-yellow-700 text-yellow-100 text-lg px-4 py-1">Beklemede</span>;
@@ -1933,6 +2052,42 @@ export default function QuoteDetailModal({
 
       <div className="flex-1 overflow-auto">
         <div className="w-full p-3 md:p-4 space-y-4">
+          {converted && (
+            <section className="rounded-xl border border-indigo-700/50 bg-indigo-950/30 p-4 shadow-sm">
+              <p className="text-sm font-semibold text-indigo-100">
+                Bu teklif sözleşmeye dönüştürülmüş
+              </p>
+              <p className="mt-2 text-sm text-indigo-100/90">
+                Operasyonel işlemler sözleşmede yürür. Bu kayıt denetim / geçmiş amacıyla salt okunur tutulur.
+                Bağlantıyı kaldırmak için sözleşmede <span className="font-medium">İptal Et</span>
+                {quoteType === 'SALE' ? (
+                  <> veya <span className="font-medium">Teklife Geri Al</span></>
+                ) : null}{' '}
+                kullanın; teklif tekrar aktif listede görünür.
+              </p>
+              <div className="mt-2 text-xs text-indigo-200/80">
+                {activeQuote?.ConvertedAt ? (
+                  <>Dönüştürülme: {formatShortDateTime(activeQuote.ConvertedAt)}</>
+                ) : null}
+              </div>
+              {!canCancelContract && (
+                <p className="mt-3 text-xs text-amber-200 border border-amber-700/40 rounded-md px-3 py-2 bg-amber-950/30">
+                  Sözleşmeyi iptal etme yetkiniz bulunmuyor. Kaynak teklifi yeniden düzenlemek için yöneticinizden sözleşme iptal yetkisi isteyin.
+                </p>
+              )}
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={openConvertedContract}
+                  disabled={isBusy || isOpeningConvertedContract}
+                  className="btn-primary text-sm"
+                >
+                  {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+                </button>
+              </div>
+            </section>
+          )}
+
           {/* Üst kısım: yatay bilgi alanları (kompakt) */}
           <section className="rounded-xl border border-background-border bg-background-panel p-3 shadow-sm">
             <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 pb-1.5 border-b border-background-border">
@@ -2167,13 +2322,46 @@ export default function QuoteDetailModal({
                   <label className="block text-xs font-medium text-text-primary">Durum</label>
                   <select
                     value={status}
-                    onChange={(e) => setStatus(e.target.value as QuoteStatus)}
-                    disabled={isReadOnly}
+                    onChange={(e) => {
+                      setStatus(e.target.value as QuoteStatus);
+                      if (e.target.value !== QuoteStatus.Rejected) {
+                        setRejectionReasonError(null);
+                      }
+                    }}
+                    disabled={isReadOnly || converted}
                     className="input w-full text-sm py-1.5"
                   >
                     <option value={QuoteStatus.Accepted}>Kabul Edildi</option>
                     <option value={QuoteStatus.Rejected}>Reddedildi</option>
                   </select>
+                </div>
+              )}
+
+              {!isNew && status === QuoteStatus.Rejected && (
+                <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
+                  <label className="block text-xs font-medium text-text-primary">
+                    Red Gerekçesi {isReadOnly ? '' : '*'}
+                  </label>
+                  {isReadOnly ? (
+                    <div className="input w-full bg-background-secondary text-text-primary text-sm py-2 px-2 rounded-lg border border-background-border min-h-[3rem]">
+                      {rejectionReason.trim() || activeQuote?.RejectionReason?.trim() || '—'}
+                    </div>
+                  ) : (
+                    <>
+                      <textarea
+                        value={rejectionReason}
+                        onChange={(e) => {
+                          setRejectionReason(e.target.value);
+                          setRejectionReasonError(null);
+                        }}
+                        className="input w-full h-20 resize-none text-sm"
+                        placeholder="Red gerekçesini yazın (en az 3 karakter)"
+                      />
+                      {rejectionReasonError && (
+                        <p className="text-xs text-red-300">{rejectionReasonError}</p>
+                      )}
+                    </>
+                  )}
                 </div>
               )}
 
@@ -2400,7 +2588,7 @@ export default function QuoteDetailModal({
                 )}
                 {!isNew && isReadOnly && (
                   <>
-                    {activeQuote?.ConvertedContractId && (
+                    {converted && (
                       <button
                         type="button"
                         onClick={openConvertedContract}
@@ -2409,10 +2597,10 @@ export default function QuoteDetailModal({
                       >
                         {isOpeningConvertedContract
                           ? 'Sözleşme Açılıyor...'
-                          : `Sözleşmeyi Aç (#${activeQuote.ConvertedContractId})`}
+                          : 'Sözleşmeye git'}
                       </button>
                     )}
-                    {!activeQuote?.ConvertedContractId && (
+                    {!converted && canUpdateQuote && (
                       <button
                         onClick={() => setIsReadOnly(false)}
                         className="btn-primary"
@@ -2420,27 +2608,27 @@ export default function QuoteDetailModal({
                         Düzenle
                       </button>
                     )}
-                    {status === QuoteStatus.Pending && !activeQuote?.ConvertedContractId && (
+                    {status === QuoteStatus.Pending && !converted && canUpdateQuote && (
                       <>
                         <button onClick={handleAccept} disabled={isBusy} className="btn-success">
                           Kabul Et
                         </button>
-                        <button onClick={handleReject} disabled={isBusy} className="btn-danger">
+                        <button onClick={handleRejectClick} disabled={isBusy} className="btn-danger">
                           Reddet
                         </button>
                       </>
                     )}
-                    {status === QuoteStatus.Accepted && !activeQuote?.ConvertedContractId && (
-                      <button onClick={handleReject} disabled={isBusy} className="btn-danger">
+                    {status === QuoteStatus.Accepted && !converted && canUpdateQuote && (
+                      <button onClick={handleRejectClick} disabled={isBusy} className="btn-danger">
                         Reddet
                       </button>
                     )}
-                    {status === QuoteStatus.Rejected && !activeQuote?.ConvertedContractId && (
+                    {status === QuoteStatus.Rejected && !converted && canUpdateQuote && (
                       <button onClick={handleAccept} disabled={isBusy} className="btn-success">
                         Kabul Et
                       </button>
                     )}
-                    {status === QuoteStatus.Accepted && !activeQuote?.ConvertedContractId && (
+                    {status === QuoteStatus.Accepted && !converted && (
                       <button
                         onClick={openConvertModal}
                         disabled={isBusy}
@@ -2453,7 +2641,7 @@ export default function QuoteDetailModal({
                 )}
                 {!isReadOnly && (
                   <>
-                    {!isNew && activeQuote && !activeQuote.ConvertedContractId && (
+                    {!isNew && activeQuote && !converted && canDeleteQuote && (
                       <button
                         onClick={handleDeleteClick}
                         disabled={isBusy}
@@ -2482,34 +2670,6 @@ export default function QuoteDetailModal({
               </div>
             </div>
           </section>
-
-          {/* Sözleşmeye dönüştürüldü bilgisi */}
-          {activeQuote?.ConvertedContractId && (
-            <section className="rounded-xl border border-background-border bg-green-900/30 p-4 shadow-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-green-300 shrink-0">
-                  <CheckIcon size={20} weight="bold" aria-hidden />
-                </span>
-                <span>
-                  Bu teklif sözleşmeye dönüştürüldü (Sözleşme #{activeQuote.ConvertedContractId})
-                </span>
-              </div>
-              <div className="mt-2 text-sm text-green-200">
-                Dönüştürülme Tarihi:{' '}
-                {formatShortDateTime(activeQuote.ConvertedAt)}
-              </div>
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={openConvertedContract}
-                  disabled={isBusy || isOpeningConvertedContract}
-                  className="btn-secondary text-sm"
-                >
-                  {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeyi Aç'}
-                </button>
-              </div>
-            </section>
-          )}
 
           {/* Orta kısım: ürün tablosu */}
           <section className="rounded-xl border border-background-border bg-background-panel shadow-sm flex-1 min-h-[260px] flex flex-col overflow-hidden">
@@ -3001,14 +3161,132 @@ export default function QuoteDetailModal({
           </section>
         </div>
       </div>
+      {showDeleteReasonModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">Silme Gerekçesi (Opsiyonel)</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              İsterseniz silme gerekçesi ekleyebilirsiniz.
+            </p>
+            <textarea
+              value={deleteReason}
+              onChange={(e) => {
+                setDeleteReason(e.target.value);
+                setDeleteReasonError(null);
+              }}
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Yanlış kayıt"
+            />
+            {deleteReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {deleteReasonError}
+              </div>
+            )}
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteReasonModal(false);
+                  setDeleteReason('');
+                  setDeleteReasonError(null);
+                }}
+                disabled={isBusy}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteReasonContinue}
+                disabled={isBusy}
+                className="btn-primary flex-1"
+              >
+                Devam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
         open={showDeleteConfirm}
-        title="Onaylıyor musunuz?"
-        message="Bu teklifi silmek istediğinizden emin misiniz?"
+        title="Teklifi sil"
+        message={
+          deleteReason.trim()
+            ? `Bu teklifi silmek istediğinizden emin misiniz?\n\nGerekçe: ${deleteReason.trim()}`
+            : 'Bu teklifi silmek istediğinizden emin misiniz?'
+        }
         variant="danger"
         loading={isBusy}
         onConfirm={handleDeleteConfirm}
-        onCancel={() => setShowDeleteConfirm(false)}
+        onCancel={() => {
+          setShowDeleteConfirm(false);
+          setDeleteReason('');
+          setDeleteReasonError(null);
+        }}
+      />
+
+      {showRejectReasonModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">Red Gerekçesi</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Teklifi reddetmek için gerekçe belirtin.
+            </p>
+            <textarea
+              value={rejectionReason}
+              onChange={(e) => {
+                setRejectionReason(e.target.value);
+                setRejectionReasonError(null);
+              }}
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Fiyat uygun değil"
+            />
+            {rejectionReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {rejectionReasonError}
+              </div>
+            )}
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRejectReasonModal(false);
+                  setRejectionReason('');
+                  setRejectionReasonError(null);
+                }}
+                disabled={isBusy}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={handleRejectReasonContinue}
+                disabled={isBusy}
+                className="btn-primary flex-1"
+              >
+                Devam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={showRejectConfirm}
+        title="Teklifi reddet"
+        message={`Aşağıdaki teklifi reddedeceksiniz.\n\nTeklif: #${activeQuote?.QuoteId ?? '-'}\nRed Gerekçesi: ${rejectionReason.trim()}`}
+        confirmLabel="Reddet"
+        cancelLabel="Vazgeç"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={() => void handleRejectConfirm()}
+        onCancel={() => {
+          setShowRejectConfirm(false);
+          setRejectionReason('');
+          setRejectionReasonError(null);
+        }}
       />
 
       <ConfirmModal
@@ -3489,10 +3767,12 @@ export default function QuoteDetailModal({
           key={`converted-contract-${convertedContract?.ContractId ?? 'x'}`}
           contract={convertedContract}
           isNew={false}
+          stackAboveParent
+          onDataChanged={refreshQuoteDetail}
           onClose={async () => {
             setIsContractModalOpen(false);
             setConvertedContract(null);
-            await onDataChanged?.();
+            await refreshQuoteDetail();
           }}
         />
       )}

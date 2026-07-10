@@ -1,22 +1,35 @@
 import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { MagnifyingGlassIcon, WarehouseIcon } from '@phosphor-icons/react';
+import { ArchiveIcon, MagnifyingGlassIcon, WarehouseIcon } from '@phosphor-icons/react';
 import { warehouseService } from '../services/warehouseService';
 import { inventoryService } from '../services/inventoryService';
-import { Warehouse, WarehouseStock, Inventory } from '../models';
+import { Warehouse, WarehouseStock, Inventory, isWarehouseArchived } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import WarehouseDetailModal from '../components/modals/WarehouseDetailModal';
+import ConfirmModal from '../components/modals/ConfirmModal';
 import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { useAuthStore } from '../store/authStore';
+import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
+import { canDeleteWarehouse } from '../utils/warehousePermissions';
+import { getWarehouseDeleteErrorMessage } from '../utils/apiError';
+import { resolveWarehouseDeactivateError, type WarehouseDeactivateErrorDialog } from '../utils/warehouseDeactivate';
+import { toast } from '../hooks/useToast';
 
 export default function WarehousesPage() {
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const canDelete = canDeleteWarehouse(user);
+  const showArchivedWarehouses = useArchivePreferencesStore((s) => s.showArchivedWarehouses);
   const { setActions } = useHeaderActions();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isNewWarehouse, setIsNewWarehouse] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<Warehouse | null>(null);
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  const [deactivateError, setDeactivateError] = useState<WarehouseDeactivateErrorDialog | null>(null);
 
   // Genişletilmiş depo ve stok bilgileri
   const [expandedWarehouseId, setExpandedWarehouseId] = useState<number | null>(null);
@@ -32,22 +45,19 @@ export default function WarehousesPage() {
   const [rentedMinQty, setRentedMinQty] = useState<number | ''>('');
   const [rentedMaxQty, setRentedMaxQty] = useState<number | ''>('');
 
-  useEffect(() => {
-    loadData();
-    loadRentedItems();
-  }, []);
-
   const loadData = useCallback(async () => {
     try {
       setLoading(true);
-      const data = await warehouseService.getAllAsync();
+      const data = await warehouseService.getAllAsync({
+        includeArchived: showArchivedWarehouses || undefined,
+      });
       setWarehouses(data);
     } catch (error) {
       console.error('Load warehouses error:', error);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showArchivedWarehouses]);
 
   const handleAddNew = useCallback(() => {
     setSelectedWarehouse(null);
@@ -70,6 +80,47 @@ export default function WarehousesPage() {
     // Genişletilmiş depoyu yenile
     if (expandedWarehouseId) {
       loadWarehouseStock(expandedWarehouseId);
+    }
+  };
+
+  const handleDeleteClick = (warehouse: Warehouse, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!canDelete || isWarehouseArchived(warehouse)) return;
+    setDeleteTarget(warehouse);
+  };
+
+  const handleDeactivateError = (error: unknown, warehouseId: number) => {
+    const dialog = resolveWarehouseDeactivateError(error, {
+      onGoToStock: () => navigate(`/warehouses/${warehouseId}`, { state: { initialTab: 'stock' } }),
+      onGoToRentals: () => navigate(`/warehouses/${warehouseId}`, { state: { initialTab: 'rented' } }),
+    });
+    if (dialog) {
+      setDeactivateError(dialog);
+      return;
+    }
+    toast.error(getWarehouseDeleteErrorMessage(error));
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!deleteTarget) return;
+    const targetId = deleteTarget.WarehouseId;
+    const name = deleteTarget.WarehouseName;
+    try {
+      setDeleteBusy(true);
+      await warehouseService.deleteAsync(targetId);
+      setDeleteTarget(null);
+      if (expandedWarehouseId === targetId) {
+        setExpandedWarehouseId(null);
+        setExpandedStock([]);
+      }
+      toast.success(`"${name}" deposu kullanımdan kaldırıldı.`);
+      await loadData();
+      await loadRentedItems();
+    } catch (error) {
+      setDeleteTarget(null);
+      handleDeactivateError(error, targetId);
+    } finally {
+      setDeleteBusy(false);
     }
   };
 
@@ -157,6 +208,11 @@ export default function WarehousesPage() {
       setLoadingRented(false);
     }
   };
+
+  useEffect(() => {
+    void loadData();
+    void loadRentedItems();
+  }, [loadData]);
 
   const headerActions = useMemo(
     () => (
@@ -303,17 +359,24 @@ export default function WarehousesPage() {
               </thead>
               <tbody>
                 {warehouses.map((warehouse, index) => {
+                  const archived = isWarehouseArchived(warehouse);
                   const badgeClass = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
-                  const statusBadge = warehouse.TotalQuantity === 0
-                    ? <span className={`${badgeClass} bg-gray-600 text-white`}>Boş</span>
-                    : warehouse.UniqueItems <= 3
-                      ? <span className={`${badgeClass} bg-yellow-600 text-white`}>Az Ürün</span>
-                      : <span className={`${badgeClass} bg-green-600 text-white`}>Aktif</span>;
+                  const statusBadge = archived ? (
+                    <span className={`${badgeClass} bg-amber-900/60 text-amber-100 border border-amber-700/50`}>Pasif</span>
+                  ) : warehouse.TotalQuantity === 0 ? (
+                    <span className={`${badgeClass} bg-gray-600 text-white`}>Boş</span>
+                  ) : warehouse.UniqueItems <= 3 ? (
+                    <span className={`${badgeClass} bg-yellow-600 text-white`}>Az Ürün</span>
+                  ) : (
+                    <span className={`${badgeClass} bg-green-600 text-white`}>Aktif</span>
+                  );
                   const isExpanded = expandedWarehouseId === warehouse.WarehouseId;
                   return (
                     <Fragment key={warehouse.WarehouseId}>
                       <tr
-                        className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${isExpanded ? 'bg-background-hover' : index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
+                        className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${
+                          archived ? 'opacity-60 bg-background-secondary/50' : ''
+                        } ${isExpanded ? 'bg-background-hover' : !archived && index % 2 === 0 ? 'bg-background-panel' : !archived ? 'bg-background-surface' : ''}`}
                         onClick={() => navigate(`/warehouses/${warehouse.WarehouseId}`)}
                       >
                         <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
@@ -322,6 +385,11 @@ export default function WarehousesPage() {
                               <span className={isExpanded ? 'inline-block rotate-90' : 'inline-block'}>▶</span>
                             </button>
                             <span className="font-medium text-text-primary">{warehouse.WarehouseName}</span>
+                            {archived ? (
+                              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50 ml-1">
+                                Pasif
+                              </span>
+                            ) : null}
                             {warehouse.Description && <span className="text-text-secondary truncate max-w-[200px] ml-1"> — {warehouse.Description}</span>}
                           </div>
                         </td>
@@ -342,7 +410,18 @@ export default function WarehousesPage() {
                           >
                             Hareketler
                           </button>
-                          <button type="button" onClick={(e) => handleOpenDetail(warehouse, e)} className="ml-1 text-blue-400 hover:text-blue-300" title="Düzenle">✎</button>
+                          <button type="button" onClick={(e) => handleOpenDetail(warehouse, e)} className="ml-1 text-blue-400 hover:text-blue-300" title="Düzenle" disabled={archived}>✎</button>
+                          {canDelete && !archived && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteClick(warehouse, e)}
+                              disabled={deleteBusy}
+                              className="ml-1 text-amber-400 hover:text-amber-300 inline-flex items-center"
+                              title="Depoyu kullanımdan kaldır"
+                            >
+                              <ArchiveIcon size={14} weight="bold" aria-hidden />
+                            </button>
+                          )}
                         </td>
                         <td className="py-0.5 px-2 align-middle text-text-secondary">
                           {warehouse.CreatedByUserFullName || warehouse.CreatedByUserName || '-'} • {formatShortDateTime(warehouse.CreatedAt)}
@@ -400,6 +479,35 @@ export default function WarehousesPage() {
           onClose={handleModalClose}
         />
       )}
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title="Depoyu kullanımdan kaldırmak istiyor musunuz?"
+        message={
+          deleteTarget
+            ? `"${deleteTarget.WarehouseName}" deposu kullanımdan kaldırılacak.\n\nBu depo geçmiş kayıtlarda kullanılmış olabilir. Kullanımdan kaldırıldığında yeni işlemlerde seçilemez; geçmiş sözleşme ve hareket kayıtları korunur.\n\nHiç kullanılmamış boş depolar tamamen silinir. Devam etmek istiyor musunuz?`
+            : ''
+        }
+        variant="danger"
+        loading={deleteBusy}
+        confirmLabel="Kullanımdan Kaldır"
+        onConfirm={handleDeleteConfirm}
+        onCancel={() => setDeleteTarget(null)}
+      />
+
+      <ConfirmModal
+        open={Boolean(deactivateError)}
+        title={deactivateError?.title ?? ''}
+        message={deactivateError?.message ?? ''}
+        variant="danger"
+        confirmLabel={deactivateError?.actionLabel ?? 'Tamam'}
+        cancelLabel="Kapat"
+        onConfirm={() => {
+          deactivateError?.onAction?.();
+          setDeactivateError(null);
+        }}
+        onCancel={() => setDeactivateError(null)}
+      />
     </div>
   );
 }

@@ -4,7 +4,7 @@ import { XIcon } from '@phosphor-icons/react';
 import type { ContractQuoteType, Inventory, Warehouse, WarehouseStock } from '../../models';
 import { contractService, type AddContractDetailsRequestBody } from '../../services/contractService';
 import { inventoryService } from '../../services/inventoryService';
-import { getApiErrorMessage } from '../../utils/apiError';
+import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, validateNumber, validateRequired } from '../../utils/validation';
 import { isStockErrorMessage } from '../../utils/parseStockError';
@@ -214,7 +214,7 @@ export default function ContractAddLineItemModal({
       if (isStockErrorMessage(msg)) {
         setStockError(msg);
       } else {
-        toast.error(msg);
+        toast.error(getUserFacingApiErrorMessage(error, 'contract-add-line'));
       }
     } finally {
       setIsBusy(false);

@@ -3,7 +3,7 @@ import { packageService } from '../services/packageService';
 import { quoteService } from '../services/quoteService';
 import { inventoryService } from '../services/inventoryService';
 import { QuotePackage, QuotePackageDetail, Inventory, Quote } from '../models';
-import { getApiErrorMessage } from '../utils/apiError';
+import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 
 type CreateMode = 'sourceQuote' | 'manual';
@@ -108,7 +108,7 @@ export default function QuotePackagesPage() {
       await loadData();
       toast.success('Paket oluşturuldu.');
     } catch (error) {
-      toast.error(getApiErrorMessage(error));
+      toast.error(getUserFacingApiErrorMessage(error, 'package-save'));
     } finally {
       setSaving(false);
     }

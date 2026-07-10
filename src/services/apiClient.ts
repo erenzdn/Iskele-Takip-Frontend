@@ -247,9 +247,36 @@ class ApiClient {
         } catch {
           errorText = 'Yanıt okunamadı';
         }
-        const error = new Error(`API Error: ${response.status} - ${errorText}`);
-        (error as any).status = response.status;
-        (error as any).responseText = errorText;
+
+        let userMessage = '';
+        let errorCode: string | undefined;
+        if (errorText) {
+          try {
+            const parsed = JSON.parse(errorText) as {
+              message?: string;
+              Message?: string;
+              error?: string;
+              Error?: string;
+              code?: string;
+            };
+            if (parsed && typeof parsed === 'object') {
+              userMessage =
+                (typeof parsed.message === 'string' && parsed.message) ||
+                (typeof parsed.Message === 'string' && parsed.Message) ||
+                (typeof parsed.error === 'string' && parsed.error) ||
+                (typeof parsed.Error === 'string' && parsed.Error) ||
+                '';
+              if (typeof parsed.code === 'string') errorCode = parsed.code;
+            }
+          } catch {
+            // plain text veya JSON değil
+          }
+        }
+
+        const error = new Error(userMessage || errorText || `API Error: ${response.status}`);
+        (error as { status?: number }).status = response.status;
+        (error as { responseText?: string }).responseText = errorText;
+        if (errorCode) (error as { code?: string }).code = errorCode;
         throw error;
       }
 
@@ -301,8 +328,8 @@ class ApiClient {
     return this.sendAsync<T>(request);
   }
 
-  async delete<T>(endpoint: string): Promise<T> {
-    const request = await this.createRequest('DELETE', endpoint);
+  async delete<T>(endpoint: string, body?: unknown): Promise<T> {
+    const request = await this.createRequest('DELETE', endpoint, body);
     return this.sendAsync<T>(request);
   }
 

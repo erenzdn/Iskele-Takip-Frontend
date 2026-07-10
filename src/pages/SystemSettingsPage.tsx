@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import {
+  ArchiveIcon,
   ArrowClockwiseIcon,
   CircleNotchIcon,
   DownloadSimpleIcon,
@@ -16,6 +17,7 @@ import ConfirmModal from '../components/modals/ConfirmModal';
 import { adminService } from '../services/adminService';
 import { inventoryService, ExchangeRateResponse, PricingPresetResponse } from '../services/inventoryService';
 import { useAuthStore } from '../store/authStore';
+import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
 import { useUpdateStore } from '../store/updateStore';
@@ -75,7 +77,7 @@ function formatTrDateTime(raw?: unknown) {
   }).format(dt);
 }
 
-type SettingsTab = 'general' | 'finance' | 'system';
+type SettingsTab = 'general' | 'archives' | 'finance' | 'system';
 
 export default function SystemSettingsPage() {
   const user = useAuthStore((s) => s.user);
@@ -83,6 +85,10 @@ export default function SystemSettingsPage() {
   const [activeTab, setActiveTab] = useState<SettingsTab>('general');
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
+  const showArchivedWarehouses = useArchivePreferencesStore((s) => s.showArchivedWarehouses);
+  const showArchivedInventory = useArchivePreferencesStore((s) => s.showArchivedInventory);
+  const setShowArchivedWarehouses = useArchivePreferencesStore((s) => s.setShowArchivedWarehouses);
+  const setShowArchivedInventory = useArchivePreferencesStore((s) => s.setShowArchivedInventory);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -410,6 +416,17 @@ export default function SystemSettingsPage() {
               Genel Ayarlar
             </button>
             <button
+              onClick={() => setActiveTab('archives')}
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
+                activeTab === 'archives'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
+              }`}
+            >
+              <ArchiveIcon size={18} />
+              Arşiv Görünürlüğü
+            </button>
+            <button
               onClick={() => setActiveTab('finance')}
               className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
                 activeTab === 'finance'
@@ -577,6 +594,53 @@ export default function SystemSettingsPage() {
         </div>
       </div>
             </>
+          )}
+
+          {activeTab === 'archives' && (
+            <div className="card mb-6">
+              <div className="flex items-start justify-between gap-6 flex-wrap">
+                <div className="min-w-[260px] flex-1">
+                  <div className="flex items-center gap-2 mb-2">
+                    <ArchiveIcon size={18} className="text-primary" />
+                    <h2 className="text-lg font-semibold">Arşiv Kayıtları</h2>
+                  </div>
+                  <p className="text-text-secondary text-sm mb-4">
+                    Pasif depolar ve arşivlenmiş envanter ürünlerinin listelerde görünüp görünmeyeceğini buradan
+                    yönetin. Varsayılan olarak arşiv kayıtları gizlidir; geçmişe erişmek için ilgili seçeneği açın.
+                  </p>
+                  <div className="space-y-4">
+                    <label className="flex items-start gap-3 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showArchivedWarehouses}
+                        onChange={(e) => setShowArchivedWarehouses(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 cursor-pointer"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-text-primary">Pasif depoları göster</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">
+                          Depo listesi ve depo filtrelerinde kullanımdan kaldırılmış depolar görünür.
+                        </span>
+                      </span>
+                    </label>
+                    <label className="flex items-start gap-3 cursor-pointer select-none">
+                      <input
+                        type="checkbox"
+                        checked={showArchivedInventory}
+                        onChange={(e) => setShowArchivedInventory(e.target.checked)}
+                        className="mt-0.5 w-4 h-4 cursor-pointer"
+                      />
+                      <span>
+                        <span className="block text-sm font-medium text-text-primary">Arşivlenmiş ürünleri göster</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">
+                          Envanter listesinde arşivlenmiş malzeme kartları görünür.
+                        </span>
+                      </span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
           )}
 
           {activeTab === 'general' && (

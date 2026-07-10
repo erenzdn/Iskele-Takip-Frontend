@@ -6,6 +6,7 @@ import { quoteService } from '../services/quoteService';
 import { quoteTemplateService } from '../services/quoteTemplateService';
 import { customerService } from '../services/customerService';
 import { siteService } from '../services/siteService';
+import { useAuthStore } from '../store/authStore';
 import {
   Contract,
   ContractQuoteType,
@@ -14,9 +15,15 @@ import {
   Quote,
   QuoteStatus,
   QuoteTemplate,
+  isContractCancelled,
+  isContractCompleted,
+  isContractActive,
+  isContractArchived,
+  isQuoteConverted,
+  getContractUiStatus,
 } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
-import { getApiErrorMessage } from '../utils/apiError';
+import { getApiErrorMessage, getUserFacingApiErrorMessage, isConvertedQuoteApiError } from '../utils/apiError';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from '../components/EmptyState';
 import ContractDetailModal from '../components/modals/ContractDetailModal';
@@ -31,11 +38,13 @@ import {
   type QuoteRowTarget,
 } from '../context-menu';
 
-type TabType = 'active' | 'completed' | 'quotes';
+type TabType = 'active' | 'completed' | 'cancelled' | 'archived' | 'quotes' | 'quotesConverted';
+
+const isQuotesTab = (tab: TabType) => tab === 'quotes' || tab === 'quotesConverted';
 
 /** Yerel takvim günü; planlanan bitiş bugünden önceyse ve sözleşme kapanmamışsa gecikmiş sayılır. */
 function isRentalContractOverdue(contract: Contract): boolean {
-  if (contract.IsCompleted || !contract.PlannedEndDate) return false;
+  if (isContractCompleted(contract) || isContractCancelled(contract) || !contract.PlannedEndDate) return false;
   const end = new Date(contract.PlannedEndDate);
   if (isNaN(end.getTime())) return false;
   const endDay = new Date(end.getFullYear(), end.getMonth(), end.getDate());
@@ -53,6 +62,11 @@ interface ContractsPageProps {
 export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const user = useAuthStore((state) => state.user);
+  const canArchiveContract = Boolean(
+    user?.permissions?.includes('contracts_archive') ||
+    user?.permissions?.includes('contracts_delete')
+  );
   const scopeType: ContractQuoteType = contractScope === 'sale' ? 'SALE' : 'RENTAL';
   const isSaleScope = contractScope === 'sale';
   const [activeTab, setActiveTab] = useState<TabType>('quotes');
@@ -102,6 +116,14 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const [quotesError, setQuotesError] = useState<string | null>(null);
   const [contractsError, setContractsError] = useState<string | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false);
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiveTarget, setArchiveTarget] = useState<{ contractId: number; contractCode?: string } | null>(null);
+  const [archiveReason, setArchiveReason] = useState('');
+  const [archiveReasonError, setArchiveReasonError] = useState<string | null>(null);
+  const [isArchiving, setIsArchiving] = useState(false);
+  const [showUnarchiveConfirm, setShowUnarchiveConfirm] = useState(false);
+  const [unarchiveTarget, setUnarchiveTarget] = useState<{ contractId: number; contractCode?: string } | null>(null);
+  const [isUnarchiving, setIsUnarchiving] = useState(false);
   const hydratedSiteCustomersRef = useRef<Set<number>>(new Set());
   const hydratedCustomersRef = useRef<Set<number>>(new Set());
   const quoteTemplatesCacheRef = useRef<QuoteTemplate[] | null>(null);
@@ -130,7 +152,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     if (!Number.isFinite(idNum) || idNum <= 0) return;
     if (consumedOpenContractIdRef.current === idNum) return;
     const preferTab = st?.preferTab;
-    if (preferTab === 'active' || preferTab === 'completed' || preferTab === 'quotes') {
+    if (preferTab === 'active' || preferTab === 'completed' || preferTab === 'cancelled' || preferTab === 'archived' || preferTab === 'quotes' || preferTab === 'quotesConverted') {
       setActiveTab(preferTab);
     } else {
       setActiveTab('active');
@@ -163,24 +185,24 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     const idNum = Number(openQuoteId);
     if (!Number.isFinite(idNum) || idNum <= 0) return;
     if (consumedOpenQuoteIdRef.current === idNum) return;
+    consumedOpenQuoteIdRef.current = idNum;
 
-    setActiveTab('quotes');
-    const found = quotesRaw.find((q) => q.QuoteId === idNum);
-    if (found) {
-      setSelectedQuote(found);
-      setIsNewQuote(false);
-      setIsQuoteClonedDraft(false);
-      setIsQuoteModalOpen(true);
-      consumedOpenQuoteIdRef.current = idNum;
-      navigate(location.pathname + location.search, { replace: true, state: null });
-    }
-  }, [location.pathname, location.search, location.state, navigate, quotesRaw]);
-
-  useEffect(() => {
-    if (isSaleScope && activeTab === 'completed') {
-      setActiveTab('active');
-    }
-  }, [isSaleScope, activeTab]);
+    void (async () => {
+      try {
+        const quote = await quoteService.getByIdAsync(idNum);
+        setActiveTab(isQuoteConverted(quote) ? 'quotesConverted' : 'quotes');
+        setSelectedQuote(quote);
+        setIsNewQuote(false);
+        setIsQuoteClonedDraft(false);
+        setIsQuoteModalOpen(true);
+        navigate(location.pathname + location.search, { replace: true, state: null });
+      } catch (error) {
+        console.error('Open quote from navigation error:', error);
+        consumedOpenQuoteIdRef.current = null;
+        toast.error(getApiErrorMessage(error) || 'Teklif açılamadı.');
+      }
+    })();
+  }, [location.pathname, location.search, location.state, navigate]);
 
   /** Liste: müşteri adı API `CustomerName`; şantiye için önceden yüklenen site haritası. */
   const contracts = useMemo(
@@ -217,16 +239,18 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     try {
       setLoading(true);
 
-      if (activeTab === 'quotes') {
+      if (isQuotesTab(activeTab)) {
         setQuotesError(null);
-        const statusArg: QuoteStatus | undefined =
-          quoteStatusFilter === 'all'
-            ? undefined
-            : quoteStatusFilter === 'pending'
-              ? QuoteStatus.Pending
-              : quoteStatusFilter === 'accepted'
-                ? QuoteStatus.Accepted
-                : QuoteStatus.Rejected;
+        const statusArg =
+          activeTab === 'quotesConverted'
+            ? ('converted' as const)
+            : quoteStatusFilter === 'all'
+              ? undefined
+              : quoteStatusFilter === 'pending'
+                ? QuoteStatus.Pending
+                : quoteStatusFilter === 'accepted'
+                  ? QuoteStatus.Accepted
+                  : QuoteStatus.Rejected;
         const quotesData = await quoteService.getAllAsync({
           quoteType: scopeType,
           status: statusArg,
@@ -235,8 +259,16 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         setQuotesRaw(quotesData || []);
       } else {
         setContractsError(null);
+        const contractStatus: 'active' | 'completed' | 'cancelled' | 'archived' =
+          activeTab === 'archived'
+            ? 'archived'
+            : activeTab === 'cancelled'
+              ? 'cancelled'
+              : activeTab === 'completed'
+                ? 'completed'
+                : 'active';
         const contractsData = await contractService.listAsync({
-          status: isSaleScope ? undefined : activeTab === 'active' ? 'active' : 'completed',
+          status: contractStatus,
           type: scopeType,
           search: debouncedContractSearch.trim() || undefined,
         });
@@ -244,7 +276,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
       }
     } catch (error) {
       console.error('Load data error:', error);
-      if (activeTab === 'quotes') {
+      if (isQuotesTab(activeTab)) {
         setQuotesRaw([]);
         setQuotesError(getApiErrorMessage(error));
       } else {
@@ -256,12 +288,33 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     }
   }, [
     activeTab,
-    isSaleScope,
     scopeType,
     quoteStatusFilter,
     debouncedContractSearch,
     debouncedQuoteSearch,
   ]);
+
+  const handleContractDataChanged = useCallback(
+    async (hint?: { quoteReleased?: boolean }) => {
+      if (hint?.quoteReleased && activeTab === 'quotesConverted') {
+        setActiveTab('quotes');
+        return;
+      }
+      await loadData();
+      if (hint?.quoteReleased && !isQuotesTab(activeTab)) {
+        try {
+          const quotesData = await quoteService.getAllAsync({
+            quoteType: scopeType,
+            search: debouncedQuoteSearch.trim() || undefined,
+          });
+          setQuotesRaw(quotesData || []);
+        } catch (error) {
+          console.error('Refresh quotes after contract cancel error:', error);
+        }
+      }
+    },
+    [activeTab, debouncedQuoteSearch, loadData, scopeType]
+  );
 
   useEffect(() => {
     void loadData();
@@ -285,7 +338,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   }, []);
 
   const hydrateAuxiliaryMaps = useCallback(async () => {
-    const rows = activeTab === 'quotes' ? quotesRaw : contractsRaw;
+    const rows = isQuotesTab(activeTab) ? quotesRaw : contractsRaw;
     const customerIds = Array.from(
       new Set(rows.map((row) => row.CustomerId).filter((id): id is number => typeof id === 'number' && id > 0))
     );
@@ -328,7 +381,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   }, [hydrateAuxiliaryMaps]);
 
   const handleAddNew = () => {
-    if (activeTab === 'quotes') {
+    if (isQuotesTab(activeTab)) {
       setSelectedQuote(null);
       setIsNewQuote(true);
       setIsQuoteClonedDraft(false);
@@ -506,6 +559,48 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     }
   };
 
+  const getContractStatusBadge = (contract: Contract) => {
+    const c = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
+    const uiStatus = getContractUiStatus(contract);
+    if (uiStatus === 'archived') {
+      return (
+        <span className={`${c} bg-gray-700/80 text-gray-200 border border-gray-600/50`}>
+          Arşiv
+        </span>
+      );
+    }
+    if (uiStatus === 'cancelled') {
+      return (
+        <span className={`${c} bg-amber-900/40 text-amber-100 border border-amber-700/50`}>
+          İptal Edildi
+        </span>
+      );
+    }
+    if (uiStatus === 'completed') {
+      return <span className={`${c} bg-green-700 text-green-100`}>Tamamlandı</span>;
+    }
+    return <span className={`${c} bg-blue-900 text-blue-100`}>Aktif</span>;
+  };
+
+  const getPageTitle = () => {
+    if (activeTab === 'quotesConverted') {
+      return 'Dönüştürülmüş teklifler';
+    }
+    if (activeTab === 'quotes') {
+      return contractScope === 'sale' ? 'Aktif satış teklifleri' : 'Aktif kiralama teklifleri';
+    }
+    if (activeTab === 'completed') {
+      return 'Tamamlanan sözleşmeler';
+    }
+    if (activeTab === 'cancelled') {
+      return 'İptal edilen sözleşmeler';
+    }
+    if (activeTab === 'archived') {
+      return 'Arşivlenmiş sözleşmeler';
+    }
+    return isSaleScope ? 'Satış sözleşmeleri' : 'Aktif sözleşmeler';
+  };
+
   const getQuoteStatusBadge = (status: QuoteStatus) => {
     const c = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
     switch (status) {
@@ -520,8 +615,139 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     }
   };
 
+  const renderQuoteStatusCell = (quote: Quote) => {
+    if (isQuoteConverted(quote)) {
+      return (
+        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-indigo-900/50 text-indigo-100 border border-indigo-700/50">
+          Sözleşmeye dönüştü
+        </span>
+      );
+    }
+    return getQuoteStatusBadge(quote.Status);
+  };
+
   const getAddButtonLabel = () => {
-    return activeTab === 'quotes' ? '+ Yeni Teklif' : '+ Yeni Sözleşme';
+    return isQuotesTab(activeTab) ? '+ Yeni Teklif' : '+ Yeni Sözleşme';
+  };
+
+  const openConvertedContractFromQuote = useCallback(
+    async (quote: Quote, event?: MouseEvent) => {
+      event?.stopPropagation();
+      const contractId = quote.ConvertedContractId;
+      if (!contractId) {
+        toast.warning('Bu teklife bağlı sözleşme bulunamadı.');
+        return;
+      }
+      try {
+        const contract = await contractService.getByIdAsync(contractId);
+        setActiveTab('active');
+        setSelectedContract(contract);
+        setIsNewContract(false);
+        setContractInitialTab('info');
+        setContractInitiallyFullScreen(false);
+        setIsContractModalOpen(true);
+      } catch (error) {
+        console.error('Open converted contract from quote list error:', error);
+        toast.error(getApiErrorMessage(error) || 'Sözleşme açılamadı.');
+      }
+    },
+    []
+  );
+
+  const handleQuoteConverted = useCallback(
+    async (contractId: number) => {
+      setIsQuoteModalOpen(false);
+      setSelectedQuote(null);
+      setIsQuoteClonedDraft(false);
+      try {
+        const contract = await contractService.getByIdAsync(contractId);
+        setActiveTab('active');
+        setSelectedContract(contract);
+        setIsNewContract(false);
+        setContractInitialTab('info');
+        setContractInitiallyFullScreen(false);
+        setIsContractModalOpen(true);
+      } catch (error) {
+        console.error('Open contract after convert error:', error);
+        toast.error(getApiErrorMessage(error) || 'Sözleşme açılamadı.');
+        setActiveTab('active');
+      }
+      try {
+        await loadData();
+      } catch (error) {
+        console.error('Reload after convert failed:', error);
+      }
+    },
+    [loadData]
+  );
+
+  const openArchiveModal = (contract: Contract) => {
+    if (!canArchiveContract) {
+      toast.error('Sözleşmeyi arşivlemek için yetkiniz bulunmuyor.');
+      return;
+    }
+    setArchiveTarget({
+      contractId: contract.ContractId,
+      contractCode: contract.ContractCode ?? undefined,
+    });
+    setArchiveReason('');
+    setArchiveReasonError(null);
+    setShowArchiveModal(true);
+  };
+
+  const handleArchiveConfirm = async () => {
+    if (!archiveTarget?.contractId || isArchiving) return;
+    const trimmedReason = archiveReason.trim();
+    if (trimmedReason.length > 0 && trimmedReason.length < 3) {
+      setArchiveReasonError('Not en az 3 karakter olmalıdır.');
+      return;
+    }
+    try {
+      setIsArchiving(true);
+      await contractService.archiveAsync(
+        archiveTarget.contractId,
+        trimmedReason.length >= 3 ? trimmedReason : undefined
+      );
+      toast.success('Sözleşme arşivlendi.');
+      setShowArchiveModal(false);
+      setArchiveTarget(null);
+      setArchiveReason('');
+      await loadData();
+    } catch (error) {
+      console.error('Archive contract error:', error);
+      toast.error(getApiErrorMessage(error) || 'Sözleşme arşivlenemedi.');
+    } finally {
+      setIsArchiving(false);
+    }
+  };
+
+  const openUnarchiveConfirm = (contract: Contract) => {
+    if (!canArchiveContract) {
+      toast.error('Sözleşmeyi geri getirmek için yetkiniz bulunmuyor.');
+      return;
+    }
+    setUnarchiveTarget({
+      contractId: contract.ContractId,
+      contractCode: contract.ContractCode ?? undefined,
+    });
+    setShowUnarchiveConfirm(true);
+  };
+
+  const handleUnarchiveConfirm = async () => {
+    if (!unarchiveTarget?.contractId || isUnarchiving) return;
+    try {
+      setIsUnarchiving(true);
+      await contractService.unarchiveAsync(unarchiveTarget.contractId);
+      toast.success('Sözleşme arşivden geri getirildi.');
+      setShowUnarchiveConfirm(false);
+      setUnarchiveTarget(null);
+      await loadData();
+    } catch (error) {
+      console.error('Unarchive contract error:', error);
+      toast.error(getApiErrorMessage(error) || 'Sözleşme geri getirilemedi.');
+    } finally {
+      setIsUnarchiving(false);
+    }
   };
 
   const openContractContextMenu = (event: MouseEvent<HTMLTableRowElement>, contract: Contract) => {
@@ -538,7 +764,10 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           ContractId: contract.ContractId,
           ContractCode: contract.ContractCode,
           IsCompleted: Boolean(contract.IsCompleted),
+          IsCancelled: isContractCancelled(contract),
+          IsArchived: isContractArchived(contract),
           IsRental: contractScope === 'rental',
+          ListTab: activeTab,
         },
       },
     });
@@ -583,9 +812,28 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         'contract.complete': async (target) => {
           const row = target as ContractRowTarget;
           const contract = contracts.find((item) => item.ContractId === row.entityId);
-          if (!contract || contract.IsCompleted || contractScope !== 'rental') return;
+          if (
+            !contract ||
+            !isContractActive(contract) ||
+            contractScope !== 'rental'
+          ) {
+            return;
+          }
           setCompleteTarget({ contractId: contract.ContractId, contractCode: contract.ContractCode ?? undefined });
           setShowCompleteConfirm(true);
+        },
+        'contract.archive': (target) => {
+          const row = target as ContractRowTarget;
+          const contract = contracts.find((item) => item.ContractId === row.entityId);
+          if (!contract || isContractArchived(contract)) return;
+          if (!isContractCompleted(contract) && !isContractCancelled(contract)) return;
+          openArchiveModal(contract);
+        },
+        'contract.unarchive': (target) => {
+          const row = target as ContractRowTarget;
+          const contract = contracts.find((item) => item.ContractId === row.entityId);
+          if (!contract || !isContractArchived(contract)) return;
+          openUnarchiveConfirm(contract);
         },
         'contract.copyCode': async (target) => {
           const row = target as ContractRowTarget;
@@ -597,7 +845,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           toast.success('Sözleşme kodu kopyalandı.');
         },
       }),
-      [contracts, contractScope, loadData]
+      [contracts, contractScope, loadData, canArchiveContract]
     )
   );
 
@@ -651,6 +899,12 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           handleOpenQuote(quote);
           toast.info('Teklif detayindan "Sözleşmeye Dönüştür" adımını tamamlayabilirsiniz.');
         },
+        'quote.openContract': async (target) => {
+          const row = target as QuoteRowTarget;
+          const quote = quotes.find((item) => item.QuoteId === row.entityId);
+          if (!quote) return;
+          await openConvertedContractFromQuote(quote);
+        },
         'quote.clone': async (target) => {
           const row = target as QuoteRowTarget;
           await handleQuoteCloneFromRow(row.entityId);
@@ -658,7 +912,9 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         'quote.delete': async (target) => {
           const row = target as QuoteRowTarget;
           if (row.rawData.ConvertedContractId) {
-            toast.warning('Sözleşmeye dönüştürülmüş teklifler silinemez.');
+            toast.warning(
+              'Bu teklif sözleşmeye dönüştürülmüş. Sözleşmede İptal Et veya Teklife Geri Al kullanın.'
+            );
             return;
           }
           try {
@@ -667,27 +923,48 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
             await loadData();
           } catch (error) {
             console.error('Delete quote error:', error);
-            toast.error(getApiErrorMessage(error));
+            if (isConvertedQuoteApiError(error)) {
+              toast.error(getApiErrorMessage(error));
+            } else {
+              toast.error(getUserFacingApiErrorMessage(error, 'quote-delete'));
+            }
           }
         },
       }),
-      [handleQuoteCloneFromRow, handleQuotePreview, loadData, quotes]
+      [handleQuoteCloneFromRow, handleQuotePreview, loadData, openConvertedContractFromQuote, quotes]
     )
   );
 
   const renderContractsTable = () => {
     if (contracts.length === 0) {
+      if (isSaleScope && activeTab === 'completed') {
+        return (
+          <EmptyState
+            icon={<ClipboardIcon size={48} weight="duotone" />}
+            title="Tamamlanan satış sözleşmesi yok"
+            description="Satış sözleşmelerinde tamamlanma durumu kullanılmaz. Aktif satış sözleşmeleri için Aktif sekmesine bakın."
+          />
+        );
+      }
       return (
         <EmptyState
           icon={<ClipboardIcon size={48} weight="duotone" />}
-          title={isSaleScope ? 'Satış sözleşmesi bulunmuyor' : activeTab === 'active' ? 'Aktif sözleşme bulunmuyor' : 'Kapalı sözleşme bulunmuyor'}
+          title={isSaleScope ? 'Satış sözleşmesi bulunmuyor' : activeTab === 'active' ? 'Aktif sözleşme bulunmuyor' : activeTab === 'cancelled' ? 'İptal edilmiş sözleşme bulunmuyor' : activeTab === 'archived' ? 'Arşivlenmiş sözleşme bulunmuyor' : 'Kapalı sözleşme bulunmuyor'}
           description={
             isSaleScope
-              ? 'Henüz satış sözleşmesi yok'
+              ? activeTab === 'cancelled'
+                ? 'Henüz iptal edilmiş satış sözleşmesi yok'
+                : activeTab === 'archived'
+                  ? 'Henüz arşivlenmiş satış sözleşmesi yok'
+                : 'Henüz satış sözleşmesi yok'
               : activeTab === 'active'
               ? isSaleScope
                 ? 'Yeni bir satış sözleşmesi oluşturun'
                 : 'Yeni bir kiralama sözleşmesi oluşturun'
+              : activeTab === 'cancelled'
+                ? 'İptal edilmiş sözleşme kaydı bulunmuyor'
+              : activeTab === 'archived'
+                ? 'Arşivlenmiş sözleşme kaydı bulunmuyor'
               : 'Henüz tamamlanmış sözleşme yok'
           }
         />
@@ -724,12 +1001,14 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
             </thead>
             <tbody>
               {displayedContracts.map((contract, index) => {
+                const cancelled = isContractCancelled(contract);
+                const archivedRow = isContractArchived(contract);
                 const overdue =
                   contractScope === 'rental' && isRentalContractOverdue(contract);
                 return (
                 <tr
                   key={contract.ContractId}
-                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'} ${overdue ? 'border-l-2 border-l-amber-500' : ''}`}
+                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'} ${overdue ? 'border-l-2 border-l-amber-500' : ''} ${cancelled && !archivedRow ? 'opacity-70' : ''} ${archivedRow ? 'opacity-60 bg-background-secondary/50' : ''}`}
                   onClick={() => handleOpenContract(contract)}
                   onContextMenu={(event) => openContractContextMenu(event, contract)}
                 >
@@ -763,9 +1042,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                   <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-green-500 font-medium">{formatCurrency(contract.InitialTotalPrice)}</td>
                   <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
                     <div className="flex flex-wrap items-center justify-center gap-1">
-                      <span className={`inline-block px-2 py-0.5 rounded text-xs font-medium ${contract.IsCompleted ? 'bg-green-700 text-green-100' : 'bg-blue-900 text-blue-100'}`}>
-                        {contract.IsCompleted ? 'Tamamlandı' : 'Aktif'}
-                      </span>
+                      {getContractStatusBadge(contract)}
                       {overdue && (
                         <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-amber-900/90 text-amber-100 border border-amber-600/40">
                           Gecikmiş
@@ -804,9 +1081,17 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
       return (
         <EmptyState
           icon={<NotePencilIcon size={48} weight="duotone" />}
-          title="Henüz teklif bulunmuyor"
+          title={
+            activeTab === 'quotesConverted'
+              ? 'Sözleşmeye dönüştürülmüş teklif yok.'
+              : 'Aksiyon bekleyen teklif yok.'
+          }
           description={
-            contractScope === 'sale' ? 'Yeni bir satış teklifi oluşturun' : 'Yeni bir kiralama teklifi oluşturun'
+            activeTab === 'quotesConverted'
+              ? 'Dönüştürülmüş teklifler burada geçmiş kaydı olarak listelenir.'
+              : contractScope === 'sale'
+                ? 'Yeni bir satış teklifi oluşturun'
+                : 'Yeni bir kiralama teklifi oluşturun'
           }
         />
       );
@@ -832,7 +1117,10 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                 <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Bitiş</th>
                 {/* Tutar sütunu gizlendi (kullanıcı isteği) */}
                 <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Oluşturma</th>
+                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Oluşturma</th>
+                {activeTab === 'quotesConverted' && (
+                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">İşlem</th>
+                )}
               </tr>
             </thead>
             <tbody>
@@ -877,8 +1165,19 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                       </span>
                     )}
                   </td>
-                  <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{getQuoteStatusBadge(quote.Status)}</td>
-                  <td className="py-0.5 px-2 align-middle text-text-secondary">{formatDate(quote.CreatedAt)}</td>
+                  <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{renderQuoteStatusCell(quote)}</td>
+                  <td className="py-0.5 px-2 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">{formatDate(quote.CreatedAt)}</td>
+                  {activeTab === 'quotesConverted' && (
+                    <td className="py-0.5 px-2 text-center align-middle">
+                      <button
+                        type="button"
+                        className="btn-secondary py-1 px-2 text-[11px]"
+                        onClick={(event) => void openConvertedContractFromQuote(quote, event)}
+                      >
+                        Sözleşmeye git
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
@@ -896,7 +1195,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     <div className="p-8">
       <div className="mb-3 flex items-center justify-between">
         <h1 className="text-xl font-semibold text-text-primary">
-          {contractScope === 'sale' ? 'Satış teklifleri' : 'Kiralama teklifleri'}
+          {getPageTitle()}
         </h1>
         <div className="flex items-center gap-2">
           <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
@@ -905,7 +1204,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
       </div>
 
       {/* Sözleşme arama ve filtreleme alanı (sadece sözleşme tablarında) */}
-      {activeTab !== 'quotes' && (
+      {!isQuotesTab(activeTab) && (
         <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
           <div className="relative flex-1 min-w-[220px]">
@@ -944,8 +1243,8 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         </div>
       )}
 
-      {/* Teklif arama ve filtreleme alanı (sadece teklif tabında) */}
-      {activeTab === 'quotes' && (
+      {/* Teklif arama ve filtreleme alanı (sadece teklif tablarında) */}
+      {isQuotesTab(activeTab) && (
         <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
           <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
           <div className="relative flex-1 min-w-[220px]">
@@ -960,20 +1259,22 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               onChange={(e) => setQuoteSearchText(e.target.value)}
             />
           </div>
-          <select
-            value={quoteStatusFilter}
-            onChange={(e) =>
-              setQuoteStatusFilter(
-                e.target.value as 'all' | 'pending' | 'accepted' | 'rejected'
-              )
-            }
-            className="input py-2 px-3 text-sm w-40"
-          >
-            <option value="all">Tüm Durumlar</option>
-            <option value="pending">Beklemede</option>
-            <option value="accepted">Kabul Edilen</option>
-            <option value="rejected">Reddedilen</option>
-          </select>
+          {activeTab === 'quotes' && (
+            <select
+              value={quoteStatusFilter}
+              onChange={(e) =>
+                setQuoteStatusFilter(
+                  e.target.value as 'all' | 'pending' | 'accepted' | 'rejected'
+                )
+              }
+              className="input py-2 px-3 text-sm w-40"
+            >
+              <option value="all">Tüm Durumlar</option>
+              <option value="pending">Beklemede</option>
+              <option value="accepted">Kabul Edilen</option>
+              <option value="rejected">Reddedilen</option>
+            </select>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -987,30 +1288,40 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         </div>
       )}
 
-      <div className="mb-3 border-b border-background-border flex gap-1">
+      <div className="mb-3 border-b border-background-border flex gap-1 flex-wrap">
         <button onClick={() => setActiveTab('quotes')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'quotes' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-          {contractScope === 'sale' ? 'Satış teklifleri' : 'Kiralama teklifleri'}
+          Aktif teklifler
           {activeTab === 'quotes' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('quotesConverted')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'quotesConverted' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Dönüştürülmüş
+          {activeTab === 'quotesConverted' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
         </button>
         <button onClick={() => setActiveTab('active')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'active' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
           {isSaleScope ? 'Satış Sözleşmeleri' : 'Aktif Sözleşmeler'}
           {activeTab === 'active' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
         </button>
-        {!isSaleScope && (
-          <button onClick={() => setActiveTab('completed')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'completed' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-            Kapalı Sözleşmeler
-            {activeTab === 'completed' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-          </button>
-        )}
+        <button onClick={() => setActiveTab('completed')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'completed' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Tamamlanan
+          {activeTab === 'completed' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('cancelled')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'cancelled' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          İptal Edilenler
+          {activeTab === 'cancelled' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('archived')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'archived' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Arşiv
+          {activeTab === 'archived' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
       </div>
 
-      {activeTab === 'quotes' && quotesError && (
+      {isQuotesTab(activeTab) && quotesError && (
         <div className="mb-3 rounded border border-red-700/50 bg-red-950/40 p-3 text-sm text-red-200">
           Teklifler yüklenemedi: {quotesError}
         </div>
       )}
 
-      {activeTab !== 'quotes' && contractsError && (
+      {!isQuotesTab(activeTab) && contractsError && (
         <div className="mb-3 rounded border border-red-700/50 bg-red-950/40 p-3 text-sm text-red-200">
           Sözleşmeler yüklenemedi: {contractsError}
         </div>
@@ -1020,7 +1331,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         <div className="flex items-center justify-center py-12">
           <div className="text-text-secondary">Yükleniyor...</div>
         </div>
-      ) : activeTab === 'quotes' ? (
+      ) : isQuotesTab(activeTab) ? (
         renderQuotesTable()
       ) : (
         renderContractsTable()
@@ -1034,6 +1345,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           isNew={isNewContract}
           initialTab={contractInitialTab}
           onClose={handleContractModalClose}
+          onDataChanged={handleContractDataChanged}
           defaultTypeForNew={scopeType}
           initiallyFullScreen={contractInitiallyFullScreen}
           lockNewContractType
@@ -1052,6 +1364,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           isNew={isNewQuote}
           onClose={handleQuoteModalClose}
           onDataChanged={loadData}
+          onConverted={handleQuoteConverted}
           defaultTypeForNew={scopeType}
           lockNewQuoteType
           onQuoteCloned={handleQuoteCloned}
@@ -1103,6 +1416,78 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
             }
           })();
         }}
+      />
+
+      {showArchiveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">Sözleşmeyi arşivle</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Bu sözleşme listeden kaldırılacaktır. Kayıt silinmeyecek; raporlar ve geçmiş veriler korunacaktır.
+            </p>
+            {archiveTarget?.contractCode && (
+              <p className="text-sm text-text-primary mb-3 font-medium">
+                Sözleşme: {archiveTarget.contractCode}
+              </p>
+            )}
+            <label className="block text-xs text-text-secondary mb-1">İsteğe bağlı not</label>
+            <textarea
+              value={archiveReason}
+              onChange={(e) => {
+                setArchiveReason(e.target.value);
+                setArchiveReasonError(null);
+              }}
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Eski kayıt — listeden kaldır"
+              disabled={isArchiving}
+            />
+            {archiveReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {archiveReasonError}
+              </div>
+            )}
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isArchiving) return;
+                  setShowArchiveModal(false);
+                  setArchiveTarget(null);
+                  setArchiveReason('');
+                  setArchiveReasonError(null);
+                }}
+                disabled={isArchiving}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleArchiveConfirm()}
+                disabled={isArchiving || !canArchiveContract}
+                className="btn-danger flex-1"
+                title={!canArchiveContract ? 'Arşivleme yetkiniz yok' : undefined}
+              >
+                {isArchiving ? 'Arşivleniyor…' : 'Arşivle'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={showUnarchiveConfirm}
+        title="Sözleşmeyi arşivden geri getir"
+        message="Sözleşme tekrar ilgili durum sekmesinde (Tamamlanan / İptal Edilen) görünecektir."
+        confirmLabel="Geri Getir"
+        cancelLabel="Vazgeç"
+        loading={isUnarchiving}
+        onCancel={() => {
+          if (isUnarchiving) return;
+          setShowUnarchiveConfirm(false);
+          setUnarchiveTarget(null);
+        }}
+        onConfirm={() => void handleUnarchiveConfirm()}
       />
     </div>
   );

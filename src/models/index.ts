@@ -82,6 +82,11 @@ export interface Unit {
 
 export interface Inventory {
   ItemId: number;
+  /** Pasif / arşiv (soft delete). Doluysa ürün varsayılan listede görünmez. */
+  DeletedAt?: string | null;
+  deletedAt?: string | null;
+  IsArchived?: boolean;
+  isArchived?: boolean;
   ItemCode?: string;
   ItemName: string;
   ItemNameEn?: string | null;
@@ -110,6 +115,21 @@ export interface Inventory {
   LastModifiedByUserName?: string | null;
   PriceTiers?: PriceTier[];
   ContractDetails?: ContractDetail[];
+}
+
+/** Pasif / arşivlenmiş ürün (DeletedAt dolu veya IsArchived). */
+export function pickInventoryDeletedAt(
+  item: Pick<Inventory, 'DeletedAt' | 'deletedAt'>
+): string | null | undefined {
+  return item.DeletedAt ?? item.deletedAt;
+}
+
+export function isInventoryArchived(
+  item: Pick<Inventory, 'DeletedAt' | 'deletedAt' | 'IsArchived' | 'isArchived'>
+): boolean {
+  if (item.IsArchived === true || item.isArchived === true) return true;
+  const v = pickInventoryDeletedAt(item);
+  return v != null && String(v).trim() !== '';
 }
 
 // Inventory - Item Movements (GET /inventory/:itemId/movements)
@@ -274,6 +294,21 @@ export interface Contract {
   /** Liste yanıtında API'den (GET /contracts) */
   CustomerName?: string;
   IsCompleted: boolean;
+  /** API bazen lifecycle status döner: active | completed | cancelled */
+  Status?: string;
+  status?: string;
+  /** İptal zamanı (POST /contracts/:id/cancel). Doluysa sözleşme iptal edilmiştir. */
+  CancelledAt?: string | null;
+  /** İptal gerekçesi */
+  CancellationReason?: string | null;
+  /** Arşiv zamanı (POST /contracts/:id/archive). Doluysa varsayılan listede görünmez. */
+  ArchivedAt?: string | null;
+  archivedAt?: string | null;
+  ArchivedByUserId?: number | null;
+  ArchiveReason?: string | null;
+  /** @deprecated Eski API — ArchivedAt kullanın */
+  DeletedAt?: string | null;
+  deletedAt?: string | null;
   CreatedAt?: string;
   CreatedByUserFullName?: string;
   CreatedByUserName?: string;
@@ -283,6 +318,9 @@ export interface Contract {
   Customer?: Customer;
   Site?: ConstructionSite; // Şantiye bilgisi
   ContractDetails?: ContractDetail[];
+  /** Kaynak teklif (dönüşümle oluşan sözleşmelerde); manuel sözleşmede null */
+  SourceQuoteId?: number | null;
+  SourceQuoteCode?: string | null;
 }
 
 export interface ContractDetail {
@@ -617,6 +655,9 @@ export interface Warehouse {
   WarehouseName: string;
   Address?: string;
   Description?: string;
+  /** Pasif / arşiv (soft delete). Doluysa depo varsayılan listede görünmez. */
+  DeletedAt?: string | null;
+  deletedAt?: string | null;
   UniqueItems: number;     // Benzersiz ürün sayısı
   TotalQuantity: number;   // Toplam stok miktarı
   CreatedAt?: string;
@@ -627,6 +668,34 @@ export interface Warehouse {
   LastModifiedByUserName?: string | null;
 }
 
+/** Silinmiş / pasif depo (DeletedAt dolu). */
+export function pickWarehouseDeletedAt(
+  w: Pick<Warehouse, 'DeletedAt' | 'deletedAt'>
+): string | null | undefined {
+  return w.DeletedAt ?? w.deletedAt;
+}
+
+export function isWarehouseArchived(w: Pick<Warehouse, 'DeletedAt' | 'deletedAt'>): boolean {
+  const v = pickWarehouseDeletedAt(w);
+  return v != null && String(v).trim() !== '';
+}
+
+export function filterActiveWarehouses(warehouses: Warehouse[]): Warehouse[] {
+  return warehouses.filter((w) => !isWarehouseArchived(w));
+}
+
+/** Backend warehouse API hata kodları */
+export type WarehouseApiErrorCode =
+  | 'WAREHOUSE_HAS_STOCK'
+  | 'WAREHOUSE_HAS_ACTIVE_RENTALS'
+  | 'WAREHOUSE_IN_USE'
+  | 'WAREHOUSE_INACTIVE';
+
+export interface ApiErrorResponse {
+  message: string;
+  code?: WarehouseApiErrorCode | string;
+}
+
 export interface WarehouseStock {
   StockId: number;
   WarehouseId: number;
@@ -635,6 +704,8 @@ export interface WarehouseStock {
   ItemName: string;
   CategoryId: number;
   CategoryName?: string;
+  IsArchived?: boolean;
+  isArchived?: boolean;
 }
 
 export interface WarehouseStockResponse {
@@ -764,11 +835,161 @@ export interface Quote {
   UpdatedAt: string; // ISO 8601 format
   ConvertedContractId?: number;
   ConvertedAt?: string | null;
+  /** API flag; yoksa ConvertedContractId ile türetilir */
+  IsConverted?: boolean;
+  /** Red gerekçesi (Status === rejected) */
+  RejectionReason?: string | null;
   CustomerName?: string;
   Customer?: Customer;
   Site?: ConstructionSite;
   QuoteDetails?: QuoteDetail[];
 }
+
+export const isContractCancelled = (
+  c: Pick<Contract, 'CancelledAt'> & { cancelledAt?: string | null }
+): boolean => {
+  const v = c.CancelledAt ?? c.cancelledAt;
+  if (v == null) return false;
+  const s = String(v).trim();
+  return s !== '' && s.toLowerCase() !== 'null';
+};
+
+function parseContractLifecycleStatus(
+  c: Pick<Contract, 'IsCompleted' | 'CancelledAt'> & {
+    Status?: string;
+    status?: string;
+  }
+): 'active' | 'completed' | 'cancelled' | null {
+  const raw = c.Status ?? c.status;
+  if (typeof raw !== 'string') return null;
+  const s = raw.trim().toLowerCase();
+  if (s === 'cancelled' || s === 'canceled') return 'cancelled';
+  if (s === 'completed' || s === 'complete') return 'completed';
+  if (s === 'active') return 'active';
+  return null;
+}
+
+function hasContractActualEndDate(
+  c: Pick<Contract, 'ActualEndDate'> & { actualEndDate?: string | null }
+): boolean {
+  const v = c.ActualEndDate ?? c.actualEndDate;
+  if (v == null) return false;
+  const s = String(v).trim();
+  return s !== '' && s.toLowerCase() !== 'null';
+}
+
+function normalizeContractIsCompleted(
+  c: Pick<Contract, 'IsCompleted'> & {
+    isCompleted?: boolean | string | number | null;
+    Status?: string;
+    status?: string;
+  }
+): boolean {
+  const lifecycle = parseContractLifecycleStatus(c);
+  if (lifecycle === 'completed') return true;
+  if (lifecycle === 'active' || lifecycle === 'cancelled') return false;
+
+  const v: unknown = c.IsCompleted ?? c.isCompleted;
+  if (v === true) return true;
+  if (v === false || v == null) return false;
+  if (typeof v === 'number') return v === 1;
+  if (typeof v === 'string') {
+    const lower = v.trim().toLowerCase();
+    if (lower === 'true' || lower === '1') return true;
+    if (lower === 'false' || lower === '0' || lower === '') return false;
+  }
+  return false;
+}
+
+export const isContractCompleted = (
+  c: Pick<Contract, 'IsCompleted' | 'ActualEndDate' | 'CancelledAt'> & {
+    isCompleted?: boolean | string | number | null;
+    actualEndDate?: string | null;
+    Status?: string;
+    status?: string;
+  }
+): boolean => {
+  if (isContractCancelled(c)) return false;
+  if (normalizeContractIsCompleted(c)) return true;
+  return hasContractActualEndDate(c);
+};
+
+export const isContractActive = (
+  c: Pick<Contract, 'IsCompleted' | 'CancelledAt' | 'ArchivedAt' | 'DeletedAt' | 'ActualEndDate'> & {
+    isCompleted?: boolean | string | number | null;
+    cancelledAt?: string | null;
+    archivedAt?: string | null;
+    deletedAt?: string | null;
+    actualEndDate?: string | null;
+    Status?: string;
+    status?: string;
+  }
+): boolean => {
+  if (isContractArchived(c)) return false;
+  if (isContractCancelled(c)) return false;
+  const lifecycle = parseContractLifecycleStatus(c);
+  if (lifecycle === 'cancelled' || lifecycle === 'completed') return false;
+  if (lifecycle === 'active') return true;
+  return !isContractCompleted(c);
+};
+
+export type ContractStatusFilter = 'active' | 'completed' | 'cancelled' | 'archived';
+export type ContractUiStatus = ContractStatusFilter;
+
+export const getContractUiStatus = (
+  c: Pick<Contract, 'IsCompleted' | 'CancelledAt' | 'ArchivedAt' | 'DeletedAt' | 'ActualEndDate'> & {
+    isCompleted?: boolean | string | number | null;
+    cancelledAt?: string | null;
+    archivedAt?: string | null;
+    deletedAt?: string | null;
+    actualEndDate?: string | null;
+    Status?: string;
+    status?: string;
+  }
+): ContractUiStatus => {
+  if (isContractArchived(c)) return 'archived';
+  if (isContractCancelled(c)) return 'cancelled';
+  if (isContractCompleted(c)) return 'completed';
+  return 'active';
+};
+
+/** Tamamlanan veya iptal edilmiş; arşivlenebilir (aktif veya zaten arşivlenmiş değil). */
+export const isContractArchivable = (
+  c: Parameters<typeof getContractUiStatus>[0]
+): boolean => {
+  const status = getContractUiStatus(c);
+  return status === 'completed' || status === 'cancelled';
+};
+
+export function pickContractDeletedAt(
+  c: Pick<Contract, 'DeletedAt' | 'deletedAt'>
+): string | null | undefined {
+  return c.DeletedAt ?? c.deletedAt;
+}
+
+export function pickContractArchivedAt(
+  c: Pick<Contract, 'ArchivedAt' | 'archivedAt' | 'DeletedAt' | 'deletedAt'>
+): string | null | undefined {
+  const archived = c.ArchivedAt ?? c.archivedAt;
+  if (archived != null) {
+    const s = String(archived).trim();
+    if (s !== '' && s.toLowerCase() !== 'null') return archived;
+  }
+  return pickContractDeletedAt(c);
+}
+
+export function isContractArchived(
+  c: Pick<Contract, 'ArchivedAt' | 'archivedAt' | 'DeletedAt' | 'deletedAt'>
+): boolean {
+  const v = pickContractArchivedAt(c);
+  if (v == null) return false;
+  const s = String(v).trim();
+  return s !== '' && s.toLowerCase() !== 'null';
+}
+
+export const isQuoteConverted = (
+  q: Pick<Quote, 'ConvertedContractId' | 'IsConverted'>
+): boolean => q.IsConverted === true || q.ConvertedContractId != null;
 
 export interface QuotePackage {
   PackageId: string | number;

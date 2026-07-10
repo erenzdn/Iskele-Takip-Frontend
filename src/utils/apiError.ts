@@ -119,6 +119,59 @@ export function getApiErrorMessage(error: unknown): string {
   return msg || 'Beklenmeyen hata';
 }
 
+function isWarehouseForeignKeyError(message: string): boolean {
+  const lower = message.toLowerCase();
+  return (
+    lower.includes('foreign key') ||
+    lower.includes('violates foreign key') ||
+    /\b23503\b/.test(message) ||
+    (lower.includes('warehouses') &&
+      (lower.includes('constraint') || lower.includes('referenc') || lower.includes('fk')))
+  );
+}
+
+export function getApiErrorCode(error: unknown): string | undefined {
+  const err = error as { code?: string; responseText?: string };
+  if (typeof err?.code === 'string' && err.code) return err.code;
+  if (err?.responseText) {
+    try {
+      const data = JSON.parse(err.responseText) as { code?: string };
+      if (typeof data?.code === 'string') return data.code;
+    } catch {
+      // no-op
+    }
+  }
+  return undefined;
+}
+
+export function getWarehouseDeleteErrorMessage(error: unknown): string {
+  const status = (error as { status?: number })?.status;
+  const code = getApiErrorCode(error);
+  if (status === 404) {
+    return 'Depo bulunamadı. Liste yenilenmiş olabilir.';
+  }
+  if (status === 403) {
+    return 'Depo kaldırma yetkiniz yok. Kullanıcıya warehouses_delete izni verin ve tekrar giriş yapın.';
+  }
+  const raw = getApiErrorMessage(error);
+  if (code === 'WAREHOUSE_IN_USE' || isWarehouseForeignKeyError(raw)) {
+    return (
+      raw ||
+      'Bu depo geçmiş kayıtlarda kullanıldığı için kaldırılamadı. Yeniden deneyin veya destek alın.'
+    );
+  }
+  if (code === 'WAREHOUSE_HAS_STOCK' || code === 'WAREHOUSE_HAS_ACTIVE_RENTALS') {
+    return raw || 'Depo kullanımdan kaldırılamadı.';
+  }
+  if (status === 409) {
+    return raw || 'Depo kullanımdan kaldırılamadı.';
+  }
+  if (status && status >= 500) {
+    return 'Depo kaldırılamadı. Lütfen tekrar deneyin.';
+  }
+  return sanitizeDatabaseErrorMessage(getUserFacingErrorMessage(error, 'Depo kaldırılamadı.'));
+}
+
 export function getStockReceiptDeleteErrorMessage(error: unknown): string {
   const status = (error as { status?: number })?.status;
   if (status === 404) {
@@ -206,6 +259,277 @@ export function getUserFacingErrorMessage(error: unknown, fallback: string): str
   }
 
   return raw;
+}
+
+/** Ham veritabanı / FK hata metinlerini kullanıcıya gösterme. */
+function sanitizeDatabaseErrorMessage(message: string): string {
+  const lower = message.toLowerCase();
+  if (
+    lower.includes('foreign key') ||
+    lower.includes('violates foreign key') ||
+    lower.includes('violates not-null') ||
+    lower.includes('duplicate key value') ||
+    lower.includes('postgres') ||
+    /\b23\d{3}\b/.test(message)
+  ) {
+    return 'İşlem başarısız. Lütfen tekrar deneyin.';
+  }
+  return message;
+}
+
+/** Pasif / arşiv envanter API mesajlarını kullanıcı dostu Türkçe'ye çevirir. Eşleşme yoksa null. */
+function classifyArchivedInventoryApiMessage(raw: string): string | null {
+  if (!raw?.trim()) return null;
+  const lower = raw.toLowerCase();
+
+  if (
+    (lower.includes('kirada') && (lower.includes('ürün') || lower.includes('urun'))) ||
+    (lower.includes('onrent') && (lower.includes('pasif') || lower.includes('silin')))
+  ) {
+    return 'Kirada olan ürün pasife alınamaz. Önce iade işlemini tamamlayın.';
+  }
+
+  if (
+    lower.includes('assertactiveinventory') ||
+    ((lower.includes('bulunamadı') || lower.includes('bulunamadi') || lower.includes('not found')) &&
+      (lower.includes('arşiv') || lower.includes('arsiv') || lower.includes('pasif') || lower.includes('archived')))
+  ) {
+    return 'Seçilen ürün bulunamadı veya pasif durumda.';
+  }
+
+  if (
+    lower.includes('foreign key') ||
+    lower.includes('violates foreign key') ||
+    (lower.includes('inventories') &&
+      (lower.includes('constraint') || lower.includes('referenc') || lower.includes('fk'))) ||
+    /\b23503\b/.test(raw)
+  ) {
+    return 'Bu ürün geçmiş kayıtlarda kullanıldığı için işlem tamamlanamadı. Ürünü pasife almayı deneyin.';
+  }
+
+  if (lower.includes('pasif') && (lower.includes('seçilemez') || lower.includes('secilemez'))) {
+    return raw.trim();
+  }
+
+  if (
+    lower.includes('pasif') ||
+    lower.includes('arşiv') ||
+    lower.includes('arsiv') ||
+    lower.includes('archived') ||
+    lower.includes('deletedat') ||
+    lower.includes('pasife alınamaz') ||
+    lower.includes('pasife alinamaz')
+  ) {
+    if (lower.includes('kirada')) {
+      return 'Kirada olan ürün pasife alınamaz. Önce iade işlemini tamamlayın.';
+    }
+    return 'Bu ürün pasif durumda; yeni işlemde kullanılamaz.';
+  }
+
+  return null;
+}
+
+export type UserFacingApiErrorContext =
+  | 'inventory-delete'
+  | 'quote-save'
+  | 'quote-convert'
+  | 'quote-reject'
+  | 'quote-delete'
+  | 'contract-save'
+  | 'contract-cancel'
+  | 'contract-archive'
+  | 'contract-add-line'
+  | 'stock-receipt'
+  | 'package-save'
+  | 'purchase-invoice'
+  | 'excel-import'
+  | 'generic';
+
+const CONTEXT_FALLBACKS: Record<Exclude<UserFacingApiErrorContext, 'inventory-delete'>, string> = {
+  'quote-save': 'Seçilen ürün pasif durumda veya kullanılamıyor.',
+  'quote-convert': 'Seçilen ürün pasif durumda veya kullanılamıyor.',
+  'quote-reject': 'Teklif reddedilemedi.',
+  'quote-delete': 'Teklif silinemedi.',
+  'contract-save': 'Pasif ürün bu işlemde kullanılamaz.',
+  'contract-cancel': 'Sözleşme iptal edilemedi.',
+  'contract-archive': 'Sözleşme arşivlenemedi.',
+  'contract-add-line': 'Pasif ürün bu işlemde kullanılamaz.',
+  'stock-receipt': 'Pasif ürün stok hareketine eklenemez.',
+  'package-save': 'Pasif ürün pakete eklenemez.',
+  'purchase-invoice': 'Pasif ürün bu işlemde kullanılamaz.',
+  'excel-import': 'Pasif veya geçersiz ürün eşleşmesi.',
+  generic: 'İşlem başarısız. Lütfen tekrar deneyin.',
+};
+
+const CONTEXT_PREFIXES: Partial<
+  Record<Exclude<UserFacingApiErrorContext, 'inventory-delete' | 'generic'>, string>
+> = {
+  'quote-save': 'Teklif kaydedilemedi',
+  'quote-convert': 'Teklif sözleşmeye dönüştürülemedi',
+  'quote-reject': 'Teklif reddedilemedi',
+  'quote-delete': 'Teklif silinemedi',
+  'contract-save': 'Sözleşme kaydedilemedi',
+  'contract-cancel': 'Sözleşme iptal edilemedi',
+  'contract-archive': 'Sözleşme arşivlenemedi',
+  'contract-add-line': 'Sözleşmeye kalem eklenemedi',
+  'stock-receipt': 'Stok fişi kaydedilemedi',
+  'package-save': 'Paket oluşturulamadı',
+  'purchase-invoice': 'Alış faturası kaydedilemedi',
+  'excel-import': 'İçe aktarma başarısız',
+};
+
+function withContextPrefix(context: UserFacingApiErrorContext, detail: string): string {
+  if (context === 'inventory-delete' || context === 'generic') return detail;
+  const prefix = CONTEXT_PREFIXES[context];
+  if (!prefix || detail.startsWith(prefix)) return detail;
+  return `${prefix}: ${detail}`;
+}
+
+/** Dönüştürülmüş teklif silme/düzenleme 400 hataları. */
+export function isConvertedQuoteApiError(error: unknown): boolean {
+  const raw = getApiErrorMessage(error);
+  if (!raw?.trim()) return false;
+  const lower = raw.toLowerCase();
+  const status = (error as { status?: number })?.status;
+  if (status !== 400) return false;
+  return (
+    (lower.includes('sözleşme') || lower.includes('sozlesme') || lower.includes('contract')) &&
+    (lower.includes('bağlı') || lower.includes('bagli') || lower.includes('bound') || lower.includes('converted') || lower.includes('aktif'))
+  );
+}
+
+export function isArchivedInventoryApiError(error: unknown): boolean {
+  const raw = getApiErrorMessage(error);
+  if (classifyArchivedInventoryApiMessage(raw) || classifyArchivedInventoryApiMessage(sanitizeDatabaseErrorMessage(raw))) {
+    return true;
+  }
+  const status = (error as { status?: number })?.status;
+  if (status !== 400 && status !== 409) return false;
+  const lower = raw.toLowerCase();
+  return (
+    lower.includes('itemid') ||
+    lower.includes('inventory') ||
+    lower.includes('assertactiveinventory') ||
+    ((lower.includes('ürün') || lower.includes('urun') || lower.includes('malzeme')) &&
+      !lower.includes('müşteri') &&
+      !lower.includes('musteri'))
+  );
+}
+
+export function getUserFacingApiErrorMessage(
+  error: unknown,
+  context: UserFacingApiErrorContext = 'generic'
+): string {
+  if (context === 'inventory-delete') {
+    return getInventoryDeleteErrorMessage(error);
+  }
+
+  const status = (error as { status?: number })?.status;
+  const raw = getApiErrorMessage(error);
+  const classified =
+    classifyArchivedInventoryApiMessage(raw) ?? classifyArchivedInventoryApiMessage(sanitizeDatabaseErrorMessage(raw));
+
+  if (classified) {
+    return withContextPrefix(context, classified);
+  }
+
+  if (status && status >= 500) {
+    return 'İşlem başarısız. Lütfen tekrar deneyin.';
+  }
+
+  const fallbackDetail = CONTEXT_FALLBACKS[context === 'generic' ? 'generic' : context];
+  const networkSafe = sanitizeDatabaseErrorMessage(getUserFacingErrorMessage(error, fallbackDetail));
+
+  if (context !== 'generic' && isArchivedInventoryApiError(error)) {
+    return withContextPrefix(context, fallbackDetail);
+  }
+
+  return withContextPrefix(context, networkSafe);
+}
+
+export type InventoryRestoreErrorResult = {
+  severity: 'error' | 'warning';
+  message: string;
+  showConflictModal: boolean;
+};
+
+/** POST /inventory/:id/restore hata yanıtları */
+export function getInventoryRestoreErrorResult(error: unknown): InventoryRestoreErrorResult {
+  const status = (error as { status?: number })?.status;
+  const raw = getApiErrorMessage(error);
+
+  if (status === 404) {
+    return {
+      severity: 'error',
+      message: raw || 'Ürün bulunamadı.',
+      showConflictModal: false,
+    };
+  }
+
+  if (status === 409) {
+    const lower = raw.toLowerCase();
+    const alreadyActive =
+      lower.includes('zaten aktif') ||
+      (lower.includes('aktif') && (lower.includes('ürün') || lower.includes('urun')) && lower.includes('zaten'));
+    if (alreadyActive) {
+      return { severity: 'warning', message: raw || 'Ürün zaten aktif.', showConflictModal: false };
+    }
+    return {
+      severity: 'warning',
+      message: raw || 'Ürün geri getirilemedi; aktif kayıtla çakışma var.',
+      showConflictModal: true,
+    };
+  }
+
+  if (status && status >= 500) {
+    return {
+      severity: 'error',
+      message: 'İşlem başarısız. Lütfen tekrar deneyin.',
+      showConflictModal: false,
+    };
+  }
+
+  return {
+    severity: 'error',
+    message: sanitizeDatabaseErrorMessage(
+      getUserFacingErrorMessage(error, 'Ürün geri getirilemedi.')
+    ),
+    showConflictModal: false,
+  };
+}
+
+export function getInventoryDeleteErrorMessage(error: unknown): string {
+  const status = (error as { status?: number })?.status;
+  if (status === 400 || status === 409) {
+    return sanitizeDatabaseErrorMessage(getUserFacingErrorMessage(error, 'İşlem yapılamadı.'));
+  }
+  if (status && status >= 500) {
+    return 'İşlem başarısız. Lütfen tekrar deneyin.';
+  }
+  const msg = getUserFacingErrorMessage(error, 'İşlem başarısız. Lütfen tekrar deneyin.');
+  return sanitizeDatabaseErrorMessage(msg);
+}
+
+export function formatInventoryRelatedApiText(
+  message: string,
+  context: UserFacingApiErrorContext = 'generic'
+): string {
+  const classified = classifyArchivedInventoryApiMessage(message);
+  if (classified) return withContextPrefix(context, classified);
+  return sanitizeDatabaseErrorMessage(message);
+}
+
+/** Pasif ürün seçimi / güncelleme API yanıtlarında kullanıcı dostu mesaj. */
+export function userMessageForArchivedInventoryApiError(error: unknown, fallback: string): string {
+  const raw = getApiErrorMessage(error);
+  const classified =
+    classifyArchivedInventoryApiMessage(raw) ?? classifyArchivedInventoryApiMessage(sanitizeDatabaseErrorMessage(raw));
+  if (classified) return classified;
+  const status = (error as { status?: number })?.status;
+  if (status && status >= 500) {
+    return 'İşlem başarısız. Lütfen tekrar deneyin.';
+  }
+  return sanitizeDatabaseErrorMessage(getUserFacingErrorMessage(error, fallback));
 }
 
 /** Arşivlenmiş müşteri / assertActiveCustomer benzeri 400 yanıtlarında ek bağlam. */

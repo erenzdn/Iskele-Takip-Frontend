@@ -8,6 +8,7 @@ import type { InventoryItemMovementsResponse, InventoryItemMovementContractRow, 
 import { formatMoney, formatShortDateTime } from '../utils/formatters';
 import { toast } from '../hooks/useToast';
 import { getApiErrorMessage } from '../utils/apiError';
+import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 
 type FiltersState = {
   warehouseId: number | '';
@@ -36,6 +37,7 @@ export default function ItemMovementsPage() {
   const navigate = useNavigate();
   const { itemId } = useParams();
   const parsedItemId = Number(itemId);
+  const showArchivedWarehouses = useArchivePreferencesStore((s) => s.showArchivedWarehouses);
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [filters, setFilters] = useState<FiltersState>({
@@ -54,14 +56,16 @@ export default function ItemMovementsPage() {
 
   const loadWarehouses = useCallback(async () => {
     try {
-      const rows = await warehouseService.getAllAsync();
+      const rows = await warehouseService.getAllAsync({
+        includeArchived: showArchivedWarehouses || undefined,
+      });
       const sorted = (rows || []).slice().sort((a, b) => (a.WarehouseName || '').localeCompare(b.WarehouseName || '', 'tr-TR'));
       setWarehouses(sorted);
     } catch (e) {
       console.error('Load warehouses error:', e);
       setWarehouses([]);
     }
-  }, []);
+  }, [showArchivedWarehouses]);
 
   const loadMovements = useCallback(async (opts?: { showToastOnError?: boolean }) => {
     if (!Number.isFinite(parsedItemId) || parsedItemId <= 0) {

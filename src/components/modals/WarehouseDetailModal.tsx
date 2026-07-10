@@ -1,11 +1,15 @@
-import { useState, useEffect } from 'react';
-import { CheckIcon, XIcon } from '@phosphor-icons/react';
-import { AuditLog, Warehouse, WarehouseStock, Inventory } from '../../models';
+import { useState, useEffect, useMemo } from 'react';
+import { ArchiveIcon, CheckIcon, XIcon } from '@phosphor-icons/react';
+import { AuditLog, Warehouse, WarehouseStock, Inventory, isWarehouseArchived, pickWarehouseDeletedAt } from '../../models';
 import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
 import AuditLogTimeline from '../AuditLogTimeline';
+import ArchivedWarehouseBanner from '../ArchivedWarehouseBanner';
 import ConfirmModal from './ConfirmModal';
 import { toast } from '../../hooks/useToast';
+import { getUserFacingApiErrorMessage, getWarehouseDeleteErrorMessage } from '../../utils/apiError';
+import { useAuthStore } from '../../store/authStore';
+import { canDeleteWarehouse, canUpdateWarehouse } from '../../utils/warehousePermissions';
 
 interface WarehouseDetailModalProps {
   warehouse: Warehouse | null;
@@ -18,6 +22,13 @@ export default function WarehouseDetailModal({
   isNew,
   onClose,
 }: WarehouseDetailModalProps) {
+  const user = useAuthStore((state) => state.user);
+  const canDelete = canDeleteWarehouse(user);
+  const canUpdateStock = canUpdateWarehouse(user);
+  const archived = useMemo(
+    () => Boolean(warehouse && !isNew && isWarehouseArchived(warehouse)),
+    [warehouse, isNew]
+  );
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [warehouseName, setWarehouseName] = useState('');
   const [address, setAddress] = useState('');
@@ -95,7 +106,12 @@ export default function WarehouseDetailModal({
     }
   };
 
+  useEffect(() => {
+    if (archived) setIsReadOnly(true);
+  }, [archived]);
+
   const handleSave = async () => {
+    if (archived) return;
     if (!warehouseName.trim()) {
       toast.warning('Depo adı zorunludur');
       return;
@@ -136,10 +152,12 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.deleteAsync(warehouse.WarehouseId);
       setShowDeleteConfirm(false);
+      toast.success('Depo kullanımdan kaldırıldı.');
       onClose();
     } catch (error) {
-      console.error('Delete warehouse error:', error);
-      toast.error('Silme hatası');
+      console.error('Deactivate warehouse error:', error);
+      setShowDeleteConfirm(false);
+      toast.error(getWarehouseDeleteErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
@@ -171,7 +189,7 @@ export default function WarehouseDetailModal({
       await loadStock();
     } catch (error) {
       console.error('Add stock error:', error);
-      toast.error('Stok ekleme hatası');
+      toast.error(getUserFacingApiErrorMessage(error, 'generic'));
     } finally {
       setIsBusy(false);
     }
@@ -237,6 +255,15 @@ export default function WarehouseDetailModal({
         <h2 className="text-2xl font-bold mb-4">
           {isNew ? 'Yeni Depo' : 'Depo Detayı'}
         </h2>
+
+        {archived && warehouse ? (
+          <div className="mb-4">
+            <ArchivedWarehouseBanner
+              warehouseName={warehouse.WarehouseName}
+              deletedAt={pickWarehouseDeletedAt(warehouse)}
+            />
+          </div>
+        ) : null}
 
         {!isNew && (
           <div className="flex gap-2 mb-4 border-b border-background-border">
@@ -340,13 +367,15 @@ export default function WarehouseDetailModal({
           <div className="border-t border-background-border pt-6">
             <div className="flex items-center justify-between mb-4">
               <h3 className="text-lg font-semibold">Depodaki Ürünler</h3>
-              <button
-                onClick={handleOpenAddStock}
-                disabled={isBusy}
-                className="btn-secondary text-sm"
-              >
-                + Ürün Ekle
-              </button>
+              {canUpdateStock && !archived && (
+                <button
+                  onClick={handleOpenAddStock}
+                  disabled={isBusy}
+                  className="btn-secondary text-sm"
+                >
+                  + Ürün Ekle
+                </button>
+              )}
             </div>
 
             {/* Ürün Ekleme Formu */}
@@ -413,7 +442,9 @@ export default function WarehouseDetailModal({
                       <th className="text-left p-3 font-semibold">Ürün</th>
                       <th className="text-left p-3 font-semibold">Kategori</th>
                       <th className="text-center p-3 font-semibold">Miktar</th>
-                      <th className="text-center p-3 font-semibold">İşlem</th>
+                      {canUpdateStock && !archived && (
+                        <th className="text-center p-3 font-semibold">İşlem</th>
+                      )}
                     </tr>
                   </thead>
                   <tbody>
@@ -438,6 +469,7 @@ export default function WarehouseDetailModal({
                             </span>
                           )}
                         </td>
+                        {canUpdateStock && !archived && (
                         <td className="p-3 text-center">
                           {editingStockId === item.StockId ? (
                             <div className="flex gap-1 justify-center">
@@ -478,6 +510,7 @@ export default function WarehouseDetailModal({
                             </div>
                           )}
                         </td>
+                        )}
                       </tr>
                     ))}
                   </tbody>
@@ -490,21 +523,27 @@ export default function WarehouseDetailModal({
         {/* Aksiyon Butonları */}
         <div className="flex gap-3 mt-6 pt-6 border-t border-background-border">
           {!isNew && isReadOnly && (
-            <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
-              Düzenle
-            </button>
-          )}
-          {!isReadOnly && (
             <>
-              {!isNew && warehouse && (
+              {!archived && (
+                <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
+                  Düzenle
+                </button>
+              )}
+              {canDelete && !archived && warehouse && (
                 <button
                   onClick={handleDeleteClick}
                   disabled={isBusy}
-                  className="btn-danger flex-1"
+                  className="btn-danger flex-1 inline-flex items-center justify-center gap-2"
+                  title="Depoyu kullanımdan kaldır"
                 >
-                  Sil
+                  <ArchiveIcon size={18} weight="bold" aria-hidden />
+                  Kullanımdan Kaldır
                 </button>
               )}
+            </>
+          )}
+          {!isReadOnly && (
+            <>
               <button onClick={onClose} className="btn-secondary flex-1">
                 İptal
               </button>
@@ -528,10 +567,15 @@ export default function WarehouseDetailModal({
       </div>
       <ConfirmModal
         open={showDeleteConfirm}
-        title="Onaylıyor musunuz?"
-        message="Bu depoyu silmek istediğinizden emin misiniz?\nDikkat: Depodaki tüm stok kayıtları da silinecektir!"
+        title="Depoyu kullanımdan kaldırmak istiyor musunuz?"
+        message={
+          warehouse
+            ? `"${warehouse.WarehouseName}" deposu kullanımdan kaldırılacak.\n\nBu depo geçmiş kayıtlarda kullanılmış olabilir. Kullanımdan kaldırıldığında yeni işlemlerde seçilemez; geçmiş sözleşme ve hareket kayıtları korunur.\n\nHiç kullanılmamış boş depolar tamamen silinir. Devam etmek istiyor musunuz?`
+            : ''
+        }
         variant="danger"
         loading={isBusy}
+        confirmLabel="Kullanımdan Kaldır"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
       />
