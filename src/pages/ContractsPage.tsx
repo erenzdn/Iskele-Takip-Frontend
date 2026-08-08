@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent } from 'react';
+﻿import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent } from 'react';
 import { ClipboardIcon, NotePencilIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { contractService } from '../services/contractService';
@@ -31,6 +31,7 @@ import QuoteDetailModal from '../components/modals/QuoteDetailModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import { toast } from '../hooks/useToast';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 import {
   useContextMenu,
   useContextMenuHandlers,
@@ -62,6 +63,7 @@ interface ContractsPageProps {
 export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const location = useLocation();
   const navigate = useNavigate();
+  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const canArchiveContract = Boolean(
     user?.permissions?.includes('contracts_archive') ||
@@ -582,25 +584,6 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     return <span className={`${c} bg-blue-900 text-blue-100`}>Aktif</span>;
   };
 
-  const getPageTitle = () => {
-    if (activeTab === 'quotesConverted') {
-      return 'Dönüştürülmüş teklifler';
-    }
-    if (activeTab === 'quotes') {
-      return contractScope === 'sale' ? 'Aktif satış teklifleri' : 'Aktif kiralama teklifleri';
-    }
-    if (activeTab === 'completed') {
-      return 'Tamamlanan sözleşmeler';
-    }
-    if (activeTab === 'cancelled') {
-      return 'İptal edilen sözleşmeler';
-    }
-    if (activeTab === 'archived') {
-      return 'Arşivlenmiş sözleşmeler';
-    }
-    return isSaleScope ? 'Satış sözleşmeleri' : 'Aktif sözleşmeler';
-  };
-
   const getQuoteStatusBadge = (status: QuoteStatus) => {
     const c = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
     switch (status) {
@@ -629,6 +612,27 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const getAddButtonLabel = () => {
     return isQuotesTab(activeTab) ? '+ Yeni Teklif' : '+ Yeni Sözleşme';
   };
+
+  const headerActions = useMemo(
+    () => (
+      <>
+        <button onClick={() => void loadData()} className="btn-secondary py-2 px-3 text-sm">
+          Yenile
+        </button>
+        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+          {getAddButtonLabel()}
+        </button>
+      </>
+    ),
+    // handleAddNew / getAddButtonLabel activeTab'a bağlı; her tab değişiminde yenilenir
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeTab, loadData]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
 
   const openConvertedContractFromQuote = useCallback(
     async (quote: Quote, event?: MouseEvent) => {
@@ -983,7 +987,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
 
     return (
       <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-        <div className="overflow-auto max-h-[calc(100vh-260px)] min-h-[280px]">
+        <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
           <table className="w-full text-xs border-collapse text-text-primary">
             <thead className="sticky top-0 z-10 border-b border-background-border">
               <tr>
@@ -1099,7 +1103,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
 
     return (
       <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-        <div className="overflow-auto max-h-[calc(100vh-260px)] min-h-[280px]">
+        <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
           <table className="w-full text-xs border-collapse text-text-primary">
             <thead className="sticky top-0 z-10 border-b border-background-border">
               <tr>
@@ -1192,20 +1196,37 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   };
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">
-          {getPageTitle()}
-        </h1>
-        <div className="flex items-center gap-2">
-          <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
-          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">{getAddButtonLabel()}</button>
-        </div>
+    <div>
+      <div className="mb-1.5 border-b border-background-border flex gap-0.5 flex-wrap">
+        <button onClick={() => setActiveTab('quotes')} className={`px-3 py-1.5 text-sm font-medium transition-colors relative ${activeTab === 'quotes' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Aktif teklifler
+          {activeTab === 'quotes' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('quotesConverted')} className={`px-3 py-1.5 text-sm font-medium transition-colors relative ${activeTab === 'quotesConverted' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Dönüştürülmüş
+          {activeTab === 'quotesConverted' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('active')} className={`px-3 py-1.5 text-sm font-medium transition-colors relative ${activeTab === 'active' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          {isSaleScope ? 'Satış Sözleşmeleri' : 'Aktif Sözleşmeler'}
+          {activeTab === 'active' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('completed')} className={`px-3 py-1.5 text-sm font-medium transition-colors relative ${activeTab === 'completed' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Tamamlanan
+          {activeTab === 'completed' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('cancelled')} className={`px-3 py-1.5 text-sm font-medium transition-colors relative ${activeTab === 'cancelled' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          İptal Edilenler
+          {activeTab === 'cancelled' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
+        <button onClick={() => setActiveTab('archived')} className={`px-3 py-1.5 text-sm font-medium transition-colors relative ${activeTab === 'archived' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
+          Arşiv
+          {activeTab === 'archived' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
+        </button>
       </div>
 
       {/* Sözleşme arama ve filtreleme alanı (sadece sözleşme tablarında) */}
       {!isQuotesTab(activeTab) && (
-        <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+        <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 flex flex-wrap items-center gap-2">
           <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
           <div className="relative flex-1 min-w-[220px]">
             <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
@@ -1213,7 +1234,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
             </span>
             <input
               type="text"
-              className="input w-full pl-7 py-2 text-sm"
+              className="input w-full pl-7 py-1.5 text-sm"
               placeholder="Müşteri adı veya sözleşme kodu (sunucu, 300ms)…"
               value={searchText}
               onChange={(e) => setSearchText(e.target.value)}
@@ -1236,7 +1257,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               setSearchText('');
               setOverdueOnly(false);
             }}
-            className="btn-secondary py-2 px-3 text-sm"
+            className="btn-secondary py-1.5 px-3 text-sm"
           >
             Filtreleri Temizle
           </button>
@@ -1245,7 +1266,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
 
       {/* Teklif arama ve filtreleme alanı (sadece teklif tablarında) */}
       {isQuotesTab(activeTab) && (
-        <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+        <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 flex flex-wrap items-center gap-2">
           <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
           <div className="relative flex-1 min-w-[220px]">
             <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
@@ -1253,7 +1274,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
             </span>
             <input
               type="text"
-              className="input w-full pl-7 py-2 text-sm"
+              className="input w-full pl-7 py-1.5 text-sm"
               placeholder="Müşteri adı, teklif kodu veya konu (sunucu, 300ms)…"
               value={quoteSearchText}
               onChange={(e) => setQuoteSearchText(e.target.value)}
@@ -1267,7 +1288,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                   e.target.value as 'all' | 'pending' | 'accepted' | 'rejected'
                 )
               }
-              className="input py-2 px-3 text-sm w-40"
+              className="input py-1.5 px-3 text-sm w-40"
             >
               <option value="all">Tüm Durumlar</option>
               <option value="pending">Beklemede</option>
@@ -1281,48 +1302,21 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               setQuoteSearchText('');
               setQuoteStatusFilter('all');
             }}
-            className="btn-secondary py-2 px-3 text-sm"
+            className="btn-secondary py-1.5 px-3 text-sm"
           >
             Filtreleri Temizle
           </button>
         </div>
       )}
 
-      <div className="mb-3 border-b border-background-border flex gap-1 flex-wrap">
-        <button onClick={() => setActiveTab('quotes')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'quotes' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-          Aktif teklifler
-          {activeTab === 'quotes' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-        </button>
-        <button onClick={() => setActiveTab('quotesConverted')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'quotesConverted' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-          Dönüştürülmüş
-          {activeTab === 'quotesConverted' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-        </button>
-        <button onClick={() => setActiveTab('active')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'active' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-          {isSaleScope ? 'Satış Sözleşmeleri' : 'Aktif Sözleşmeler'}
-          {activeTab === 'active' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-        </button>
-        <button onClick={() => setActiveTab('completed')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'completed' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-          Tamamlanan
-          {activeTab === 'completed' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-        </button>
-        <button onClick={() => setActiveTab('cancelled')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'cancelled' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-          İptal Edilenler
-          {activeTab === 'cancelled' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-        </button>
-        <button onClick={() => setActiveTab('archived')} className={`px-4 py-2 text-sm font-medium transition-colors relative ${activeTab === 'archived' ? 'text-primary' : 'text-text-secondary hover:text-text-primary'}`}>
-          Arşiv
-          {activeTab === 'archived' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
-        </button>
-      </div>
-
       {isQuotesTab(activeTab) && quotesError && (
-        <div className="mb-3 rounded border border-red-700/50 bg-red-950/40 p-3 text-sm text-red-200">
+        <div className="mb-1.5 rounded border border-red-700/50 bg-red-950/40 p-2 text-sm text-red-200">
           Teklifler yüklenemedi: {quotesError}
         </div>
       )}
 
       {!isQuotesTab(activeTab) && contractsError && (
-        <div className="mb-3 rounded border border-red-700/50 bg-red-950/40 p-3 text-sm text-red-200">
+        <div className="mb-1.5 rounded border border-red-700/50 bg-red-950/40 p-2 text-sm text-red-200">
           Sözleşmeler yüklenemedi: {contractsError}
         </div>
       )}

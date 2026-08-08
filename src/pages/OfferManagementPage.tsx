@@ -173,20 +173,12 @@ export default function OfferManagementPage() {
   };
 
   return (
-    <div className="p-8 space-y-4">
+    <div className="space-y-3">
       <div>
         <Link to="/system-settings" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
           <ArrowLeftIcon size={16} />
           Ayarlar'a Dön
         </Link>
-      </div>
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-text-primary">Teklif & Kategori Yönetimi</h1>
-          <p className="text-sm text-text-secondary">
-            Kategori, alt kategori, teklif şablonu ve paket işlemlerini tek merkezden yönetin.
-          </p>
-        </div>
       </div>
 
       <section className="card p-2">

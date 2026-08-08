@@ -4,6 +4,7 @@ import {
   ArchiveIcon,
   ArrowClockwiseIcon,
   CircleNotchIcon,
+  ColumnsIcon,
   DownloadSimpleIcon,
   InfoIcon,
   MoonIcon,
@@ -18,12 +19,17 @@ import { adminService } from '../services/adminService';
 import { inventoryService, ExchangeRateResponse, PricingPresetResponse } from '../services/inventoryService';
 import { useAuthStore } from '../store/authStore';
 import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
+import { useTableColumnPreferencesStore } from '../store/tableColumnPreferencesStore';
 import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
 import { useUpdateStore } from '../store/updateStore';
 import { toast } from '../hooks/useToast';
 import { unitService } from '../services/unitService';
 import { Unit } from '../models';
+import {
+  CUSTOMER_TABLE_COLUMNS,
+  INVENTORY_TABLE_COLUMNS,
+} from '../constants/tableColumns';
 
 type StatusMessage = { type: 'success' | 'error'; text: string } | null;
 
@@ -77,7 +83,7 @@ function formatTrDateTime(raw?: unknown) {
   }).format(dt);
 }
 
-type SettingsTab = 'general' | 'archives' | 'finance' | 'system';
+type SettingsTab = 'general' | 'archives' | 'tables' | 'finance' | 'system';
 
 export default function SystemSettingsPage() {
   const user = useAuthStore((s) => s.user);
@@ -89,6 +95,10 @@ export default function SystemSettingsPage() {
   const showArchivedInventory = useArchivePreferencesStore((s) => s.showArchivedInventory);
   const setShowArchivedWarehouses = useArchivePreferencesStore((s) => s.setShowArchivedWarehouses);
   const setShowArchivedInventory = useArchivePreferencesStore((s) => s.setShowArchivedInventory);
+  const inventoryColumns = useTableColumnPreferencesStore((s) => s.inventory);
+  const customerColumns = useTableColumnPreferencesStore((s) => s.customers);
+  const setInventoryColumnVisible = useTableColumnPreferencesStore((s) => s.setInventoryColumnVisible);
+  const setCustomerColumnVisible = useTableColumnPreferencesStore((s) => s.setCustomerColumnVisible);
 
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -380,17 +390,11 @@ export default function SystemSettingsPage() {
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-8">
-        <h1 className="text-2xl font-semibold tracking-tight text-text-primary mb-1">Sistem Ayarları</h1>
-        <p className="text-text-secondary text-sm">
-          Uygulama tercihlerini, veritabanı yedeklerini ve yazılım güncellemelerini buradan yönetin.
-        </p>
-      </div>
-
+    <div>
+      {/* Ayar içerikleri */}
       {status && (
         <div
-          className={`mb-6 rounded-panel border p-4 text-sm ${
+          className={`mb-4 rounded-panel border p-3 text-sm ${
             status.type === 'success'
               ? 'border-success/40 bg-success/10 text-success'
               : 'border-error/40 bg-error/10 text-error'
@@ -400,10 +404,10 @@ export default function SystemSettingsPage() {
         </div>
       )}
 
-      <div className="flex flex-col md:flex-row gap-6">
+      <div className="flex flex-col md:flex-row gap-4">
         {/* Sol Menü (Tabs) */}
-        <div className="w-full md:w-64 flex-shrink-0">
-          <div className="card p-2 space-y-1 sticky top-6">
+        <div className="w-full md:w-56 flex-shrink-0">
+          <div className="card p-2 space-y-1 sticky top-3">
             <button
               onClick={() => setActiveTab('general')}
               className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
@@ -425,6 +429,17 @@ export default function SystemSettingsPage() {
             >
               <ArchiveIcon size={18} />
               Arşiv Görünürlüğü
+            </button>
+            <button
+              onClick={() => setActiveTab('tables')}
+              className={`w-full text-left px-4 py-3 rounded-lg text-sm font-medium transition-colors flex items-center gap-3 ${
+                activeTab === 'tables'
+                  ? 'bg-primary/10 text-primary'
+                  : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
+              }`}
+            >
+              <ColumnsIcon size={18} />
+              Tablolar
             </button>
             <button
               onClick={() => setActiveTab('finance')}
@@ -638,6 +653,83 @@ export default function SystemSettingsPage() {
                       </span>
                     </label>
                   </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'tables' && (
+            <div className="space-y-6 mb-6">
+              <div className="card">
+                <div className="flex items-center gap-2 mb-2">
+                  <ColumnsIcon size={18} className="text-primary" />
+                  <h2 className="text-lg font-semibold">Tablo Sütunları</h2>
+                </div>
+                <p className="text-text-secondary text-sm mb-4">
+                  Envanter ve müşteri listelerinde görmek istediğiniz sütunları seçin. Seçili sütunlar ekran
+                  genişliğine yayılır; yatay kaydırma olmaz.
+                </p>
+              </div>
+
+              <div className="card">
+                <h3 className="text-base font-semibold mb-3">Envanter tablosu</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {INVENTORY_TABLE_COLUMNS.map((col) => {
+                    const required = Boolean(col.required);
+                    return (
+                      <label
+                        key={col.key}
+                        className={`flex items-center gap-3 select-none ${
+                          required ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={inventoryColumns[col.key]}
+                          disabled={required}
+                          onChange={(e) => setInventoryColumnVisible(col.key, e.target.checked)}
+                          className="w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                        <span className="text-sm text-text-primary">
+                          {col.label}
+                          {required ? (
+                            <span className="ml-1.5 text-xs text-text-secondary">(Zorunlu)</span>
+                          ) : null}
+                        </span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+
+              <div className="card">
+                <h3 className="text-base font-semibold mb-3">Müşteri tablosu</h3>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  {CUSTOMER_TABLE_COLUMNS.map((col) => {
+                    const required = Boolean(col.required);
+                    return (
+                      <label
+                        key={col.key}
+                        className={`flex items-center gap-3 select-none ${
+                          required ? 'opacity-80 cursor-not-allowed' : 'cursor-pointer'
+                        }`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={customerColumns[col.key]}
+                          disabled={required}
+                          onChange={(e) => setCustomerColumnVisible(col.key, e.target.checked)}
+                          className="w-4 h-4 cursor-pointer disabled:cursor-not-allowed"
+                        />
+                        <span className="text-sm text-text-primary">
+                          {col.label}
+                          {required ? (
+                            <span className="ml-1.5 text-xs text-text-secondary">(Zorunlu)</span>
+                          ) : null}
+                        </span>
+                      </label>
+                    );
+                  })}
                 </div>
               </div>
             </div>

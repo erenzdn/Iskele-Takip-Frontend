@@ -65,7 +65,7 @@ describe('customerContacts', () => {
     expect(getPreferredCustomerContact(noPrimaryCustomer)?.Name).toBe('Ilk Kisi');
   });
 
-  it('excel 2-sheet bilgilendirme metni yeni formatı içerir', () => {
+  it('excel bilgilendirme metni 2 sayfa formatını içerir', () => {
     expect(CUSTOMERS_EXCEL_HELP.hint).toContain('Customers + CustomerContacts');
     expect(CUSTOMERS_EXCEL_HELP.checklist).toContain('Birincil Mi = Evet');
   });

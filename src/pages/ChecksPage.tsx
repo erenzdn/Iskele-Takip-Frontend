@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
-import { CalendarBlankIcon, FunnelSimpleIcon, NotePencilIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
+﻿import { useEffect, useMemo, useState, useCallback } from 'react';
+import { CalendarBlankIcon, NotePencilIcon, PlusIcon, TrashIcon } from '@phosphor-icons/react';
 import { checkService } from '../services/checkService';
 import { Check, CheckFilters, CheckStatus, Customer } from '../models';
 import EmptyState from '../components/EmptyState';
@@ -9,6 +9,7 @@ import ConfirmModal from '../components/modals/ConfirmModal';
 import { customerService } from '../services/customerService';
 import CheckDetailModal from '../components/modals/CheckDetailModal';
 import ExcelManager from '../components/ExcelManager';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 type DateRange = {
   from: string | null;
@@ -23,6 +24,7 @@ const STATUS_LABELS: Record<CheckStatus, string> = {
 };
 
 export default function ChecksPage() {
+  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const permissions = user?.permissions ?? [];
 
@@ -56,13 +58,7 @@ export default function ChecksPage() {
     [selectedCustomer, selectedStatus, dateRange]
   );
 
-  useEffect(() => {
-    loadData();
-    loadCustomers();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [filters.customerId, filters.status, filters.dateFrom, filters.dateTo]);
-
-  const loadData = async () => {
+  const loadData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -74,23 +70,58 @@ export default function ChecksPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [filters]);
 
-  const loadCustomers = async () => {
+  const loadCustomers = useCallback(async () => {
     try {
       const data = await customerService.getAllAsync();
       setCustomers(data);
     } catch (e) {
       console.error('Load customers error (checks page):', e);
     }
-  };
+  }, []);
 
-  const handleNewCheck = () => {
+  useEffect(() => {
+    void loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    void loadCustomers();
+  }, [loadCustomers]);
+
+  const handleNewCheck = useCallback(() => {
     if (!canCreate) return;
     setEditingCheck(null);
     setIsNew(true);
     setIsDetailOpen(true);
-  };
+  }, [canCreate]);
+
+  const headerActions = useMemo(
+    () => (
+      <>
+        <button type="button" onClick={() => void loadData()} className="btn-secondary py-2 px-3 text-sm">
+          Yenile
+        </button>
+        <ExcelManager type="checks" onImportSuccess={() => void loadData()} />
+        {canCreate ? (
+          <button
+            type="button"
+            onClick={handleNewCheck}
+            className="btn-primary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+          >
+            <PlusIcon size={16} weight="bold" />
+            Yeni Çek
+          </button>
+        ) : null}
+      </>
+    ),
+    [canCreate, loadData, handleNewCheck]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
 
   const handleEditCheck = (check: Check) => {
     setEditingCheck(check);
@@ -187,146 +218,88 @@ export default function ChecksPage() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Çekler yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-text-primary">Çekler</h1>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Vadesi yaklaşan ve tahsil edilmiş çekleri buradan izleyebilirsiniz.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-center gap-2">
+    <div>
+      <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 flex flex-wrap items-center gap-1.5">
+        <select
+          className="input py-1.5 px-2 text-sm min-w-[180px]"
+          value={selectedCustomer?.CustomerId ?? ''}
+          onChange={(e) => {
+            const id = e.target.value ? Number(e.target.value) : null;
+            const customer = customers.find((c) => c.CustomerId === id) ?? null;
+            setSelectedCustomer(customer);
+          }}
+        >
+          <option value="">Tüm müşteriler</option>
+          {customers.map((c) => (
+            <option key={c.CustomerId} value={c.CustomerId}>
+              {c.Name}
+            </option>
+          ))}
+        </select>
+
+        <button
+          type="button"
+          onClick={() => setSelectedStatus(null)}
+          className={`px-2 py-1 rounded text-[11px] border ${
+            selectedStatus === null
+              ? 'bg-accent text-white border-accent'
+              : 'bg-transparent text-text-secondary border-background-border hover:border-accent/60 hover:text-text-primary'
+          }`}
+        >
+          Tümü
+        </button>
+        {(['PORTFOLIO', 'CASHED', 'RETURNED', 'CANCELLED'] as CheckStatus[]).map((s) => (
           <button
+            key={s}
             type="button"
-            onClick={loadData}
-            className="btn-secondary py-2 px-3 text-sm"
+            onClick={() => setSelectedStatus(s)}
+            className={`px-2 py-1 rounded text-[11px] border ${
+              selectedStatus === s
+                ? 'bg-accent text-white border-accent'
+                : 'bg-transparent text-text-secondary border-background-border hover:border-accent/60 hover:text-text-primary'
+            }`}
           >
-            Yenile
+            {STATUS_LABELS[s]}
           </button>
-          <ExcelManager type="checks" onImportSuccess={() => void loadData()} />
-          {canCreate && (
-            <button
-              type="button"
-              onClick={handleNewCheck}
-              className="btn-primary py-2 px-3 text-sm inline-flex items-center gap-1.5"
-            >
-              <PlusIcon size={16} weight="bold" />
-              Yeni Çek
-            </button>
-          )}
-        </div>
+        ))}
+
+        <CalendarBlankIcon size={14} className="text-text-secondary" />
+        <input
+          type="date"
+          className="input py-1 px-2 text-xs"
+          value={dateRange.from ?? ''}
+          onChange={(e) => setDateRange((prev) => ({ ...prev, from: e.target.value || null }))}
+        />
+        <span className="text-text-secondary text-xs">–</span>
+        <input
+          type="date"
+          className="input py-1 px-2 text-xs"
+          value={dateRange.to ?? ''}
+          onChange={(e) => setDateRange((prev) => ({ ...prev, to: e.target.value || null }))}
+        />
+        <button type="button" onClick={() => handleQuickDateRange('thisMonth')} className="btn-secondary py-1 px-2 text-[11px]">
+          Bu Ay
+        </button>
+        <button type="button" onClick={() => handleQuickDateRange('thisQuarter')} className="btn-secondary py-1 px-2 text-[11px]">
+          Bu Çeyrek
+        </button>
+        <button type="button" onClick={() => handleQuickDateRange('clear')} className="btn-secondary py-1 px-2 text-[11px]">
+          Temizle
+        </button>
       </div>
 
-      <div className="mb-3 rounded-panel border border-background-border bg-background-panel p-3 space-y-2">
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
-          <FunnelSimpleIcon size={14} className="text-text-secondary" />
-          <span>Filtreler</span>
+      {error && (
+        <div className="mb-1.5 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+          {error}
         </div>
-
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="min-w-[220px]">
-            <select
-              className="input py-1.5 px-2 text-sm w-full"
-              value={selectedCustomer?.CustomerId ?? ''}
-              onChange={(e) => {
-                const id = e.target.value ? Number(e.target.value) : null;
-                const customer = customers.find((c) => c.CustomerId === id) ?? null;
-                setSelectedCustomer(customer);
-              }}
-            >
-              <option value="">Tüm Müşteriler</option>
-              {customers.map((c) => (
-                <option key={c.CustomerId} value={c.CustomerId}>
-                  {c.Name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-1">
-            <button
-              type="button"
-              onClick={() => setSelectedStatus(null)}
-              className={`px-2.5 py-1.5 rounded-full text-[11px] border ${
-                selectedStatus === null
-                  ? 'bg-accent text-white border-accent'
-                  : 'bg-transparent text-text-secondary border-background-border hover:border-accent/60 hover:text-text-primary'
-              }`}
-            >
-              Tüm Durumlar
-            </button>
-            {(['PORTFOLIO', 'CASHED', 'RETURNED', 'CANCELLED'] as CheckStatus[]).map((s) => (
-              <button
-                key={s}
-                type="button"
-                onClick={() => setSelectedStatus(s)}
-                className={`px-2.5 py-1.5 rounded-full text-[11px] border ${
-                  selectedStatus === s
-                    ? 'bg-accent text-white border-accent'
-                    : 'bg-transparent text-text-secondary border-background-border hover:border-accent/60 hover:text-text-primary'
-                }`}
-              >
-                {STATUS_LABELS[s]}
-              </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            <CalendarBlankIcon size={14} className="text-text-secondary" />
-            <input
-              type="date"
-              className="input py-1 px-2 text-xs"
-              value={dateRange.from ?? ''}
-              onChange={(e) =>
-                setDateRange((prev) => ({ ...prev, from: e.target.value || null }))
-              }
-            />
-            <span className="text-text-secondary">-</span>
-            <input
-              type="date"
-              className="input py-1 px-2 text-xs"
-              value={dateRange.to ?? ''}
-              onChange={(e) =>
-                setDateRange((prev) => ({ ...prev, to: e.target.value || null }))
-              }
-            />
-            <button
-              type="button"
-              onClick={() => handleQuickDateRange('thisMonth')}
-              className="btn-secondary py-1 px-2 text-[11px]"
-            >
-              Bu Ay
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDateRange('thisQuarter')}
-              className="btn-secondary py-1 px-2 text-[11px]"
-            >
-              Bu Çeyrek
-            </button>
-            <button
-              type="button"
-              onClick={() => handleQuickDateRange('clear')}
-              className="btn-secondary py-1 px-2 text-[11px]"
-            >
-              Temizle
-            </button>
-          </div>
-        </div>
-
-        {error && (
-          <div className="text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
-            {error}
-          </div>
-        )}
-      </div>
+      )}
 
       {checks.length === 0 ? (
         <EmptyState
@@ -340,7 +313,7 @@ export default function ChecksPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-260px)] min-h-[320px]">
+          <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[320px]">
             <table className="w-full text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>

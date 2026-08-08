@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ReceiptIcon } from '@phosphor-icons/react';
 import { purchaseInvoiceService } from '../services/purchaseInvoiceService';
 import { PurchaseInvoice } from '../models';
 import EmptyState from '../components/EmptyState';
 import PurchaseInvoiceDetailModal from '../components/modals/PurchaseInvoiceDetailModal';
 import { formatCurrency, formatDate, formatShortDateTime } from '../utils/formatters';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 export default function PurchaseInvoicesPage() {
+  const { setActions } = useHeaderActions();
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -14,11 +16,7 @@ export default function PurchaseInvoicesPage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isNewInvoice, setIsNewInvoice] = useState(false);
 
-  useEffect(() => {
-    loadInvoices();
-  }, []);
-
-  const loadInvoices = async () => {
+  const loadInvoices = useCallback(async () => {
     try {
       setLoading(true);
       const data = await purchaseInvoiceService.getAllAsync();
@@ -28,11 +26,15 @@ export default function PurchaseInvoicesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const handleSearch = async () => {
+  useEffect(() => {
+    void loadInvoices();
+  }, [loadInvoices]);
+
+  const handleSearch = useCallback(async () => {
     if (!searchText.trim()) {
-      loadInvoices();
+      await loadInvoices();
       return;
     }
 
@@ -45,13 +47,32 @@ export default function PurchaseInvoicesPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [searchText, loadInvoices]);
 
-  const handleAddNew = () => {
+  const handleAddNew = useCallback(() => {
     setSelectedInvoice(null);
     setIsNewInvoice(true);
     setIsModalOpen(true);
-  };
+  }, []);
+
+  const headerActions = useMemo(
+    () => (
+      <>
+        <button onClick={() => void loadInvoices()} className="btn-secondary py-2 px-3 text-sm">
+          Yenile
+        </button>
+        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+          + Yeni Fatura
+        </button>
+      </>
+    ),
+    [loadInvoices, handleAddNew]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
 
   const handleOpenDetail = (invoice: PurchaseInvoice) => {
     setSelectedInvoice(invoice);
@@ -62,52 +83,51 @@ export default function PurchaseInvoicesPage() {
   const handleModalClose = () => {
     setIsModalOpen(false);
     setSelectedInvoice(null);
-    loadInvoices();
+    void loadInvoices();
   };
 
-  // Toplam hesaplamaları
   const totalSubtotal = invoices.reduce((sum, inv) => sum + inv.Subtotal, 0);
   const totalVat = invoices.reduce((sum, inv) => sum + inv.VatAmount, 0);
   const totalAmount = invoices.reduce((sum, inv) => sum + inv.TotalAmount, 0);
 
-  if (loading) {
+  if (loading && invoices.length === 0) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Alış Faturaları</h1>
-        <div className="flex items-center gap-2">
-          <button onClick={loadInvoices} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
-          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Fatura</button>
-        </div>
-      </div>
-
-      {invoices.length > 0 && (
-        <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-4 text-xs">
-          <span className="text-text-secondary">Toplam: <strong className="text-text-primary">{invoices.length}</strong> fatura</span>
-          <span className="text-text-secondary">Ara Toplam: <strong className="text-text-primary">{formatCurrency(totalSubtotal)}</strong></span>
-          <span className="text-text-secondary">KDV: <strong className="text-text-primary">{formatCurrency(totalVat)}</strong></span>
-          <span className="text-text-secondary">Genel Toplam: <strong className="text-accent">{formatCurrency(totalAmount)}</strong></span>
-        </div>
-      )}
-
-      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
+    <div>
+      <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 flex flex-wrap items-center gap-1.5">
         <input
           type="text"
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
-          onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+          onKeyDown={(e) => e.key === 'Enter' && void handleSearch()}
           placeholder="Tedarikçi, açıklama, evrak no, ürün veya depo..."
-          className="input flex-1 min-w-[200px] py-2 px-3 text-sm"
+          className="input flex-1 min-w-[200px] py-1.5 px-3 text-sm"
         />
-        <button onClick={handleSearch} className="btn-secondary py-2 px-3 text-sm">Ara</button>
+        <button onClick={() => void handleSearch()} className="btn-secondary py-1.5 px-3 text-sm">
+          Ara
+        </button>
+        {invoices.length > 0 && (
+          <>
+            <span className="text-xs text-text-secondary whitespace-nowrap">
+              {invoices.length} fatura
+            </span>
+            <span className="text-xs text-text-secondary whitespace-nowrap">
+              Ara: <strong className="text-text-primary">{formatCurrency(totalSubtotal)}</strong>
+            </span>
+            <span className="text-xs text-text-secondary whitespace-nowrap">
+              KDV: <strong className="text-text-primary">{formatCurrency(totalVat)}</strong>
+            </span>
+            <span className="text-xs text-text-secondary whitespace-nowrap">
+              Toplam: <strong className="text-accent">{formatCurrency(totalAmount)}</strong>
+            </span>
+          </>
+        )}
       </div>
 
       {invoices.length === 0 ? (
@@ -118,7 +138,7 @@ export default function PurchaseInvoicesPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[280px]">
+          <div className="overflow-auto max-h-[calc(100vh-150px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
@@ -167,7 +187,6 @@ export default function PurchaseInvoicesPage() {
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>Toplam: {invoices.length} fatura</span>
-            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
       )}

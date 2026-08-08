@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, type MouseEvent } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, type MouseEvent } from 'react';
 import { ReceiptIcon, TrashIcon } from '@phosphor-icons/react';
 import { stockReceiptService, StockReceiptListParams } from '../services/stockReceiptService';
 import { warehouseService } from '../services/warehouseService';
@@ -12,6 +12,7 @@ import { formatShortDateTime } from '../utils/formatters';
 import { toast } from '../hooks/useToast';
 import { getStockReceiptDeleteErrorMessage } from '../utils/apiError';
 import { canDeleteStockReceipt, isStockReceiptCancelled } from '../utils/stockReceiptPermissions';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {
   IN: 'Giriş',
@@ -26,6 +27,7 @@ const STATUS_LABELS: Record<StockReceiptStatus, string> = {
 };
 
 export default function StockReceiptsPage() {
+  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const canView = user?.permissions?.includes('stockReceipts_view');
   const canCreate = user?.permissions?.includes('stockReceipts_create');
@@ -84,23 +86,42 @@ export default function StockReceiptsPage() {
     loadReceipts();
   }, [loadReceipts]);
 
-  const handleApplyFilters = () => {
-    loadReceipts();
-  };
-
-  const handleClearFilters = () => {
+  const handleClearFilters = useCallback(() => {
     setFilterWarehouseId('');
     setFilterReceiptType('');
     setFilterStatus('');
     setFilterDateFrom('');
     setFilterDateTo('');
-  };
+  }, []);
 
-  const handleAddNew = () => {
+  const handleAddNew = useCallback(() => {
     setSelectedReceipt(null);
     setIsNewReceipt(true);
     setIsModalOpen(true);
-  };
+  }, []);
+
+  const headerActions = useMemo(
+    () =>
+      canView ? (
+        <>
+          <button onClick={() => void loadReceipts()} className="btn-secondary py-2 px-3 text-sm">
+            Yenile
+          </button>
+          <ExcelManager type="stockReceipts" onImportSuccess={() => void loadReceipts()} />
+          {canCreate ? (
+            <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+              + Yeni Fiş
+            </button>
+          ) : null}
+        </>
+      ) : null,
+    [canView, canCreate, loadReceipts, handleAddNew]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
 
   const handleOpenDetail = (receipt: StockReceipt) => {
     setSelectedReceipt(receipt);
@@ -137,7 +158,7 @@ export default function StockReceiptsPage() {
 
   if (!canView) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Bu sayfayı görüntüleme yetkiniz yok.</div>
       </div>
     );
@@ -145,83 +166,66 @@ export default function StockReceiptsPage() {
 
   if (loading && receipts.length === 0) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Stok Fişleri</h1>
-        <div className="flex flex-wrap items-center gap-2">
-          <button onClick={loadReceipts} className="btn-secondary py-2 px-3 text-sm">
-            Yenile
-          </button>
-          <ExcelManager type="stockReceipts" onImportSuccess={() => void loadReceipts()} />
-          {canCreate && (
-            <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
-              + Yeni Fiş
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-text-secondary whitespace-nowrap">Depo:</span>
+    <div>
+      <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 flex flex-wrap items-center gap-1.5">
         <select
           value={filterWarehouseId}
           onChange={(e) => setFilterWarehouseId(e.target.value === '' ? '' : Number(e.target.value))}
-          className="input py-2 px-3 text-sm min-w-[140px]"
+          className="input py-1.5 px-2 text-sm min-w-[140px]"
+          title="Depo"
         >
-          <option value="">Tümü</option>
+          <option value="">Tüm depolar</option>
           {warehouses.map((w) => (
             <option key={w.WarehouseId} value={w.WarehouseId}>
               {w.WarehouseName}
             </option>
           ))}
         </select>
-        <span className="text-xs text-text-secondary whitespace-nowrap">İşlem tipi:</span>
         <select
           value={filterReceiptType}
           onChange={(e) => setFilterReceiptType(e.target.value)}
-          className="input py-2 px-3 text-sm min-w-[120px]"
+          className="input py-1.5 px-2 text-sm min-w-[120px]"
+          title="İşlem tipi"
         >
-          <option value="">Tümü</option>
+          <option value="">Tüm tipler</option>
           <option value="IN">Giriş</option>
           <option value="OUT">Çıkış</option>
           <option value="CONSUMPTION">Sarf/Fire</option>
           <option value="TRANSFER">Transfer</option>
         </select>
-        <span className="text-xs text-text-secondary whitespace-nowrap">Durum:</span>
         <select
           value={filterStatus}
           onChange={(e) => setFilterStatus(e.target.value)}
-          className="input py-2 px-3 text-sm min-w-[100px]"
+          className="input py-1.5 px-2 text-sm min-w-[100px]"
+          title="Durum"
         >
-          <option value="">Tümü</option>
+          <option value="">Tüm durumlar</option>
           <option value="ACTIVE">Aktif</option>
           <option value="CANCELLED">İptal</option>
         </select>
-        <span className="text-xs text-text-secondary whitespace-nowrap">Tarih:</span>
         <input
           type="date"
           value={filterDateFrom}
           onChange={(e) => setFilterDateFrom(e.target.value)}
-          className="input py-2 px-3 text-sm w-[130px]"
+          className="input py-1.5 px-2 text-sm w-[130px]"
+          title="Başlangıç"
         />
-        <span className="text-text-secondary">-</span>
+        <span className="text-text-secondary text-xs">–</span>
         <input
           type="date"
           value={filterDateTo}
           onChange={(e) => setFilterDateTo(e.target.value)}
-          className="input py-2 px-3 text-sm w-[130px]"
+          className="input py-1.5 px-2 text-sm w-[130px]"
+          title="Bitiş"
         />
-        <button onClick={handleApplyFilters} className="btn-secondary py-2 px-3 text-sm">
-          Filtrele
-        </button>
-        <button onClick={handleClearFilters} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={handleClearFilters} className="btn-secondary py-1.5 px-3 text-sm">
           Temizle
         </button>
       </div>
@@ -234,7 +238,7 @@ export default function StockReceiptsPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[280px]">
+          <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>

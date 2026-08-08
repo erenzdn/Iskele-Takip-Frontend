@@ -1,5 +1,5 @@
 export const CUSTOMERS_EXCEL_HELP = {
-  hint: 'Müşteri Excel dosyası artık 2 sayfa içerir: Customers + CustomerContacts.',
+  hint: 'Müşteri Excel dosyası 2 sayfa içerir: Customers + CustomerContacts.',
   taxIdNote:
     'Vergi Numarası alanı 10 haneli VKN veya 11 haneli TCKN olmalıdır. Baştaki sıfırların korunması için güncel şablonu kullanın.',
   checklist:

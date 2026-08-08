@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo } from 'react';
 import { ScrollIcon } from '@phosphor-icons/react';
 import { auditLogService, AuditLogsParams } from '../services/auditLogService';
 import { userService } from '../services/userService';
@@ -6,6 +6,7 @@ import { AuditLog, AuditAction, User } from '../models';
 import { useAuthStore } from '../store/authStore';
 import { formatDateTime, buildAuditLogSummary } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 const ACTION_LABELS: Record<AuditAction, string> = {
   [AuditAction.Create]: 'Oluşturma',
@@ -35,6 +36,7 @@ function toDatetimeLocal(d: Date): string {
 }
 
 export default function AuditLogsPage() {
+  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const hasPermission = user?.permissions?.includes('auditLogs_view');
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -102,18 +104,14 @@ export default function AuditLogsPage() {
     loadLogs();
   }, [loadLogs]);
 
-  const handleApplyFilters = () => {
-    loadLogs();
-  };
-
-  const handleResetFilters = () => {
+  const handleResetFilters = useCallback(() => {
     setSelectedUserIds([]);
     setSelectedTableNames([]);
     setFilterAction('');
     setFilterDateFrom('');
     setFilterDateTo('');
     setFilterLimit(100);
-  };
+  }, []);
 
   const setDateRangeToday = () => {
     const now = new Date();
@@ -144,10 +142,30 @@ export default function AuditLogsPage() {
     );
   };
 
+  const headerActions = useMemo(
+    () =>
+      hasPermission ? (
+        <>
+          <button onClick={handleResetFilters} className="btn-secondary py-2 px-3 text-sm">
+            Sıfırla
+          </button>
+          <button onClick={() => void loadLogs()} className="btn-primary py-2 px-3 text-sm">
+            Uygula / Yenile
+          </button>
+        </>
+      ) : null,
+    [hasPermission, handleResetFilters, loadLogs]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
+
   if (!hasPermission) {
     return (
-      <div className="p-8">
-        <div className="card p-8 text-center">
+      <div>
+        <div className="card p-6 text-center">
           <p className="text-lg text-text-secondary">Bu sayfayı görüntüleme yetkiniz yok.</p>
           <p className="text-sm text-text-secondary mt-2">
             Audit logları için <code>auditLogs_view</code> izni gerekir.
@@ -158,118 +176,89 @@ export default function AuditLogsPage() {
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Audit Logları</h1>
-        <button onClick={loadLogs} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
-      </div>
-
-      <div className="card p-4 mb-3">
-        <h2 className="font-semibold mb-3">Filtreler</h2>
-
-        <div className="mb-4">
-          <label className="block text-sm text-text-secondary mb-2">Tarih Aralığı</label>
-          <div className="flex flex-wrap gap-2 items-center">
-            <button type="button" onClick={setDateRangeToday} className="btn-secondary text-sm">
-              Bugün
-            </button>
-            <button type="button" onClick={setDateRangeLast7Days} className="btn-secondary text-sm">
-              Son 7 Gün
-            </button>
-            <span className="text-text-secondary text-sm mr-2">Başlangıç:</span>
-            <input
-              type="datetime-local"
-              value={filterDateFrom}
-              onChange={(e) => setFilterDateFrom(e.target.value)}
-              className="input w-48"
-            />
-            <span className="text-text-secondary text-sm mr-2">Bitiş:</span>
-            <input
-              type="datetime-local"
-              value={filterDateTo}
-              onChange={(e) => setFilterDateTo(e.target.value)}
-              className="input w-48"
-            />
-          </div>
-        </div>
-
-        <div className="mb-4">
-          <label className="block text-sm text-text-secondary mb-2">Modül</label>
-          <div className="flex flex-wrap gap-4">
-            {MODULE_OPTIONS.map((opt) => (
-              <label key={opt.value} className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={selectedTableNames.includes(opt.value)}
-                  onChange={() => toggleTableName(opt.value)}
-                  className="rounded border-gray-600 bg-gray-700 text-blue-600"
-                />
-                <span className="text-sm">{opt.label}</span>
-              </label>
-            ))}
-          </div>
-        </div>
-
-        <div className="mb-4">
-          <label className="block text-sm text-text-secondary mb-2">İşlem Tipi</label>
+    <div>
+      <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 space-y-1.5">
+        <div className="flex flex-wrap gap-1.5 items-center">
+          <button type="button" onClick={setDateRangeToday} className="btn-secondary text-xs py-1 px-2">
+            Bugün
+          </button>
+          <button type="button" onClick={setDateRangeLast7Days} className="btn-secondary text-xs py-1 px-2">
+            Son 7 Gün
+          </button>
+          <input
+            type="datetime-local"
+            value={filterDateFrom}
+            onChange={(e) => setFilterDateFrom(e.target.value)}
+            className="input w-44 py-1 text-sm"
+            title="Başlangıç"
+            aria-label="Başlangıç tarihi"
+          />
+          <span className="text-text-secondary text-xs">–</span>
+          <input
+            type="datetime-local"
+            value={filterDateTo}
+            onChange={(e) => setFilterDateTo(e.target.value)}
+            className="input w-44 py-1 text-sm"
+            title="Bitiş"
+            aria-label="Bitiş tarihi"
+          />
           <select
             value={filterAction}
             onChange={(e) => setFilterAction(e.target.value)}
-            className="input w-48"
+            className="input w-36 py-1 text-sm"
+            title="İşlem tipi"
           >
-            <option value="">Tümü</option>
+            <option value="">Tüm işlemler</option>
             <option value={AuditAction.Create}>Oluşturma</option>
             <option value={AuditAction.Update}>Güncelleme</option>
             <option value={AuditAction.Delete}>Silme</option>
           </select>
-        </div>
-
-        <div className="mb-4">
-          <label className="block text-sm text-text-secondary mb-2">Kullanıcı (bu işlemi kim yaptı)</label>
-          {usersLoading ? (
-            <span className="text-sm text-text-secondary">Kullanıcı listesi yükleniyor...</span>
-          ) : (
-            <div className="flex flex-wrap gap-3 max-h-32 overflow-y-auto p-2 border border-background-border rounded-lg">
-              {users.map((u) => (
-                <label key={u.UserId} className="flex items-center gap-2 cursor-pointer whitespace-nowrap">
-                  <input
-                    type="checkbox"
-                    checked={selectedUserIds.includes(u.UserId)}
-                    onChange={() => toggleUser(u.UserId)}
-                    className="rounded border-gray-600 bg-gray-700 text-blue-600"
-                  />
-                  <span className="text-sm">{u.FullName || u.Username}</span>
-                </label>
-              ))}
-              {users.length === 0 && (
-                <span className="text-sm text-text-secondary">Kullanıcı listesi alınamadı</span>
-              )}
-            </div>
-          )}
-        </div>
-
-        <div className="mb-4">
-          <label className="block text-sm text-text-secondary mb-1">Limit (1-500)</label>
           <input
             type="number"
             value={filterLimit}
             onChange={(e) => setFilterLimit(parseInt(e.target.value, 10) || 100)}
-            className="input w-24"
+            className="input w-16 py-1 text-sm"
             min={1}
             max={500}
+            title="Limit (1-500)"
+            aria-label="Kayıt limiti"
           />
         </div>
 
-        <div className="flex gap-2">
-          <button onClick={handleApplyFilters} className="btn-primary">
-            Uygula
-          </button>
-          <button onClick={handleResetFilters} className="btn-secondary">
-            Sıfırla
-          </button>
-          <button onClick={loadLogs} className="btn-secondary">
-            Yenile
-          </button>
+        <div className="flex flex-wrap gap-x-3 gap-y-1 items-center">
+          <span className="text-xs text-text-secondary shrink-0">Modül:</span>
+          {MODULE_OPTIONS.map((opt) => (
+            <label key={opt.value} className="flex items-center gap-1 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={selectedTableNames.includes(opt.value)}
+                onChange={() => toggleTableName(opt.value)}
+                className="rounded border-gray-600 bg-gray-700 text-blue-600"
+              />
+              <span className="text-xs">{opt.label}</span>
+            </label>
+          ))}
+        </div>
+
+        <div className="flex flex-wrap gap-x-3 gap-y-1 items-center">
+          <span className="text-xs text-text-secondary shrink-0">Kullanıcı:</span>
+          {usersLoading ? (
+            <span className="text-xs text-text-secondary">Yükleniyor…</span>
+          ) : users.length === 0 ? (
+            <span className="text-xs text-text-secondary">Liste alınamadı</span>
+          ) : (
+            users.map((u) => (
+              <label key={u.UserId} className="flex items-center gap-1 cursor-pointer whitespace-nowrap">
+                <input
+                  type="checkbox"
+                  checked={selectedUserIds.includes(u.UserId)}
+                  onChange={() => toggleUser(u.UserId)}
+                  className="rounded border-gray-600 bg-gray-700 text-blue-600"
+                />
+                <span className="text-xs">{u.FullName || u.Username}</span>
+              </label>
+            ))
+          )}
         </div>
       </div>
 
@@ -285,7 +274,7 @@ export default function AuditLogsPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-420px)] min-h-[280px]">
+          <div className="overflow-auto max-h-[calc(100vh-200px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
@@ -325,7 +314,7 @@ export default function AuditLogsPage() {
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>Toplam: {logs.length} kayıt</span>
-            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
+            <span className="text-text-secondary/80">Limit: {filterLimit}</span>
           </div>
         </div>
       )}

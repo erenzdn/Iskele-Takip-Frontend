@@ -88,23 +88,20 @@ export default function PricingRulesPage() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Fiyatlandırma Kuralları</h1>
-        <div className="flex items-center gap-2">
-          <button onClick={loadRules} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
-          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Kural</button>
-        </div>
+    <div>
+      <div className="mb-2 flex items-center justify-end gap-2">
+        <button onClick={loadRules} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
+        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Kural</button>
       </div>
 
-      <div className="mb-3 rounded border border-background-border bg-blue-900/30 p-2 flex items-center gap-2">
+      <div className="mb-2 rounded border border-background-border bg-blue-900/30 p-2 flex items-center gap-2">
         <InfoIcon size={18} weight="duotone" className="text-blue-300 shrink-0" aria-hidden />
         <span className="text-xs text-blue-200">Kurallar sözleşme fiyatı hesaplanırken otomatik uygulanır. Birden fazla kural aynı anda aktif olabilir.</span>
       </div>
@@ -117,7 +114,7 @@ export default function PricingRulesPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-220px)] min-h-[280px]">
+          <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>

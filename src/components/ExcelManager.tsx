@@ -400,16 +400,19 @@ export default function ExcelManager({
     if (!canView) return;
     setBusy('export');
     try {
-      const downloadPath =
-        type === 'inventory' ? '/excel/template/inventory' : `/excel/export/${type}`;
-      const { blob, filename } = await apiClient.getBlobDownload(downloadPath);
-      const fallbackName = type === 'inventory' ? 'envanter_sablonu.xlsx' : `export_${type}.xlsx`;
+      const { blob, filename } = await apiClient.getBlobDownload(`/excel/export/${type}`);
+      const fallbackName =
+        type === 'inventory'
+          ? 'envanter_export.xlsx'
+          : type === 'customers'
+            ? 'musteri_export.xlsx'
+            : `export_${type}.xlsx`;
       triggerBlobDownload(blob, fallbackName, filename);
       toast.success(
         type === 'customers'
-          ? 'Müşteri Excel şablonu indirildi (Customers + CustomerContacts).'
+          ? 'Müşteri Excel dışa aktarma indirildi.'
           : type === 'inventory'
-            ? 'Envanter Excel şablonu indirildi.'
+            ? 'Envanter Excel dışa aktarma indirildi.'
             : 'Excel dosyası indirildi.'
       );
     } catch (e) {
@@ -702,7 +705,7 @@ export default function ExcelManager({
               </button>
             </div>
 
-            <div className="p-4 space-y-3 text-sm">
+            <div className="p-4 space-y-3 text-sm max-h-[70vh] overflow-y-auto">
               <div className="rounded-md border border-background-border bg-background-muted/30 p-3 text-text-secondary">
                 {importInfoChecklist}
               </div>
@@ -793,7 +796,7 @@ export default function ExcelManager({
               </p>
             </div>
 
-            <div className="p-4 border-t border-background-border flex items-center justify-end gap-2">
+            <div className="p-4 border-t border-background-border flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setImportInfoModalType(null)}

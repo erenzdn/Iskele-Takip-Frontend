@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { ArchiveIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
 import {
@@ -406,7 +406,7 @@ export default function WarehouseDetailPage() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Depo detayları yükleniyor...</div>
       </div>
     );
@@ -414,7 +414,7 @@ export default function WarehouseDetailPage() {
 
   if (error) {
     return (
-      <div className="p-8">
+      <div>
         <div className="mb-4 text-red-400">{error}</div>
         <button onClick={() => navigate('/warehouses')} className="btn-secondary">
           Depo listesine dön
@@ -425,7 +425,7 @@ export default function WarehouseDetailPage() {
 
   if (!warehouse) {
     return (
-      <div className="p-8">
+      <div>
         <div className="mb-4 text-text-secondary">Depo bulunamadı.</div>
         <button onClick={() => navigate('/warehouses')} className="btn-secondary">
           Depo listesine dön
@@ -439,26 +439,30 @@ export default function WarehouseDetailPage() {
   const archived = isWarehouseArchived(warehouse);
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex items-center justify-between gap-4">
-        <div>
-          <h1 className="text-3xl font-bold mb-1 flex flex-wrap items-center gap-2">
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
+          <h1 className="text-lg font-semibold flex flex-wrap items-center gap-2">
             {warehouse.WarehouseName}
             {archived ? (
-              <span className="inline-block px-2 py-0.5 rounded text-sm font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
+              <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
                 Pasif
               </span>
             ) : null}
           </h1>
-          <p className="text-text-secondary">
-            Depodaki malzemeleri ve stok durumunu detaylı olarak görüntüleyin.
-          </p>
+          <span className="text-xs text-text-secondary truncate max-w-[280px]" title={warehouse.Address || undefined}>
+            {warehouse.Address || 'Adres yok'}
+          </span>
+          <span className="text-xs text-text-secondary">·</span>
+          <span className="text-xs text-text-secondary">
+            {uniqueItems} çeşit · {totalQuantity.toLocaleString('tr-TR')} adet
+          </span>
         </div>
-        <div className="flex gap-3">
-          <button onClick={() => navigate('/warehouses')} className="btn-secondary">
-            ← Depo listesine dön
+        <div className="flex flex-wrap gap-2">
+          <button onClick={() => navigate('/warehouses')} className="btn-secondary py-1.5 px-3 text-sm">
+            ← Depo listesi
           </button>
-          <button onClick={handleRefresh} className="btn-secondary" disabled={loadingStock}>
+          <button onClick={handleRefresh} className="btn-secondary py-1.5 px-3 text-sm" disabled={loadingStock}>
             {loadingStock ? 'Yenileniyor...' : 'Stokları Yenile'}
           </button>
           {canDelete && !archived && (
@@ -466,10 +470,10 @@ export default function WarehouseDetailPage() {
               type="button"
               onClick={() => setShowDeleteConfirm(true)}
               disabled={deleteBusy}
-              className="btn-danger inline-flex items-center gap-2"
+              className="btn-danger inline-flex items-center gap-1.5 py-1.5 px-3 text-sm"
               title="Depoyu kullanımdan kaldır"
             >
-              <ArchiveIcon size={18} weight="bold" aria-hidden />
+              <ArchiveIcon size={16} weight="bold" aria-hidden />
               Kullanımdan Kaldır
             </button>
           )}
@@ -483,36 +487,16 @@ export default function WarehouseDetailPage() {
         />
       ) : null}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="card p-4">
-          <div className="text-sm text-text-secondary mb-1">Adres</div>
-          <div className="font-medium">{warehouse.Address || '-'}</div>
-        </div>
-        <div className="card p-4">
-          <div className="text-sm text-text-secondary mb-1">Ürün Çeşidi</div>
-          <div className="text-2xl font-bold text-blue-400">{uniqueItems}</div>
-        </div>
-        <div className="card p-4">
-          <div className="text-sm text-text-secondary mb-1">Toplam Miktar</div>
-          <div className="text-2xl font-bold text-green-500">
-            {totalQuantity.toLocaleString('tr-TR')}
-          </div>
-        </div>
-      </div>
+      {warehouse.Description ? (
+        <p className="text-sm text-text-secondary">{warehouse.Description}</p>
+      ) : null}
 
-      {warehouse.Description && (
-        <div className="card p-4">
-          <div className="text-sm text-text-secondary mb-1">Açıklama</div>
-          <div>{warehouse.Description}</div>
-        </div>
-      )}
-
-      <div className="card p-4 space-y-4">
-        <div className="flex gap-2 border-b border-background-border mb-4">
+      <div className="card p-3 space-y-3">
+        <div className="flex gap-1 border-b border-background-border">
           <button
             type="button"
             onClick={() => setActiveTab('stock')}
-            className={`px-4 py-2 font-medium transition-colors ${
+            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
               activeTab === 'stock'
                 ? 'text-accent border-b-2 border-accent'
                 : 'text-text-secondary hover:text-text-primary'
@@ -523,7 +507,7 @@ export default function WarehouseDetailPage() {
           <button
             type="button"
             onClick={() => setActiveTab('rented')}
-            className={`px-4 py-2 font-medium transition-colors ${
+            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
               activeTab === 'rented'
                 ? 'text-accent border-b-2 border-accent'
                 : 'text-text-secondary hover:text-text-primary'
@@ -534,7 +518,7 @@ export default function WarehouseDetailPage() {
           <button
             type="button"
             onClick={() => setActiveTab('movements')}
-            className={`px-4 py-2 font-medium transition-colors ${
+            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
               activeTab === 'movements'
                 ? 'text-accent border-b-2 border-accent'
                 : 'text-text-secondary hover:text-text-primary'
@@ -546,11 +530,11 @@ export default function WarehouseDetailPage() {
 
         {activeTab === 'movements' && (
           <div className="space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
               <div>
-                <h2 className="text-xl font-semibold">Hareket Dökümü</h2>
-                <p className="text-sm text-text-secondary">
-                  Bu depodan çıkmış (kira/çıkış) ve iade hareketleri. Aynı ürün aynı sözleşmede birden fazla çıkmış olabilir.
+                <h2 className="text-base font-semibold">Hareket Dökümü</h2>
+                <p className="text-xs text-text-secondary">
+                  Bu depodan çıkış ve iade hareketleri.
                 </p>
               </div>
               <button
@@ -560,7 +544,7 @@ export default function WarehouseDetailPage() {
                   setItemSearch('');
                   setItemOptions([]);
                 }}
-                className="btn-secondary"
+                className="btn-secondary py-1.5 px-3 text-sm"
               >
                 Filtreleri Sıfırla
               </button>
@@ -714,7 +698,7 @@ export default function WarehouseDetailPage() {
               <>
                 {/* Desktop / Tablet: Table */}
                 <div className="hidden md:block border border-background-border rounded-panel overflow-hidden bg-background-panel">
-                  <div ref={movementsScrollRef} className="overflow-auto max-h-[calc(100vh-420px)] min-h-[320px]">
+                  <div ref={movementsScrollRef} className="overflow-auto max-h-[calc(100vh-300px)] min-h-[320px]">
                     <table className="w-full text-xs border-collapse">
                       <thead className="sticky top-0 z-10 border-b border-background-border">
                         <tr>
@@ -930,6 +914,17 @@ export default function WarehouseDetailPage() {
                 <h2 className="text-xl font-semibold">Kiradaki Ürünler</h2>
                 <p className="text-sm text-text-secondary">
                   Bu depodan kiraya verilmiş ve henüz iade edilmemiş ürünler. Arama ve filtreleri kullanarak daraltabilirsiniz.
+                </p>
+                <p className="text-sm text-text-secondary mt-1">
+                  Tüm ürünlerin global kirada durumu için{' '}
+                  <button
+                    type="button"
+                    className="text-primary hover:underline"
+                    onClick={() => navigate('/inventory?stockStatus=onRent')}
+                  >
+                    Envanter → Kirada
+                  </button>
+                  {' '}filtreini kullanın.
                 </p>
               </div>
               <button
@@ -1196,7 +1191,7 @@ export default function WarehouseDetailPage() {
           </div>
         ) : (
           <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-            <div className="overflow-auto max-h-[calc(100vh-380px)] min-h-[240px]">
+            <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[240px]">
               <table className="w-full text-xs border-collapse">
                 <thead className="sticky top-0 z-10 border-b border-background-border">
                   <tr>

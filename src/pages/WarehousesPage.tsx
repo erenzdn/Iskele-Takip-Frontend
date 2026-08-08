@@ -2,8 +2,7 @@ import { useState, useEffect, useMemo, useCallback, Fragment } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArchiveIcon, MagnifyingGlassIcon, WarehouseIcon } from '@phosphor-icons/react';
 import { warehouseService } from '../services/warehouseService';
-import { inventoryService } from '../services/inventoryService';
-import { Warehouse, WarehouseStock, Inventory, isWarehouseArchived } from '../models';
+import { Warehouse, WarehouseStock, isWarehouseArchived } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import WarehouseDetailModal from '../components/modals/WarehouseDetailModal';
@@ -15,6 +14,7 @@ import { canDeleteWarehouse } from '../utils/warehousePermissions';
 import { getWarehouseDeleteErrorMessage } from '../utils/apiError';
 import { resolveWarehouseDeactivateError, type WarehouseDeactivateErrorDialog } from '../utils/warehouseDeactivate';
 import { toast } from '../hooks/useToast';
+import { useDebouncedValue } from '../hooks/useDebouncedValue';
 
 export default function WarehousesPage() {
   const navigate = useNavigate();
@@ -30,20 +30,13 @@ export default function WarehousesPage() {
   const [deleteTarget, setDeleteTarget] = useState<Warehouse | null>(null);
   const [deleteBusy, setDeleteBusy] = useState(false);
   const [deactivateError, setDeactivateError] = useState<WarehouseDeactivateErrorDialog | null>(null);
+  const [searchText, setSearchText] = useState('');
+  const debouncedSearch = useDebouncedValue(searchText, 300);
 
   // Genişletilmiş depo ve stok bilgileri
   const [expandedWarehouseId, setExpandedWarehouseId] = useState<number | null>(null);
   const [expandedStock, setExpandedStock] = useState<WarehouseStock[]>([]);
   const [loadingStock, setLoadingStock] = useState(false);
-
-  // Kiradakiler (genel: hangi üründen kaç tane kirada)
-  const [rentedItems, setRentedItems] = useState<Inventory[]>([]);
-  const [loadingRented, setLoadingRented] = useState(false);
-  const [rentedSearchText, setRentedSearchText] = useState('');
-  const [rentedCategoryId, setRentedCategoryId] = useState<number | 'all'>('all');
-  const [rentedSubCategoryId, setRentedSubCategoryId] = useState<number | 'all'>('all');
-  const [rentedMinQty, setRentedMinQty] = useState<number | ''>('');
-  const [rentedMaxQty, setRentedMaxQty] = useState<number | ''>('');
 
   const loadData = useCallback(async () => {
     try {
@@ -54,6 +47,7 @@ export default function WarehousesPage() {
       setWarehouses(data);
     } catch (error) {
       console.error('Load warehouses error:', error);
+      toast.error('Depolar yüklenirken bir hata oluştu.');
     } finally {
       setLoading(false);
     }
@@ -75,11 +69,9 @@ export default function WarehousesPage() {
   const handleModalClose = () => {
     setIsModalOpen(false);
     setSelectedWarehouse(null);
-    loadData();
-    loadRentedItems();
-    // Genişletilmiş depoyu yenile
+    void loadData();
     if (expandedWarehouseId) {
-      loadWarehouseStock(expandedWarehouseId);
+      void loadWarehouseStock(expandedWarehouseId);
     }
   };
 
@@ -115,7 +107,6 @@ export default function WarehousesPage() {
       }
       toast.success(`"${name}" deposu kullanımdan kaldırıldı.`);
       await loadData();
-      await loadRentedItems();
     } catch (error) {
       setDeleteTarget(null);
       handleDeactivateError(error, targetId);
@@ -124,20 +115,16 @@ export default function WarehousesPage() {
     }
   };
 
-  // Depo satırına tıklandığında genişlet/daralt
   const handleToggleExpand = async (warehouse: Warehouse) => {
     if (expandedWarehouseId === warehouse.WarehouseId) {
-      // Zaten açıksa kapat
       setExpandedWarehouseId(null);
       setExpandedStock([]);
     } else {
-      // Yeni depoyu aç
       setExpandedWarehouseId(warehouse.WarehouseId);
       await loadWarehouseStock(warehouse.WarehouseId);
     }
   };
 
-  // Depo stoklarını yükle
   const loadWarehouseStock = async (warehouseId: number) => {
     try {
       setLoadingStock(true);
@@ -151,73 +138,25 @@ export default function WarehousesPage() {
     }
   };
 
-  const filteredRentedItems = useMemo(() => {
-    const text = rentedSearchText.trim().toLowerCase();
-    return rentedItems.filter((i) => {
-      const name = i.ItemName?.toLowerCase() ?? '';
-      const catNames =
-        i.Categories?.map((c) => c.CategoryName).join(' ').toLowerCase() ?? '';
-      const okText = !text || name.includes(text) || catNames.includes(text);
-      const okCat =
-        rentedCategoryId === 'all' ||
-        i.Categories?.some((c) => c.CategoryId === rentedCategoryId);
-      const okSubCat =
-        rentedSubCategoryId === 'all' ||
-        i.SubCategories?.some((sc) => sc.SubCategoryId === rentedSubCategoryId);
-      const qty = i.OnRent ?? 0;
-      const okMin = rentedMinQty === '' || qty >= rentedMinQty;
-      const okMax = rentedMaxQty === '' || qty <= rentedMaxQty;
-      return okText && okCat && okSubCat && okMin && okMax;
+  const filteredWarehouses = useMemo(() => {
+    const q = debouncedSearch.trim().toLowerCase();
+    if (!q) return warehouses;
+    return warehouses.filter((w) => {
+      const name = w.WarehouseName?.toLowerCase() ?? '';
+      const address = w.Address?.toLowerCase() ?? '';
+      const description = w.Description?.toLowerCase() ?? '';
+      return name.includes(q) || address.includes(q) || description.includes(q);
     });
-  }, [rentedItems, rentedSearchText, rentedCategoryId, rentedSubCategoryId, rentedMinQty, rentedMaxQty]);
-
-  const rentedCategoryOptions = useMemo(() => {
-    const map = new Map<number, string>();
-    rentedItems.forEach((i) => {
-      i.Categories?.forEach((c) => {
-        if (!map.has(c.CategoryId)) {
-          map.set(c.CategoryId, c.CategoryName ?? `Kategori #${c.CategoryId}`);
-        }
-      });
-    });
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [rentedItems]);
-
-  const rentedSubCategoryOptions = useMemo(() => {
-    const map = new Map<number, string>();
-    rentedItems.forEach((i) => {
-      i.SubCategories?.forEach((sc) => {
-        if (!map.has(sc.SubCategoryId)) {
-          map.set(sc.SubCategoryId, sc.SubCategoryName);
-        }
-      });
-    });
-    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
-  }, [rentedItems]);
-
-  // Kiradaki ürünleri yükle (envanterden OnRent > 0)
-  const loadRentedItems = async () => {
-    try {
-      setLoadingRented(true);
-      const all = await inventoryService.getAllAsync();
-      setRentedItems(all.filter((i) => (i.OnRent ?? 0) > 0));
-    } catch (error) {
-      console.error('Load rented items error:', error);
-      setRentedItems([]);
-    } finally {
-      setLoadingRented(false);
-    }
-  };
+  }, [warehouses, debouncedSearch]);
 
   useEffect(() => {
     void loadData();
-    void loadRentedItems();
   }, [loadData]);
 
   const headerActions = useMemo(
     () => (
       <>
-        <button onClick={() => { void loadData(); void loadRentedItems(); }} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => { void loadData(); }} className="btn-secondary py-2 px-3 text-sm">
           Yenile
         </button>
         <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
@@ -235,107 +174,37 @@ export default function WarehousesPage() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      {/* Kiradakiler */}
-      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-text-secondary whitespace-nowrap">Kiradakiler — Kriterler:</span>
-        <div className="relative flex-1 min-w-[160px]">
+    <div>
+      <div className="mb-2 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+        <div className="relative flex-1 min-w-[200px]">
           <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
             <MagnifyingGlassIcon size={14} weight="regular" color="currentColor" aria-hidden />
           </span>
           <input
             type="text"
             className="input w-full pl-7 py-2 text-sm"
-            placeholder="Malzeme veya kategori..."
-            value={rentedSearchText}
-            onChange={(e) => setRentedSearchText(e.target.value)}
+            placeholder="Depo adı veya adres ara..."
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
           />
         </div>
-        <select
-          className="input py-2 px-3 text-sm w-40"
-          value={rentedCategoryId === 'all' ? 'all' : String(rentedCategoryId)}
-          onChange={(e) => {
-            const v = e.target.value;
-            setRentedCategoryId(v === 'all' ? 'all' : Number(v));
-            // kategori değişince alt kategori filtresini de sıfırla
-            setRentedSubCategoryId('all');
-          }}
-        >
-          <option value="all">Tüm kategoriler</option>
-          {rentedCategoryOptions.map((c) => (
-            <option key={c.id} value={c.id}>{c.name}</option>
-          ))}
-        </select>
-        <select
-          className="input py-2 px-3 text-sm w-44"
-          value={rentedSubCategoryId === 'all' ? 'all' : String(rentedSubCategoryId)}
-          onChange={(e) => {
-            const v = e.target.value;
-            setRentedSubCategoryId(v === 'all' ? 'all' : Number(v));
-          }}
-        >
-          <option value="all">Tüm alt kategoriler</option>
-          {rentedSubCategoryOptions.map((sc) => (
-            <option key={sc.id} value={sc.id}>{sc.name}</option>
-          ))}
-        </select>
-        <input type="number" className="input py-2 px-3 text-sm w-20" min={0} placeholder="Min" value={rentedMinQty === '' ? '' : rentedMinQty} onChange={(e) => setRentedMinQty(e.target.value === '' ? '' : Number(e.target.value))} />
-        <input type="number" className="input py-2 px-3 text-sm w-20" min={0} placeholder="Max" value={rentedMaxQty === '' ? '' : rentedMaxQty} onChange={(e) => setRentedMaxQty(e.target.value === '' ? '' : Number(e.target.value))} />
-        <button
-          type="button"
-          onClick={() => {
-            setRentedSearchText('');
-            setRentedCategoryId('all');
-            setRentedSubCategoryId('all');
-            setRentedMinQty('');
-            setRentedMaxQty('');
-          }}
-          className="btn-secondary py-2 px-3 text-sm"
-        >
-          Filtreleri Sıfırla
-        </button>
+        {searchText && (
+          <button
+            type="button"
+            onClick={() => setSearchText('')}
+            className="btn-secondary py-2 px-3 text-sm"
+          >
+            Temizle
+          </button>
+        )}
       </div>
-
-      {loadingRented ? (
-        <div className="mb-4 text-text-secondary text-sm">Kiradakiler yükleniyor...</div>
-      ) : rentedItems.length > 0 ? (
-        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col mb-6">
-          <div className="overflow-auto max-h-[280px]">
-            <table className="w-full text-xs border-collapse text-text-primary">
-              <thead className="sticky top-0 z-10 border-b border-background-border">
-                <tr>
-                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
-                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kategori</th>
-                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kirada (Miktar)</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredRentedItems.map((item, idx) => (
-                  <tr key={item.ItemId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}>
-                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">{item.ItemName}</td>
-                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">
-                      {item.Categories?.length
-                        ? item.Categories.map((c) => c.CategoryName).join(', ')
-                        : '-'}
-                    </td>
-                    <td className="py-0.5 px-2 text-center align-middle"><span className="font-medium text-orange-400">{(item.OnRent ?? 0).toLocaleString('tr-TR')}</span></td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-          <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary shrink-0">
-            Toplam: {filteredRentedItems.length} çeşit kirada
-          </div>
-        </div>
-      ) : null}
 
       {warehouses.length === 0 ? (
         <EmptyState
@@ -343,9 +212,15 @@ export default function WarehousesPage() {
           title="Henüz depo bulunmuyor"
           description="Malzemelerinizi depolamak için yeni bir depo ekleyin"
         />
+      ) : filteredWarehouses.length === 0 ? (
+        <EmptyState
+          icon={<WarehouseIcon size={48} weight="duotone" />}
+          title="Aramayla eşleşen depo yok"
+          description="Depo adı veya adres aramasını değiştirmeyi deneyin"
+        />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-320px)] min-h-[280px]">
+          <div className="overflow-auto max-h-[calc(100vh-140px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
@@ -358,7 +233,7 @@ export default function WarehousesPage() {
                 </tr>
               </thead>
               <tbody>
-                {warehouses.map((warehouse, index) => {
+                {filteredWarehouses.map((warehouse, index) => {
                   const archived = isWarehouseArchived(warehouse);
                   const badgeClass = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
                   const statusBadge = archived ? (
@@ -381,7 +256,7 @@ export default function WarehousesPage() {
                       >
                         <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
                           <div className="flex items-center gap-1">
-                            <button type="button" onClick={(e) => { e.stopPropagation(); handleToggleExpand(warehouse); }} className="text-text-secondary hover:text-text-primary" title={isExpanded ? 'Kapat' : 'Aç'}>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); void handleToggleExpand(warehouse); }} className="text-text-secondary hover:text-text-primary" title={isExpanded ? 'Kapat' : 'Aç'}>
                               <span className={isExpanded ? 'inline-block rotate-90' : 'inline-block'}>▶</span>
                             </button>
                             <span className="font-medium text-text-primary">{warehouse.WarehouseName}</span>
@@ -466,7 +341,10 @@ export default function WarehousesPage() {
             </table>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
-            <span>Toplam: {warehouses.length} depo</span>
+            <span>
+              Toplam: {filteredWarehouses.length}
+              {debouncedSearch.trim() ? ` / ${warehouses.length}` : ''} depo
+            </span>
             <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
