@@ -42,7 +42,7 @@ const INVENTORY_DB_FIELD_TO_COLUMN: Record<string, string> = {
 };
 
 export function localizeInventoryImportColumn(column: string): string {
-  const trimmed = column.trim();
+  const trimmed = column.trim().replace(/\s*\*+\s*$/u, '').trim();
   return INVENTORY_DB_FIELD_TO_COLUMN[trimmed] ?? trimmed;
 }
 

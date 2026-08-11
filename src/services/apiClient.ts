@@ -101,6 +101,8 @@ class ApiClient {
   private signingEnabled: boolean;
   private readonly excludedEndpoints = ['/health', '/auth/login'];
   private readonly metrics = new RequestMetricsCollector();
+  private isRefreshing = false;
+  private refreshPromise: Promise<boolean> | null = null;
 
   constructor(baseUrl: string = BASE_URL) {
     this.baseUrl = baseUrl;
@@ -218,6 +220,7 @@ class ApiClient {
     const config: RequestInit = {
       method,
       headers,
+      credentials: 'include', // Refresh token cookie'lerini backend'e ilet
     };
 
     if (body) {
@@ -232,12 +235,97 @@ class ApiClient {
     return request;
   }
 
+  /**
+   * Silent Refresh: Access token süresi dolduğunda otomatik olarak yeni token alır
+   */
+  private async attemptRefresh(): Promise<boolean> {
+    if (this.isRefreshing && this.refreshPromise) {
+      // Başka bir istek zaten refresh yapıyorsa aynı promise'i döndür
+      return this.refreshPromise;
+    }
+
+    this.isRefreshing = true;
+    this.refreshPromise = (async () => {
+      try {
+        devLog('[AUTH] Access token süresi doldu, refresh token ile yenileniyor...');
+        
+        const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+          method: 'POST',
+          credentials: 'include', // httpOnly refresh token cookie'sini gönder
+        });
+
+        if (!response.ok) {
+          devLog('[AUTH] Refresh başarısız:', response.status);
+          return false;
+        }
+
+        const data = await response.json() as { accessToken?: string; token?: string };
+        const newAccessToken = data.accessToken || data.token;
+
+        if (!newAccessToken) {
+          devLog('[AUTH] Refresh yanıtında accessToken bulunamadı');
+          return false;
+        }
+
+        // Yeni access token'ı store'a kaydet
+        useAuthStore.getState().setToken(newAccessToken);
+        devLog('[AUTH] Access token başarıyla yenilendi');
+        return true;
+      } catch (error) {
+        devLog('[AUTH] Refresh hatası:', error);
+        return false;
+      } finally {
+        this.isRefreshing = false;
+        this.refreshPromise = null;
+      }
+    })();
+
+    return this.refreshPromise;
+  }
+
   async sendAsync<T>(request: Request): Promise<T> {
     try {
       this.metrics.record(request.method, new URL(request.url).pathname);
-      const response = await fetch(request);
+      let response = await fetch(request);
       
       devLog(`[API RESPONSE] ${response.status} for ${request.url}`);
+
+      // 401 Unauthorized - Access token süresi dolmuş olabilir
+      if (response.status === 401) {
+        const pathname = new URL(request.url).pathname;
+        
+        // /auth/login ve /auth/refresh endpoint'lerinde retry yapma
+        if (pathname === '/auth/login' || pathname === '/auth/refresh') {
+          devLog('[AUTH] Login/Refresh endpoint 401 döndü, retry yapılmıyor');
+        } else {
+          devLog('[AUTH] 401 Unauthorized, silent refresh deneniyor...');
+          
+          const refreshSuccess = await this.attemptRefresh();
+          
+          if (refreshSuccess) {
+            // Yeni token ile orijinal isteği tekrarla
+            devLog('[AUTH] Refresh başarılı, orijinal istek tekrar gönderiliyor...');
+            const retryRequest = await this.createRequest(
+              request.method as HttpMethod,
+              pathname,
+              request.body ? JSON.parse(await request.clone().text()) : undefined
+            );
+            response = await fetch(retryRequest);
+            devLog(`[API RESPONSE RETRY] ${response.status} for ${request.url}`);
+          } else {
+            // Refresh başarısız, kullanıcıyı logout et ve login'e yönlendir
+            devLog('[AUTH] Refresh başarısız, oturum sonlandırılıyor...');
+            useAuthStore.getState().logout();
+            
+            // Kullanıcıyı login sayfasına yönlendir
+            if (typeof window !== 'undefined' && window.location) {
+              window.location.hash = '#/login';
+            }
+            
+            throw new Error('Oturumunuz sonlandı. Lütfen tekrar giriş yapın.');
+          }
+        }
+      }
 
       if (!response.ok) {
         let errorText = '';
@@ -267,6 +355,29 @@ class ApiClient {
                 (typeof parsed.Error === 'string' && parsed.Error) ||
                 '';
               if (typeof parsed.code === 'string') errorCode = parsed.code;
+              
+              // TOKEN_EXPIRED kod kontrolü
+              if (errorCode === 'TOKEN_EXPIRED') {
+                devLog('[AUTH] TOKEN_EXPIRED hatası, silent refresh deneniyor...');
+                const refreshSuccess = await this.attemptRefresh();
+                
+                if (refreshSuccess) {
+                  // Retry logic
+                  const pathname = new URL(request.url).pathname;
+                  const retryRequest = await this.createRequest(
+                    request.method as HttpMethod,
+                    pathname,
+                    request.body ? JSON.parse(await request.clone().text()) : undefined
+                  );
+                  return this.sendAsync<T>(retryRequest);
+                } else {
+                  useAuthStore.getState().logout();
+                  if (typeof window !== 'undefined' && window.location) {
+                    window.location.hash = '#/login';
+                  }
+                  throw new Error('Oturumunuz sonlandı. Lütfen tekrar giriş yapın.');
+                }
+              }
             }
           } catch {
             // plain text veya JSON değil
@@ -360,6 +471,7 @@ class ApiClient {
       const response = await fetch(url, {
         method: 'GET',
         headers,
+        credentials: 'include',
       });
 
       devLog(`[API RESPONSE] ${response.status} for ${url} (blob)`);
@@ -407,6 +519,7 @@ class ApiClient {
       const response = await fetch(url, {
         method: 'GET',
         headers,
+        credentials: 'include',
       });
 
       devLog(`[API RESPONSE] ${response.status} for ${url} (blob download)`);
@@ -459,6 +572,7 @@ class ApiClient {
         method: 'POST',
         headers,
         body: formData,
+        credentials: 'include',
       });
 
       devLog(`[API RESPONSE] ${response.status} for ${url} (multipart)`);
@@ -527,6 +641,7 @@ class ApiClient {
     const config: RequestInit = {
       method: 'POST',
       headers,
+      credentials: 'include',
     };
 
     if (body) {

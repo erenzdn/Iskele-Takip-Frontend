@@ -1,4 +1,4 @@
-/** Envanter Excel import — zorunlu sütunlar (boş bırakılamaz). */
+/** Envanter Excel import — zorunlu sütunlar (boş bırakılamaz). Export/şablonda * ile işaretlenir. */
 export const INVENTORY_REQUIRED_EXCEL_COLUMNS = [
   'Ürün Adı',
   'Ürün Adı (EN)',
@@ -20,13 +20,13 @@ export const INVENTORY_OPTIONAL_EXCEL_COLUMNS = [
 ] as const;
 
 export const INVENTORY_EXCEL_HELP = {
-  hint: 'Envanter Excel şablonunu indirip doldurun; ardından dosyayı içe aktarın.',
+  hint: 'Envanter Excel şablonunu indirip doldurun; ardından dosyayı içe aktarın. Başlıkta * olan sütunlar zorunludur.',
   checklist:
-    'Zorunlu sütunlar: Ürün Adı, Ürün Adı (EN), Stok Kodu, Ağırlık (kg), Birim Fiyat (TL). Opsiyonel: Kategori ID, liste/döviz fiyatları, Satın Alma Fiyatı, Toplam Stok (boş = 0).',
-  requiredLegend: INVENTORY_REQUIRED_EXCEL_COLUMNS.join(', '),
+    'Zorunlu sütunlar (*): Ürün Adı, Ürün Adı (EN), Stok Kodu, Ağırlık (kg), Birim Fiyat (TL). Opsiyonel: Kategori ID, liste/döviz fiyatları, Satın Alma Fiyatı, Toplam Stok (boş = 0).',
+  requiredLegend: INVENTORY_REQUIRED_EXCEL_COLUMNS.map((c) => `${c} *`).join(', '),
   optionalLegend: INVENTORY_OPTIONAL_EXCEL_COLUMNS.join(', '),
   stockNote: 'Toplam Stok boş bırakılırsa 0 kabul edilir.',
   notInTemplate: 'Şablonda bulunmaz (içe aktarmada beklenmez): Kirada, Kategoriler, Alt Kategoriler.',
   exportNote:
-    'Dışa aktarılmış dosyalarda yinelenen stok kodları veya eksik İngilizce ad satırları olabilir. Strict modda tek hata tüm yüklemeyi durdurur; düzeltemiyorsanız "Hatalı satırları atla ve yükle" seçeneğini kullanın.',
+    'Dışa aktarılmış dosyalarda zorunlu sütunlar * ile işaretlenir. Yinelenen stok kodları veya eksik İngilizce ad satırları olabilir. Strict modda tek hata tüm yüklemeyi durdurur; düzeltemiyorsanız "Hatalı satırları atla ve yükle" seçeneğini kullanın.',
 } as const;

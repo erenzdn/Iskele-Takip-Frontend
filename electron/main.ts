@@ -32,21 +32,8 @@ function createWindow() {
     titleBarStyle: 'default',
   });
 
-  // GÜVENLİ OTURUM KAPATMA MANTIĞI
-  let isQuitting = false;
-  mainWindow.on('close', (e) => {
-    if (!isQuitting) {
-      e.preventDefault(); // Pencerenin anında kapanmasını engelle
-      
-      // Renderer process içinde token'ı temizle
-      mainWindow.webContents.executeJavaScript(`localStorage.removeItem('token')`)
-        .catch(err => console.error('Token silinirken hata:', err))
-        .finally(() => {
-          isQuitting = true;
-          mainWindow.close(); // Temizlik tamamlandıktan sonra pencereyi kapat
-        });
-    }
-  });
+  // Zero-Trust: Token artık localStorage'da tutulmuyor, RAM'de tutuluyor.
+  // Uygulama kapandığında otomatik olarak silinir, manuel temizlik gereksiz.
 
   if (isDev) {
     mainWindow.loadURL('http://localhost:5175');
