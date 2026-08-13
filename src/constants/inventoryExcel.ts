@@ -20,7 +20,7 @@ export const INVENTORY_OPTIONAL_EXCEL_COLUMNS = [
 ] as const;
 
 export const INVENTORY_EXCEL_HELP = {
-  hint: 'Envanter Excel şablonunu indirip doldurun; ardından dosyayı içe aktarın. Başlıkta * olan sütunlar zorunludur.',
+  hint: 'Envanter Excel şablonunu indirip doldurun; ardından dosyayı içe aktarın. Önce doğrulama ekranı açılır. Aynı stok kodu kopya açmaz, mevcut kaydı günceller. Başlıkta * olan sütunlar zorunludur.',
   checklist:
     'Zorunlu sütunlar (*): Ürün Adı, Ürün Adı (EN), Stok Kodu, Ağırlık (kg), Birim Fiyat (TL). Opsiyonel: Kategori ID, liste/döviz fiyatları, Satın Alma Fiyatı, Toplam Stok (boş = 0).',
   requiredLegend: INVENTORY_REQUIRED_EXCEL_COLUMNS.map((c) => `${c} *`).join(', '),
@@ -28,5 +28,5 @@ export const INVENTORY_EXCEL_HELP = {
   stockNote: 'Toplam Stok boş bırakılırsa 0 kabul edilir.',
   notInTemplate: 'Şablonda bulunmaz (içe aktarmada beklenmez): Kirada, Kategoriler, Alt Kategoriler.',
   exportNote:
-    'Dışa aktarılmış dosyalarda zorunlu sütunlar * ile işaretlenir. Yinelenen stok kodları veya eksik İngilizce ad satırları olabilir. Strict modda tek hata tüm yüklemeyi durdurur; düzeltemiyorsanız "Hatalı satırları atla ve yükle" seçeneğini kullanın.',
+    'Aynı stok kodu (veya kod yoksa aynı ürün adı) varsa kayıt kopyalanmaz, güncellenir. Dışa aktarılmış dosyalarda zorunlu sütunlar * ile işaretlenir. Strict modda tek hata tüm yüklemeyi durdurur; önizlemede yalnızca geçerli satırları yükleyebilirsiniz.',
 } as const;

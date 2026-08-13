@@ -16,6 +16,7 @@ import { formatInventoryRelatedApiText, getApiErrorMessage, getUserFacingApiErro
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
 import { resolveInventoryImportErrors } from '../utils/inventoryExcelImportUi';
+import ExcelImportPreviewModal, { type ExcelPreviewValidRow } from './ExcelImportPreviewModal';
 
 export type ExcelModuleType = 'inventory' | 'customers' | 'checks' | 'stockReceipts';
 
@@ -65,10 +66,13 @@ export interface ExcelImportSummary {
   successRows: number;
   failedRows: number;
   errorsByCategory: Record<ExcelErrorCategory, number>;
+  createCount?: number;
+  updateCount?: number;
 }
 
 interface ExcelImportResponse {
   success: boolean;
+  preview?: boolean;
   partial?: boolean;
   canPartialImport?: boolean;
   validRowCount?: number;
@@ -76,10 +80,11 @@ interface ExcelImportResponse {
   summary?: ExcelImportSummary;
   errors?: ExcelImportErrorRow[];
   errorsByRow?: ExcelImportRowErrors[];
+  validRows?: ExcelPreviewValidRow[];
   count?: number;
 }
 
-type Busy = null | 'export' | 'import';
+type Busy = null | 'export' | 'import' | 'preview';
 type ExcelImportMode = 'strict' | 'lenient' | 'force';
 
 function normalizeExcelErrorRow(raw: unknown): ExcelImportErrorRow | null {
@@ -177,6 +182,9 @@ function normalizeExcelImportSummary(summary: unknown): ExcelImportSummary | und
     Record<ExcelErrorCategory, number>
   >;
 
+  const createCount = Number(obj.createCount ?? obj.CreateCount);
+  const updateCount = Number(obj.updateCount ?? obj.UpdateCount);
+
   return {
     totalRows: Number.isFinite(totalRows) ? totalRows : 0,
     successRows: Number.isFinite(successRows) ? successRows : 0,
@@ -186,6 +194,8 @@ function normalizeExcelImportSummary(summary: unknown): ExcelImportSummary | und
       VALIDATION: Number(rawCategories.VALIDATION ?? 0),
       BUSINESS: Number(rawCategories.BUSINESS ?? 0),
     },
+    createCount: Number.isFinite(createCount) ? createCount : undefined,
+    updateCount: Number.isFinite(updateCount) ? updateCount : undefined,
   };
 }
 
@@ -233,8 +243,39 @@ function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null
     summary: normalizeExcelImportSummary(obj.summary ?? obj.Summary),
     errors,
     errorsByRow,
+    validRows: normalizeExcelPreviewRows(obj.validRows ?? obj.ValidRows),
+    preview: Boolean(obj.preview ?? obj.Preview),
     count: typeof obj.count === 'number' ? obj.count : typeof obj.Count === 'number' ? obj.Count : undefined,
   };
+}
+
+function normalizeExcelPreviewRows(raw: unknown): ExcelPreviewValidRow[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      const rowNumber = Number(row.row ?? row.Row);
+      const valuesRaw = row.values ?? row.Values;
+      if (!Number.isFinite(rowNumber) || !valuesRaw || typeof valuesRaw !== 'object') return null;
+      const values: ExcelPreviewValidRow['values'] = {};
+      Object.entries(valuesRaw as Record<string, unknown>).forEach(([key, value]) => {
+        if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          values[key] = value;
+        } else if (value !== undefined) {
+          values[key] = String(value);
+        }
+      });
+      const actionRaw = String(row.action ?? row.Action ?? '').toLowerCase();
+      const action = actionRaw === 'update' || actionRaw === 'create' ? actionRaw : undefined;
+      return {
+        row: rowNumber,
+        sheet: String(row.sheet ?? row.Sheet ?? ''),
+        action,
+        values,
+      };
+    })
+    .filter((row): row is ExcelPreviewValidRow => row !== null);
 }
 
 function normalizeExcelImportError(error: unknown): ExcelImportResponse | null {
@@ -386,6 +427,16 @@ export default function ExcelManager({
     validRowCount?: number;
   } | null>(null);
   const [importInfoModalType, setImportInfoModalType] = useState<ExcelModuleType | null>(null);
+  const [previewModal, setPreviewModal] = useState<{
+    file: File;
+    fileName: string;
+    message?: string;
+    summary?: ExcelImportSummary;
+    validRows: ExcelPreviewValidRow[];
+    errorsByRow: ExcelImportRowErrors[];
+    validRowCount: number;
+    canPartialImport: boolean;
+  } | null>(null);
 
   // Otomatik hesaplama oranları state'leri
   const [usdRate, setUsdRate] = useState<string>('');
@@ -422,6 +473,69 @@ export default function ExcelManager({
       setBusy(null);
     }
   }, [canView, type]);
+
+  const previewFile = useCallback(
+    async (file: File) => {
+      if (!canImport) return;
+      if (!isExcelFile(file)) {
+        toast.warning('Yalnızca .xlsx veya .xls dosyası yükleyebilirsiniz.');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast.warning('Dosya boyutu 10MB limitini aşıyor.');
+        return;
+      }
+
+      setBusy('preview');
+      setErrorModal(null);
+      try {
+        const formData = new FormData();
+        formData.append('file', file);
+        if (type === 'inventory') {
+          if (usdRate) formData.append('usdRate', usdRate);
+          if (eurRate) formData.append('eurRate', eurRate);
+          if (rentalRateTry) formData.append('rentalRateTry', rentalRateTry);
+          if (rentalRateUsd) formData.append('rentalRateUsd', rentalRateUsd);
+          if (rentalRateEur) formData.append('rentalRateEur', rentalRateEur);
+        }
+        const data = await apiClient.postFormData<ExcelImportResponse>(
+          `/excel/preview/${type}`,
+          formData
+        );
+        const normalized = normalizeExcelImportResponse(data);
+        if (!normalized) {
+          toast.error('Önizleme yanıtı okunamadı.');
+          return;
+        }
+        const prepared = prepareImportErrors(
+          type,
+          normalized.errors ?? [],
+          normalized.errorsByRow ?? []
+        );
+        setLastFile(file);
+        setPreviewModal({
+          file,
+          fileName: file.name,
+          message:
+            type === 'inventory' && normalized.message
+              ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
+              : normalized.message,
+          summary: normalized.summary,
+          validRows: normalized.validRows ?? [],
+          errorsByRow: prepared.errorsByRow,
+          validRowCount: normalized.validRowCount ?? (normalized.validRows ?? []).length,
+          canPartialImport: normalized.canPartialImport === true,
+        });
+      } catch (e) {
+        console.error('Excel preview error:', e);
+        toast.error(excelImportErrorMessage(type, e, 'Dosya doğrulanamadı.'));
+      } finally {
+        setBusy(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    },
+    [canImport, type, usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur]
+  );
 
   const processFile = useCallback(
     async (file: File, mode: ExcelImportMode = 'strict') => {
@@ -464,6 +578,7 @@ export default function ExcelManager({
                 : `${data.count || ''} satır başarıyla işlendi.`)
           );
           setErrorModal(null);
+          setPreviewModal(null);
           setLastFile(null);
           onImportSuccess?.();
           return;
@@ -489,9 +604,11 @@ export default function ExcelManager({
                   : 'İçe aktarma kısmen tamamlandı.')
             );
             setLastFile(null);
+            setPreviewModal(null);
             onImportSuccess?.();
           } else {
             setLastFile(file);
+            setPreviewModal(null);
             toast.error(
               (type === 'inventory' && normalized?.message
                 ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
@@ -517,7 +634,10 @@ export default function ExcelManager({
               normalized?.canPartialImport === true && 
               mode === 'strict',
             canImportAllRows:
-              !normalized?.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+              type === 'inventory' &&
+              !normalized?.partial &&
+              (rowsByRow.length > 0 || rows.length > 0) &&
+              mode === 'strict',
             validRowCount: normalized?.validRowCount,
           });
           return;
@@ -536,6 +656,7 @@ export default function ExcelManager({
           const rows = prepared.errors;
           const rowsByRow = prepared.errorsByRow;
           setLastFile(file);
+          setPreviewModal(null);
           setErrorModal({
             message: excelImportErrorMessage(type, e, 'İçe aktarma sırasında sorunlar oluştu.'),
             errors: rows,
@@ -548,13 +669,17 @@ export default function ExcelManager({
               normalized.canPartialImport === true && 
               mode === 'strict',
             canImportAllRows:
-              !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+              type === 'inventory' &&
+              !normalized.partial &&
+              (rowsByRow.length > 0 || rows.length > 0) &&
+              mode === 'strict',
             validRowCount: normalized.validRowCount,
           });
           toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
           return;
         }
         toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
+        setPreviewModal(null);
       } finally {
         setBusy(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -567,7 +692,7 @@ export default function ExcelManager({
     const file = e.target.files?.[0];
     if (file) {
       setImportInfoModalType(null);
-      void processFile(file);
+      void previewFile(file);
     }
   };
 
@@ -579,7 +704,7 @@ export default function ExcelManager({
     const file = e.dataTransfer.files?.[0];
     if (file) {
       setImportInfoModalType(null);
-      void processFile(file);
+      void previewFile(file);
     }
   };
 
@@ -669,7 +794,7 @@ export default function ExcelManager({
               }}
               className="btn-secondary py-1.5 px-2.5 text-xs inline-flex items-center gap-1.5 border-none bg-transparent hover:bg-background-hover"
             >
-              {busy === 'import' ? (
+              {busy === 'import' || busy === 'preview' ? (
                 <ArrowClockwiseIcon size={14} className="animate-spin shrink-0" />
               ) : (
                 <UploadSimpleIcon size={14} weight="bold" className="shrink-0 text-accent" />
@@ -792,6 +917,7 @@ export default function ExcelManager({
                 </div>
               )}
               <p className="text-xs text-text-secondary">
+                Dosya seçildikten sonra önce doğrulama ekranı açılır; onaylamadan hiçbir kayıt yazılmaz.
                 Desteklenen dosya tipleri: <code>.xlsx</code> / <code>.xls</code> (maksimum 10MB)
               </p>
             </div>
@@ -810,7 +936,7 @@ export default function ExcelManager({
                 onClick={() => fileInputRef.current?.click()}
                 className="btn-primary py-2 px-4 text-sm inline-flex items-center gap-2"
               >
-                {busy === 'import' ? (
+                {busy === 'import' || busy === 'preview' ? (
                   <ArrowClockwiseIcon size={16} className="animate-spin shrink-0" />
                 ) : (
                   <UploadSimpleIcon size={16} weight="bold" className="shrink-0" />
@@ -821,6 +947,27 @@ export default function ExcelManager({
           </div>
         </div>,
         document.body
+      )}
+
+      {previewModal && (
+        <ExcelImportPreviewModal
+          fileName={previewModal.fileName}
+          message={previewModal.message}
+          summary={previewModal.summary}
+          validRows={previewModal.validRows}
+          errorsByRow={previewModal.errorsByRow}
+          validRowCount={previewModal.validRowCount}
+          canPartialImport={previewModal.canPartialImport}
+          busy={busy === 'import'}
+          modalZClass={modalZClass}
+          onCancel={() => {
+            if (busy === 'import') return;
+            setPreviewModal(null);
+            setLastFile(null);
+          }}
+          onConfirmAll={() => void processFile(previewModal.file, 'strict')}
+          onConfirmValidOnly={() => void processFile(previewModal.file, 'lenient')}
+        />
       )}
 
       {errorModal && createPortal(
