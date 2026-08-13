@@ -1,6 +1,6 @@
 ﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
-import { ArchiveIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
+import { ArchiveIcon, ArrowLeftIcon, MagnifyingGlassIcon, PackageIcon } from '@phosphor-icons/react';
 import {
   Warehouse,
   WarehouseStock,
@@ -361,7 +361,7 @@ export default function WarehouseDetailPage() {
       const matchesMax = maxQuantity === '' || quantity <= maxQuantity;
 
       return matchesText && matchesCategory && matchesSubCategory && matchesMin && matchesMax;
-    });
+    }).sort((a, b) => (a.ItemName ?? '').localeCompare(b.ItemName ?? '', 'tr-TR'));
   }, [stock, searchText, selectedCategoryId, selectedSubCategoryId, minQuantity, maxQuantity, allInventory]);
 
   const categoryOptions = useMemo(() => {
@@ -404,9 +404,23 @@ export default function WarehouseDetailPage() {
     return Array.from(set).sort();
   }, [rentedItems]);
 
+  const tabBtn = (id: 'stock' | 'rented' | 'movements', label: string) => (
+    <button
+      type="button"
+      onClick={() => setActiveTab(id)}
+      className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
+        activeTab === id
+          ? 'bg-accent/15 text-accent'
+          : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
+      }`}
+    >
+      {label}
+    </button>
+  );
+
   if (loading) {
     return (
-      <div className="flex items-center justify-center py-16">
+      <div className="flex h-[calc(100vh-5rem)] items-center justify-center">
         <div className="text-text-secondary">Depo detayları yükleniyor...</div>
       </div>
     );
@@ -434,36 +448,81 @@ export default function WarehouseDetailPage() {
     );
   }
 
-  const uniqueItems = warehouse.UniqueItems ?? 0;
-  const totalQuantity = warehouse.TotalQuantity ?? 0;
+  const uniqueItems = warehouse.UniqueItems ?? stock.length;
+  const totalQuantity = warehouse.TotalQuantity ?? stock.reduce((sum, s) => sum + (s.Quantity ?? 0), 0);
   const archived = isWarehouseArchived(warehouse);
+  const rentedTotalQty = rentedItems.reduce((sum, r) => sum + (r.Quantity ?? 0), 0);
+  const filteredRentedQty = filteredRentedItems.reduce((sum, r) => sum + (r.Quantity ?? 0), 0);
+  const hasActiveFilters =
+    Boolean(searchText.trim()) ||
+    selectedCategoryId !== 'all' ||
+    selectedSubCategoryId !== 'all' ||
+    minQuantity !== '' ||
+    maxQuantity !== '';
+  const hasRentedFilters =
+    Boolean(rentedSearchText.trim()) ||
+    rentedCategoryName !== 'all' ||
+    rentedMinQty !== '' ||
+    rentedMaxQty !== '';
+  const hasMovementFilters =
+    movementFilters.itemId !== '' ||
+    Boolean(movementFilters.dateFrom) ||
+    Boolean(movementFilters.dateTo) ||
+    !movementFilters.includeCompleted;
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex flex-wrap items-center gap-2 min-w-0">
-          <h1 className="text-lg font-semibold flex flex-wrap items-center gap-2">
-            {warehouse.WarehouseName}
+    <div className="flex h-[calc(100vh-5rem)] min-h-0 flex-col gap-2 overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h1 className="text-lg font-semibold">{warehouse.WarehouseName}</h1>
             {archived ? (
-              <span className="inline-block px-2 py-0.5 rounded text-xs font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
+              <span className="rounded border border-amber-700/50 bg-amber-900/40 px-2 py-0.5 text-xs font-semibold text-amber-100">
                 Pasif
               </span>
             ) : null}
-          </h1>
-          <span className="text-xs text-text-secondary truncate max-w-[280px]" title={warehouse.Address || undefined}>
-            {warehouse.Address || 'Adres yok'}
-          </span>
-          <span className="text-xs text-text-secondary">·</span>
-          <span className="text-xs text-text-secondary">
-            {uniqueItems} çeşit · {totalQuantity.toLocaleString('tr-TR')} adet
-          </span>
+            <span className="truncate text-xs text-text-secondary" title={warehouse.Address || undefined}>
+              {warehouse.Address || 'Adres yok'}
+            </span>
+          </div>
+          {warehouse.Description ? (
+            <p className="mt-0.5 line-clamp-1 text-xs text-text-secondary" title={warehouse.Description}>
+              {warehouse.Description}
+            </p>
+          ) : null}
         </div>
-        <div className="flex flex-wrap gap-2">
-          <button onClick={() => navigate('/warehouses')} className="btn-secondary py-1.5 px-3 text-sm">
-            ← Depo listesi
+        <div className="flex flex-wrap items-center gap-1.5">
+          <div className="rounded-md border border-background-border bg-background-surface px-2.5 py-1 text-center">
+            <div className="text-[10px] text-text-secondary">Çeşit</div>
+            <div className="text-sm font-bold tabular-nums text-blue-500">{uniqueItems}</div>
+          </div>
+          <div className="rounded-md border border-background-border bg-background-surface px-2.5 py-1 text-center">
+            <div className="text-[10px] text-text-secondary">Toplam</div>
+            <div className="text-sm font-bold tabular-nums text-green-600 dark:text-green-500">
+              {totalQuantity.toLocaleString('tr-TR')}
+            </div>
+          </div>
+          {activeTab === 'rented' && rentedItems.length > 0 ? (
+            <div className="rounded-md border border-background-border bg-background-surface px-2.5 py-1 text-center">
+              <div className="text-[10px] text-text-secondary">Kirada</div>
+              <div className="text-sm font-bold tabular-nums text-warning">{rentedTotalQty.toLocaleString('tr-TR')}</div>
+            </div>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => navigate('/warehouses')}
+            className="btn-secondary inline-flex items-center gap-1 py-1.5 px-3 text-sm"
+          >
+            <ArrowLeftIcon size={14} weight="bold" />
+            Liste
           </button>
-          <button onClick={handleRefresh} className="btn-secondary py-1.5 px-3 text-sm" disabled={loadingStock}>
-            {loadingStock ? 'Yenileniyor...' : 'Stokları Yenile'}
+          <button
+            type="button"
+            onClick={() => void handleRefresh()}
+            className="btn-secondary py-1.5 px-3 text-sm"
+            disabled={loadingStock}
+          >
+            {loadingStock ? 'Yenileniyor...' : 'Yenile'}
           </button>
           {canDelete && !archived && (
             <button
@@ -487,630 +546,39 @@ export default function WarehouseDetailPage() {
         />
       ) : null}
 
-      {warehouse.Description ? (
-        <p className="text-sm text-text-secondary">{warehouse.Description}</p>
-      ) : null}
-
-      <div className="card p-3 space-y-3">
-        <div className="flex gap-1 border-b border-background-border">
-          <button
-            type="button"
-            onClick={() => setActiveTab('stock')}
-            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-              activeTab === 'stock'
-                ? 'text-accent border-b-2 border-accent'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Depodaki Malzemeler
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('rented')}
-            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-              activeTab === 'rented'
-                ? 'text-accent border-b-2 border-accent'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Kiradaki Ürünler
-          </button>
-          <button
-            type="button"
-            onClick={() => setActiveTab('movements')}
-            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-              activeTab === 'movements'
-                ? 'text-accent border-b-2 border-accent'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Hareket Dökümü
-          </button>
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-background-border bg-background-panel">
+        <div className="flex shrink-0 gap-1 border-b border-background-border p-1">
+          {tabBtn('stock', `Depo stoğu (${stock.length})`)}
+          {tabBtn('rented', activeTab === 'rented' || rentedItems.length > 0 ? `Kirada (${rentedItems.length})` : 'Kirada')}
+          {tabBtn('movements', 'Hareket dökümü')}
         </div>
 
-        {activeTab === 'movements' && (
-          <div className="space-y-3">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2">
-              <div>
-                <h2 className="text-base font-semibold">Hareket Dökümü</h2>
-                <p className="text-xs text-text-secondary">
-                  Bu depodan çıkış ve iade hareketleri.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setMovementFilters({ itemId: '', dateFrom: '', dateTo: '', includeCompleted: true });
-                  setItemSearch('');
-                  setItemOptions([]);
-                }}
-                className="btn-secondary py-1.5 px-3 text-sm"
-              >
-                Filtreleri Sıfırla
-              </button>
-            </div>
-
-            <div className="rounded border border-background-border bg-background-panel p-3">
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 items-end">
-                <div className="lg:col-span-4">
-                  <label className="text-xs text-text-secondary block mb-1">Ürün</label>
-                  <div className="relative">
-                    <input
-                      type="text"
-                      className="input py-2 px-3 text-sm w-full"
-                      placeholder="Ürün ara (kod/ad)…"
-                      value={itemSearch}
-                      onChange={(e) => setItemSearch(e.target.value)}
-                    />
-                    {(loadingItemOptions || itemOptions.length > 0) && itemSearch.trim() ? (
-                      <div className="absolute z-20 mt-1 w-full rounded border border-background-border bg-background-panel shadow-lg max-h-64 overflow-auto">
-                        {loadingItemOptions ? (
-                          <div className="p-2 text-xs text-text-secondary">Aranıyor…</div>
-                        ) : itemOptions.length === 0 ? (
-                          <div className="p-2 text-xs text-text-secondary">Sonuç yok.</div>
-                        ) : (
-                          itemOptions.slice(0, 30).map((it) => (
-                            <button
-                              type="button"
-                              key={it.ItemId}
-                              onClick={() => {
-                                setMovementFilters((p) => ({ ...p, itemId: it.ItemId }));
-                                setItemSearch(`${it.ItemName}${it.ItemCode ? ` (${it.ItemCode})` : ''}`);
-                                setItemOptions([]);
-                              }}
-                              className="w-full text-left px-3 py-2 hover:bg-background-hover text-sm"
-                            >
-                              <div className="font-medium text-text-primary">
-                                {it.ItemName}{' '}
-                                <span className="text-text-secondary font-mono">{it.ItemCode ? `(${it.ItemCode})` : ''}</span>
-                              </div>
-                            </button>
-                          ))
-                        )}
-                      </div>
-                    ) : null}
-                  </div>
-                  {movementFilters.itemId !== '' ? (
-                    <div className="mt-1">
-                      <button
-                        type="button"
-                        className="text-xs text-primary hover:underline"
-                        onClick={() => {
-                          setMovementFilters((p) => ({ ...p, itemId: '' }));
-                          setItemSearch('');
-                        }}
-                      >
-                        Ürün filtresini kaldır
-                      </button>
-                    </div>
-                  ) : null}
-                </div>
-
-                <div className="lg:col-span-3">
-                  <label className="text-xs text-text-secondary block mb-1">Başlangıç Tarihi</label>
-                  <input
-                    type="date"
-                    className="input py-2 px-3 text-sm w-full"
-                    value={movementFilters.dateFrom}
-                    onChange={(e) => setMovementFilters((p) => ({ ...p, dateFrom: e.target.value }))}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-2">
+          {activeTab === 'stock' && (
+            <>
+              <div className="mb-2 flex shrink-0 flex-wrap items-end gap-2">
+                <div className="relative min-w-[180px] flex-1">
+                  <MagnifyingGlassIcon
+                    size={16}
+                    className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-secondary"
                   />
-                </div>
-                <div className="lg:col-span-3">
-                  <label className="text-xs text-text-secondary block mb-1">Bitiş Tarihi</label>
-                  <input
-                    type="date"
-                    className="input py-2 px-3 text-sm w-full"
-                    value={movementFilters.dateTo}
-                    onChange={(e) => setMovementFilters((p) => ({ ...p, dateTo: e.target.value }))}
-                  />
-                </div>
-                <div className="lg:col-span-1 flex items-center gap-2">
-                  <label className="flex items-center gap-2 text-sm text-text-primary cursor-pointer whitespace-nowrap mt-6 lg:mt-0">
-                    <input
-                      type="checkbox"
-                      className="rounded border-background-border"
-                      checked={movementFilters.includeCompleted}
-                      onChange={(e) => setMovementFilters((p) => ({ ...p, includeCompleted: e.target.checked }))}
-                    />
-                    Kapalı Dahil
-                  </label>
-                </div>
-                <div className="lg:col-span-1">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const warehouseId = Number(id);
-                      if (!warehouseId || Number.isNaN(warehouseId)) return;
-                      void loadMovements(warehouseId, movementFilters, { showToastOnError: true });
-                    }}
-                    className="btn-primary py-2 px-3 text-sm w-full"
-                  >
-                    Filtrele
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            {movementsData?.summary ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-6 gap-2">
-                <div className="rounded border border-background-border bg-background-panel p-3">
-                  <div className="text-xs text-text-secondary">Hareket Sayısı</div>
-                  <div className="text-lg font-semibold text-text-primary tabular-nums">{formatInt(movementsData.summary.totalMovements)}</div>
-                </div>
-                <div className="rounded border border-background-border bg-background-panel p-3">
-                  <div className="text-xs text-text-secondary">Farklı Ürün</div>
-                  <div className="text-lg font-semibold text-text-primary tabular-nums">{formatInt(movementsData.summary.uniqueItems)}</div>
-                </div>
-                <div className="rounded border border-background-border bg-background-panel p-3">
-                  <div className="text-xs text-text-secondary">Farklı Müşteri</div>
-                  <div className="text-lg font-semibold text-text-primary tabular-nums">{formatInt(movementsData.summary.uniqueCustomers)}</div>
-                </div>
-                <div className="rounded border border-background-border bg-background-panel p-3">
-                  <div className="text-xs text-text-secondary">Toplam Çıkış</div>
-                  <div className="text-lg font-semibold text-text-primary tabular-nums">{formatInt(movementsData.summary.totalDispatched)}</div>
-                </div>
-                <div className="rounded border border-background-border bg-background-panel p-3">
-                  <div className="text-xs text-text-secondary">Toplam İade</div>
-                  <div className="text-lg font-semibold text-text-primary tabular-nums">{formatInt(movementsData.summary.totalReturned)}</div>
-                </div>
-                <div className="rounded border border-background-border bg-background-panel p-3">
-                  <div className="text-xs text-text-secondary">Şu An Dışarıda</div>
-                  <div className="text-lg font-semibold text-text-primary tabular-nums">{formatInt(movementsData.summary.currentlyOut)}</div>
-                </div>
-              </div>
-            ) : null}
-
-            {movementsError ? (
-              <div className="rounded border border-red-700/50 bg-red-950/40 p-3 text-sm text-red-200">
-                {movementsError}
-              </div>
-            ) : null}
-
-            {loadingMovements ? (
-              <div className="text-text-secondary py-6">Yükleniyor...</div>
-            ) : (movementsData?.movements?.length ?? 0) === 0 ? (
-              <EmptyState
-                icon={<MagnifyingGlassIcon size={48} weight="duotone" />}
-                title="Bu depo için hareket kaydı bulunamadı"
-                description="Tarih aralığını genişletip tekrar deneyebilirsiniz."
-              />
-            ) : (
-              <>
-                {/* Desktop / Tablet: Table */}
-                <div className="hidden md:block border border-background-border rounded-panel overflow-hidden bg-background-panel">
-                  <div ref={movementsScrollRef} className="overflow-auto max-h-[calc(100vh-300px)] min-h-[320px]">
-                    <table className="w-full text-xs border-collapse">
-                      <thead className="sticky top-0 z-10 border-b border-background-border">
-                        <tr>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" />
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Kod
-                          </th>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Sözleşme
-                          </th>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Ürün
-                          </th>
-                          <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Tip
-                          </th>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Müşteri
-                          </th>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Şantiye
-                          </th>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Çıkış Tarihi
-                          </th>
-                          <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Miktar
-                          </th>
-                          <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            İade
-                          </th>
-                          <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                            Kalan
-                          </th>
-                          <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">
-                            Durum
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {(movementsData?.movements ?? []).map((row, idx) => {
-                          const returned = row.totals?.returned ?? 0;
-                          const stillOut = row.totals?.stillOut ?? 0;
-                          return (
-                            <>
-                              <tr
-                                key={row.detailId}
-                                onClick={() => setSelectedMovementRow(row)}
-                                className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
-                              >
-                                <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 w-9 text-center">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      setSelectedMovementRow(row);
-                                    }}
-                                    className="inline-flex items-center justify-center w-7 h-7 rounded hover:bg-background-hover text-primary font-bold"
-                                    title="Tam Ekranda Gör"
-                                  >
-                                    ⛶
-                                  </button>
-                                </td>
-                                <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
-                                  <span className="font-mono text-text-secondary">{row.item?.ItemCode ?? '-'}</span>
-                                </td>
-                                <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openContractDetail(row);
-                                    }}
-                                    className="text-primary hover:underline font-medium"
-                                    title="Sözleşme detayını aç"
-                                  >
-                                    {row.contract?.ContractCode ?? `#${row.contract?.ContractId ?? '-'}`}
-                                  </button>
-                                </td>
-                                <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openItemDetail(row);
-                                    }}
-                                    className="text-primary hover:underline font-medium"
-                                    title="Ürün detayını aç"
-                                  >
-                                    {row.item?.ItemName ?? '—'}
-                                  </button>
-                                </td>
-                                <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
-                                  {renderTypeBadge(row.contract?.Type)}
-                                </td>
-                                <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
-                                  <button
-                                    type="button"
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      openCustomerDetail(row);
-                                    }}
-                                    className="text-primary hover:underline"
-                                    title="Müşteri detayını aç"
-                                  >
-                                    {row.customer?.CustomerName ?? '—'}
-                                  </button>
-                                </td>
-                                <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
-                                  {row.site?.SiteName ?? <span className="text-text-secondary">-</span>}
-                                </td>
-                                <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
-                                  {formatDateTr(row.dispatch?.dispatchDate)}
-                                </td>
-                                <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums">
-                                  {formatInt(row.dispatch?.rentedQuantity ?? 0)}
-                                </td>
-                                <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums">
-                                  {formatInt(returned)}
-                                </td>
-                                <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0">
-                                  {renderStillOut(stillOut)}
-                                </td>
-                                <td className="py-0.5 px-2 text-center align-middle">{renderStatus(Boolean(row.contract?.isCompleted))}</td>
-                              </tr>
-                            </>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary shrink-0">
-                    Toplam: {(movementsData?.movements ?? []).length} hareket satırı
-                  </div>
-                </div>
-
-                {/* Mobile: Card */}
-                <div className="md:hidden space-y-2">
-                  {(movementsData?.movements ?? []).map((row) => {
-                    const returned = row.totals?.returned ?? 0;
-                    const stillOut = row.totals?.stillOut ?? 0;
-                    const contractCompleted = Boolean(row.contract?.isCompleted);
-                    return (
-                      <div key={row.detailId} className="rounded border border-background-border bg-background-panel p-3">
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="min-w-0">
-                            <button type="button" onClick={() => openItemDetail(row)} className="text-primary hover:underline font-medium text-sm">
-                              {row.item?.ItemName ?? '—'}
-                            </button>
-                            <div className="text-xs text-text-secondary mt-0.5">
-                              {row.item?.ItemCode ?? '-'} • {row.contract?.ContractCode ?? `#${row.contract?.ContractId ?? '-'}`}
-                            </div>
-                          </div>
-                          {renderStatus(contractCompleted)}
-                        </div>
-
-                        <div className="mt-2 flex flex-wrap gap-2 items-center">
-                          {renderTypeBadge(row.contract?.Type)}
-                          <span className="text-xs text-text-secondary">{row.site?.SiteName ?? '-'}</span>
-                        </div>
-
-                        <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
-                          <div>
-                            <div className="text-text-secondary">Müşteri</div>
-                            <button type="button" onClick={() => openCustomerDetail(row)} className="text-primary hover:underline">
-                              {row.customer?.CustomerName ?? '—'}
-                            </button>
-                          </div>
-                          <div>
-                            <div className="text-text-secondary">Çıkış Tarihi</div>
-                            <div className="text-text-primary">{formatDateTr(row.dispatch?.dispatchDate)}</div>
-                          </div>
-                          <div>
-                            <div className="text-text-secondary">Miktar</div>
-                            <div className="text-text-primary tabular-nums">{formatInt(row.dispatch?.rentedQuantity ?? 0)}</div>
-                          </div>
-                          <div>
-                            <div className="text-text-secondary">Kalan</div>
-                            <div className="text-text-primary">{renderStillOut(stillOut)}</div>
-                          </div>
-                          <div>
-                            <div className="text-text-secondary">İade</div>
-                            <div className="text-text-primary tabular-nums">{formatInt(returned)}</div>
-                          </div>
-                          <div>
-                            <div className="text-text-secondary">Sözleşme</div>
-                            <button type="button" onClick={() => openContractDetail(row)} className="text-primary hover:underline">
-                              {row.contract?.ContractCode ?? `#${row.contract?.ContractId ?? '-'}`}
-                            </button>
-                          </div>
-                        </div>
-
-                        <button
-                          type="button"
-                          onClick={() => setSelectedMovementRow(row)}
-                          className="mt-3 w-full btn-secondary py-2 px-3 text-sm inline-flex items-center justify-center gap-2 font-medium"
-                        >
-                          Tam Ekranda Gör
-                        </button>
-                      </div>
-                    );
-                  })}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'rented' && (
-          <div ref={rentedSectionRef} id="kiradakiler">
-            <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-              <div>
-                <h2 className="text-xl font-semibold">Kiradaki Ürünler</h2>
-                <p className="text-sm text-text-secondary">
-                  Bu depodan kiraya verilmiş ve henüz iade edilmemiş ürünler. Arama ve filtreleri kullanarak daraltabilirsiniz.
-                </p>
-                <p className="text-sm text-text-secondary mt-1">
-                  Tüm ürünlerin global kirada durumu için{' '}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline"
-                    onClick={() => navigate('/inventory?stockStatus=onRent')}
-                  >
-                    Envanter → Kirada
-                  </button>
-                  {' '}filtreini kullanın.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setRentedSearchText('');
-                  setRentedCategoryName('all');
-                  setRentedMinQty('');
-                  setRentedMaxQty('');
-                }}
-                className="btn-secondary"
-              >
-                Filtreleri Sıfırla
-              </button>
-            </div>
-
-            {loadingRented ? (
-              <div className="text-text-secondary py-6">Yükleniyor...</div>
-            ) : rentedItems.length === 0 ? (
-              <div className="text-text-secondary text-center py-6">
-                Bu depodan kirada ürün bulunmuyor.
-              </div>
-            ) : (
-              <>
-                <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
-                  <div className="flex-1">
-                    <label className="block text-xs font-medium text-text-secondary mb-1">Ara</label>
-                    <div className="flex gap-2">
-                      <div className="relative flex-1">
-                        <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-secondary">
-                          <MagnifyingGlassIcon size={18} weight="regular" color="currentColor" aria-hidden />
-                        </span>
-                        <input
-                          type="text"
-                          className="input w-full pl-8"
-                          placeholder="Malzeme veya kategori adı..."
-                          value={rentedSearchText}
-                          onChange={(e) => setRentedSearchText(e.target.value)}
-                        />
-                      </div>
-                      {rentedSearchText && (
-                        <button type="button" onClick={() => setRentedSearchText('')} className="btn-secondary whitespace-nowrap">
-                          Temizle
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  <div className="w-full lg:w-48">
-                    <label className="block text-xs font-medium text-text-secondary mb-1">Kategori</label>
-                    <select
-                      className="input w-full"
-                      value={rentedCategoryName}
-                      onChange={(e) => setRentedCategoryName(e.target.value)}
-                    >
-                      <option value="all">Tüm kategoriler</option>
-                      {rentedCategoryOptions.map((name) => (
-                        <option key={name} value={name}>{name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="w-full lg:w-56 flex gap-2">
-                    <div className="flex-1">
-                      <label className="block text-xs font-medium text-text-secondary mb-1">Kirada (min)</label>
-                      <input
-                        type="number"
-                        className="input w-full"
-                        min={0}
-                        value={rentedMinQty === '' ? '' : rentedMinQty}
-                        onChange={(e) => setRentedMinQty(e.target.value === '' ? '' : Number(e.target.value))}
-                      />
-                    </div>
-                    <div className="flex-1">
-                      <label className="block text-xs font-medium text-text-secondary mb-1">Kirada (max)</label>
-                      <input
-                        type="number"
-                        className="input w-full"
-                        min={0}
-                        value={rentedMaxQty === '' ? '' : rentedMaxQty}
-                        onChange={(e) => setRentedMaxQty(e.target.value === '' ? '' : Number(e.target.value))}
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-                  <div className="overflow-auto max-h-[320px]">
-                    <table className="w-full text-xs border-collapse">
-                      <thead className="sticky top-0 z-10 border-b border-background-border">
-                        <tr>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
-                          <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kategori</th>
-                          <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kirada (Miktar)</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredRentedItems.map((r, idx) => (
-                          <tr key={r.ItemId} className={`border-b border-background-border hover:bg-background-hover ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}>
-                            <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">{r.ItemName}</td>
-                            <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">{r.CategoryName || '-'}</td>
-                            <td className="py-0.5 px-2 text-center align-middle"><span className="font-medium text-orange-400">{r.Quantity.toLocaleString('tr-TR')}</span></td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                  <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary shrink-0">
-                    Toplam: {filteredRentedItems.length} çeşit kirada
-                  </div>
-                  {filteredRentedItems.length === 0 && (
-                    <div className="text-text-secondary text-center py-4 text-sm">Arama kriterlerine uygun kirada ürün yok.</div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {activeTab === 'stock' && (
-        <>
-        <div className="flex flex-col gap-4">
-          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
-            <div>
-              <h2 className="text-xl font-semibold">Depodaki Malzemeler</h2>
-              <p className="text-sm text-text-secondary">
-                Aşağıdaki arama ve filtreleri kullanarak malzemeleri hızlıca daraltabilirsiniz.
-              </p>
-            </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setSearchText('');
-                  setSelectedCategoryId('all');
-                  setSelectedSubCategoryId('all');
-                  setMinQuantity('');
-                  setMaxQuantity('');
-                }}
-                className="btn-secondary"
-              >
-                Filtreleri Sıfırla
-              </button>
-          </div>
-
-          <div className="flex flex-col lg:flex-row gap-3 items-stretch lg:items-end">
-            {/* Search */}
-            <div className="flex-1">
-              <label className="block text-xs font-medium text-text-secondary mb-1">
-                Ara
-              </label>
-              <div className="flex gap-2">
-                <div className="relative flex-1">
-                  <span className="absolute inset-y-0 left-3 flex items-center pointer-events-none text-text-secondary">
-                    <MagnifyingGlassIcon size={18} weight="regular" color="currentColor" aria-hidden />
-                  </span>
                   <input
                     type="text"
-                    className="input w-full pl-8"
-                    placeholder="Malzeme adı veya kategori (örn: İskele, Köşebent)"
+                    className="input w-full py-2 pl-8 text-sm"
+                    placeholder="Malzeme veya kategori ara…"
                     value={searchText}
                     onChange={(e) => setSearchText(e.target.value)}
                   />
                 </div>
-                {searchText && (
-                  <button
-                    type="button"
-                    onClick={() => setSearchText('')}
-                    className="btn-secondary whitespace-nowrap"
-                  >
-                    Temizle
-                  </button>
-                )}
-              </div>
-            </div>
-
-            {/* Category & Subcategory filters */}
-            <div className="w-full lg:w-64 space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">
-                  Kategori
-                </label>
                 <select
-                  className="input w-full"
+                  className="input w-40 py-2 text-sm"
                   value={selectedCategoryId === 'all' ? 'all' : String(selectedCategoryId)}
                   onChange={(e) => {
                     const value = e.target.value;
                     setSelectedCategoryId(value === 'all' ? 'all' : Number(value));
+                    setSelectedSubCategoryId('all');
                   }}
+                  aria-label="Kategori"
                 >
                   <option value="all">Tüm kategoriler</option>
                   {categoryOptions.map((cat) => (
@@ -1119,19 +587,14 @@ export default function WarehouseDetailPage() {
                     </option>
                   ))}
                 </select>
-              </div>
-
-              <div>
-                <label className="block text-xs font-medium text-text-secondary mb-1">
-                  Alt Kategori
-                </label>
                 <select
-                  className="input w-full"
+                  className="input w-44 py-2 text-sm"
                   value={selectedSubCategoryId === 'all' ? 'all' : String(selectedSubCategoryId)}
                   onChange={(e) => {
                     const value = e.target.value;
                     setSelectedSubCategoryId(value === 'all' ? 'all' : Number(value));
                   }}
+                  aria-label="Alt kategori"
                 >
                   <option value="all">Tüm alt kategoriler</option>
                   {subCategoryOptions.map((sc) => (
@@ -1140,137 +603,558 @@ export default function WarehouseDetailPage() {
                     </option>
                   ))}
                 </select>
-              </div>
-            </div>
-
-            {/* Quantity filter */}
-            <div className="w-full lg:w-72 flex gap-3">
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-text-secondary mb-1">
-                  Miktar (min)
-                </label>
                 <input
                   type="number"
-                  className="input w-full"
+                  className="input w-24 py-2 text-sm"
                   min={0}
+                  placeholder="Min"
                   value={minQuantity === '' ? '' : minQuantity}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setMinQuantity(value === '' ? '' : Number(value));
-                  }}
+                  onChange={(e) => setMinQuantity(e.target.value === '' ? '' : Number(e.target.value))}
+                  aria-label="Miktar min"
                 />
-              </div>
-              <div className="flex-1">
-                <label className="block text-xs font-medium text-text-secondary mb-1">
-                  Miktar (max)
-                </label>
                 <input
                   type="number"
-                  className="input w-full"
+                  className="input w-24 py-2 text-sm"
                   min={0}
+                  placeholder="Max"
                   value={maxQuantity === '' ? '' : maxQuantity}
-                  onChange={(e) => {
-                    const value = e.target.value;
-                    setMaxQuantity(value === '' ? '' : Number(value));
-                  }}
+                  onChange={(e) => setMaxQuantity(e.target.value === '' ? '' : Number(e.target.value))}
+                  aria-label="Miktar max"
                 />
+                {hasActiveFilters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setSearchText('');
+                      setSelectedCategoryId('all');
+                      setSelectedSubCategoryId('all');
+                      setMinQuantity('');
+                      setMaxQuantity('');
+                    }}
+                    className="btn-secondary py-2 px-3 text-sm"
+                  >
+                    Sıfırla
+                  </button>
+                )}
               </div>
-            </div>
-          </div>
-        </div>
 
-        {activeTab === 'stock' && loadingStock && (
-          <div className="text-text-secondary text-sm">Depo stokları güncelleniyor...</div>
-        )}
+              {loadingStock ? (
+                <div className="px-2 py-1 text-xs text-text-secondary">Stoklar güncelleniyor…</div>
+              ) : null}
 
-        {activeTab === 'stock' && (filteredStock.length === 0 ? (
-          <div className="text-text-secondary text-center py-6">
-            {stock.length === 0
-              ? 'Bu depoda henüz malzeme bulunmuyor.'
-              : 'Arama kriterlerinize uygun malzeme bulunamadı.'}
-          </div>
-        ) : (
-          <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-            <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[240px]">
-              <table className="w-full text-xs border-collapse">
-                <thead className="sticky top-0 z-10 border-b border-background-border">
-                  <tr>
-                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                      Malzeme
-                    </th>
-                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                      Kategori
-                    </th>
-                    <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
-                      Alt Kategoriler
-                    </th>
-                    <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">
-                      Miktar
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {filteredStock.map((s, idx) => {
-                    const inv = allInventory.find((i) => i.ItemId === s.ItemId);
-                    const subCats = inv?.SubCategories ?? [];
-                    const stockArchived = s.IsArchived === true || s.isArchived === true || (inv ? isInventoryArchived(inv) : false);
-                    return (
-                      <tr
-                        key={s.StockId}
-                        className={`border-b border-background-border hover:bg-background-hover ${
-                          stockArchived ? 'opacity-70' : ''
-                        } ${
-                          idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
-                        }`}
-                      >
-                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60 font-medium text-text-primary">
-                          <span className="inline-flex flex-wrap items-center gap-1">
-                            {s.ItemName}
-                            {stockArchived ? (
-                              <span className="inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
-                                Pasif
-                              </span>
-                            ) : null}
-                          </span>
-                        </td>
-                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60 text-text-secondary">
-                          {s.CategoryName || '-'}
-                        </td>
-                        <td className="py-0.5 px-2 align-middle border-r border-background-border/60">
-                          {subCats.length === 0 ? (
-                            <span className="text-text-secondary">-</span>
-                          ) : (
-                            <div className="flex flex-wrap gap-1">
-                              {subCats.map((sc) => (
-                                <span
-                                  key={sc.SubCategoryId}
-                                  className="inline-flex items-center rounded-full bg-purple-600/20 text-purple-200 px-2 py-0.5 text-[10px]"
-                                >
-                                  {sc.SubCategoryName}
+              {filteredStock.length === 0 ? (
+                <div className="flex min-h-0 flex-1 items-center justify-center">
+                  <EmptyState
+                    icon={<PackageIcon size={48} weight="duotone" />}
+                    title={stock.length === 0 ? 'Bu depoda henüz malzeme yok' : 'Filtrelere uygun malzeme yok'}
+                    description={
+                      stock.length === 0
+                        ? 'Depo detayından ürün ekleyebilirsiniz.'
+                        : 'Arama veya kategori filtrelerini gevşetin.'
+                    }
+                  />
+                </div>
+              ) : (
+                <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-panel border border-background-border">
+                  <div className="min-h-0 flex-1 overflow-auto">
+                    <table className="w-full border-collapse text-xs">
+                      <thead className="sticky top-0 z-10 border-b border-background-border">
+                        <tr>
+                          <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Malzeme</th>
+                          <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Kategori</th>
+                          <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Alt kategoriler</th>
+                          <th className="bg-background-hover px-2 py-1.5 text-center font-medium text-text-secondary">Miktar</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredStock.map((s, idx) => {
+                          const inv = allInventory.find((i) => i.ItemId === s.ItemId);
+                          const subCats = inv?.SubCategories ?? [];
+                          const stockArchived =
+                            s.IsArchived === true || s.isArchived === true || (inv ? isInventoryArchived(inv) : false);
+                          return (
+                            <tr
+                              key={s.StockId}
+                              className={`border-b border-background-border hover:bg-background-hover ${
+                                stockArchived ? 'opacity-70' : ''
+                              } ${idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
+                            >
+                              <td className="px-2 py-1 font-medium">
+                                <span className="inline-flex flex-wrap items-center gap-1">
+                                  {s.ItemName}
+                                  {stockArchived ? (
+                                    <span className="rounded border border-amber-700/50 bg-amber-900/40 px-1.5 py-0.5 text-[10px] font-semibold text-amber-100">
+                                      Pasif
+                                    </span>
+                                  ) : null}
                                 </span>
-                              ))}
+                              </td>
+                              <td className="px-2 py-1 text-text-secondary">{s.CategoryName || '—'}</td>
+                              <td className="px-2 py-1">
+                                {subCats.length === 0 ? (
+                                  <span className="text-text-secondary">—</span>
+                                ) : (
+                                  <div className="flex flex-wrap gap-1">
+                                    {subCats.map((sc) => (
+                                      <span
+                                        key={sc.SubCategoryId}
+                                        className="inline-flex items-center rounded-full bg-purple-600/20 px-2 py-0.5 text-[10px] text-purple-700 dark:text-purple-200"
+                                      >
+                                        {sc.SubCategoryName}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </td>
+                              <td className="px-2 py-1 text-center">
+                                <span className="font-medium text-green-600 dark:text-green-500">
+                                  {s.Quantity.toLocaleString('tr-TR')}
+                                </span>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  <div className="shrink-0 border-t border-background-border bg-background-hover px-2 py-1 text-xs text-text-secondary">
+                    {filteredStock.length} çeşit
+                    {hasActiveFilters ? ` (toplam ${stock.length})` : ''}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
+
+          {activeTab === 'rented' && (
+            <div ref={rentedSectionRef} id="kiradakiler" className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              {loadingRented ? (
+                <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">Yükleniyor…</div>
+              ) : rentedItems.length === 0 ? (
+                <div className="flex min-h-0 flex-1 items-center justify-center">
+                  <EmptyState
+                    icon={<PackageIcon size={48} weight="duotone" />}
+                    title="Bu depodan kirada ürün yok"
+                    description="Global kirada listesi için Envanter → Kirada filtresini kullanın."
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="mb-2 flex shrink-0 flex-wrap items-end gap-2">
+                    <div className="relative min-w-[180px] flex-1">
+                      <MagnifyingGlassIcon
+                        size={16}
+                        className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-text-secondary"
+                      />
+                      <input
+                        type="text"
+                        className="input w-full py-2 pl-8 text-sm"
+                        placeholder="Malzeme veya kategori ara…"
+                        value={rentedSearchText}
+                        onChange={(e) => setRentedSearchText(e.target.value)}
+                      />
+                    </div>
+                    <select
+                      className="input w-44 py-2 text-sm"
+                      value={rentedCategoryName}
+                      onChange={(e) => setRentedCategoryName(e.target.value)}
+                      aria-label="Kategori"
+                    >
+                      <option value="all">Tüm kategoriler</option>
+                      {rentedCategoryOptions.map((name) => (
+                        <option key={name} value={name}>
+                          {name}
+                        </option>
+                      ))}
+                    </select>
+                    <input
+                      type="number"
+                      className="input w-24 py-2 text-sm"
+                      min={0}
+                      placeholder="Min"
+                      value={rentedMinQty === '' ? '' : rentedMinQty}
+                      onChange={(e) => setRentedMinQty(e.target.value === '' ? '' : Number(e.target.value))}
+                      aria-label="Kirada min"
+                    />
+                    <input
+                      type="number"
+                      className="input w-24 py-2 text-sm"
+                      min={0}
+                      placeholder="Max"
+                      value={rentedMaxQty === '' ? '' : rentedMaxQty}
+                      onChange={(e) => setRentedMaxQty(e.target.value === '' ? '' : Number(e.target.value))}
+                      aria-label="Kirada max"
+                    />
+                    {hasRentedFilters && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRentedSearchText('');
+                          setRentedCategoryName('all');
+                          setRentedMinQty('');
+                          setRentedMaxQty('');
+                        }}
+                        className="btn-secondary py-2 px-3 text-sm"
+                      >
+                        Sıfırla
+                      </button>
+                    )}
+                    <button
+                      type="button"
+                      className="text-xs text-primary hover:underline"
+                      onClick={() => navigate('/inventory?stockStatus=onRent')}
+                    >
+                      Envanterde kiradakiler
+                    </button>
+                  </div>
+
+                  {filteredRentedItems.length === 0 ? (
+                    <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">
+                      Filtrelere uygun kirada ürün yok.
+                    </div>
+                  ) : (
+                    <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-panel border border-background-border">
+                      <div className="min-h-0 flex-1 overflow-auto">
+                        <table className="w-full border-collapse text-xs">
+                          <thead className="sticky top-0 z-10 border-b border-background-border">
+                            <tr>
+                              <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Malzeme</th>
+                              <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Kategori</th>
+                              <th className="bg-background-hover px-2 py-1.5 text-center font-medium text-text-secondary">Kirada</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredRentedItems.map((r, idx) => (
+                              <tr
+                                key={r.ItemId}
+                                className={`border-b border-background-border hover:bg-background-hover ${
+                                  idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
+                                }`}
+                              >
+                                <td className="px-2 py-1 font-medium">{r.ItemName}</td>
+                                <td className="px-2 py-1 text-text-secondary">{r.CategoryName || '—'}</td>
+                                <td className="px-2 py-1 text-center">
+                                  <span className="font-medium text-warning">{r.Quantity.toLocaleString('tr-TR')}</span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      <div className="shrink-0 border-t border-background-border bg-background-hover px-2 py-1 text-xs text-text-secondary">
+                        {filteredRentedItems.length} çeşit kirada · {filteredRentedQty.toLocaleString('tr-TR')} adet
+                      </div>
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+          )}
+
+          {activeTab === 'movements' && (
+            <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+              <div className="mb-2 flex shrink-0 flex-wrap items-end gap-2">
+                <div className="relative min-w-[180px] flex-1">
+                  <input
+                    type="text"
+                    className="input w-full py-2 px-3 text-sm"
+                    placeholder="Ürün ara (kod/ad)…"
+                    value={itemSearch}
+                    onChange={(e) => setItemSearch(e.target.value)}
+                  />
+                  {(loadingItemOptions || itemOptions.length > 0) && itemSearch.trim() ? (
+                    <div className="absolute z-20 mt-1 max-h-64 w-full overflow-auto rounded border border-background-border bg-background-panel shadow-lg">
+                      {loadingItemOptions ? (
+                        <div className="p-2 text-xs text-text-secondary">Aranıyor…</div>
+                      ) : (
+                        itemOptions.slice(0, 30).map((it) => (
+                          <button
+                            type="button"
+                            key={it.ItemId}
+                            onClick={() => {
+                              setMovementFilters((p) => ({ ...p, itemId: it.ItemId }));
+                              setItemSearch(`${it.ItemName}${it.ItemCode ? ` (${it.ItemCode})` : ''}`);
+                              setItemOptions([]);
+                            }}
+                            className="w-full px-3 py-2 text-left text-sm hover:bg-background-hover"
+                          >
+                            <span className="font-medium">{it.ItemName}</span>{' '}
+                            <span className="font-mono text-text-secondary">{it.ItemCode ? `(${it.ItemCode})` : ''}</span>
+                          </button>
+                        ))
+                      )}
+                    </div>
+                  ) : null}
+                  {movementFilters.itemId !== '' ? (
+                    <button
+                      type="button"
+                      className="mt-0.5 text-[11px] text-primary hover:underline"
+                      onClick={() => {
+                        setMovementFilters((p) => ({ ...p, itemId: '' }));
+                        setItemSearch('');
+                      }}
+                    >
+                      Ürün filtresini kaldır
+                    </button>
+                  ) : null}
+                </div>
+                <input
+                  type="date"
+                  className="input w-36 py-2 text-sm"
+                  value={movementFilters.dateFrom}
+                  onChange={(e) => setMovementFilters((p) => ({ ...p, dateFrom: e.target.value }))}
+                  aria-label="Başlangıç tarihi"
+                />
+                <input
+                  type="date"
+                  className="input w-36 py-2 text-sm"
+                  value={movementFilters.dateTo}
+                  onChange={(e) => setMovementFilters((p) => ({ ...p, dateTo: e.target.value }))}
+                  aria-label="Bitiş tarihi"
+                />
+                <label className="flex cursor-pointer items-center gap-1.5 whitespace-nowrap text-xs text-text-primary">
+                  <input
+                    type="checkbox"
+                    className="rounded border-background-border"
+                    checked={movementFilters.includeCompleted}
+                    onChange={(e) => setMovementFilters((p) => ({ ...p, includeCompleted: e.target.checked }))}
+                  />
+                  Kapalı dahil
+                </label>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const warehouseId = Number(id);
+                    if (!warehouseId || Number.isNaN(warehouseId)) return;
+                    void loadMovements(warehouseId, movementFilters, { showToastOnError: true });
+                  }}
+                  className="btn-primary py-2 px-3 text-sm"
+                >
+                  Filtrele
+                </button>
+                {hasMovementFilters && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setMovementFilters({ itemId: '', dateFrom: '', dateTo: '', includeCompleted: true });
+                      setItemSearch('');
+                      setItemOptions([]);
+                    }}
+                    className="btn-secondary py-2 px-3 text-sm"
+                  >
+                    Sıfırla
+                  </button>
+                )}
+              </div>
+
+              {movementsData?.summary ? (
+                <div className="mb-2 flex shrink-0 flex-wrap gap-1.5">
+                  {(
+                    [
+                      ['Hareket', movementsData.summary.totalMovements],
+                      ['Ürün', movementsData.summary.uniqueItems],
+                      ['Müşteri', movementsData.summary.uniqueCustomers],
+                      ['Çıkış', movementsData.summary.totalDispatched],
+                      ['İade', movementsData.summary.totalReturned],
+                      ['Dışarıda', movementsData.summary.currentlyOut],
+                    ] as const
+                  ).map(([label, value]) => (
+                    <div
+                      key={label}
+                      className="rounded border border-background-border bg-background-surface px-2 py-1 text-xs"
+                    >
+                      <span className="text-text-secondary">{label} </span>
+                      <span className="font-semibold tabular-nums">{formatInt(value)}</span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+
+              {movementsError ? (
+                <div className="mb-2 shrink-0 rounded border border-red-700/50 bg-red-950/40 p-2 text-sm text-red-200">
+                  {movementsError}
+                </div>
+              ) : null}
+
+              {loadingMovements ? (
+                <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">Yükleniyor…</div>
+              ) : (movementsData?.movements?.length ?? 0) === 0 ? (
+                <div className="flex min-h-0 flex-1 items-center justify-center">
+                  <EmptyState
+                    icon={<MagnifyingGlassIcon size={48} weight="duotone" />}
+                    title="Bu depo için hareket kaydı yok"
+                    description="Tarih aralığını genişletip tekrar deneyebilirsiniz."
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="hidden min-h-0 flex-1 flex-col overflow-hidden rounded-panel border border-background-border md:flex">
+                    <div ref={movementsScrollRef} className="min-h-0 flex-1 overflow-auto">
+                      <table className="w-full border-collapse text-xs">
+                        <thead className="sticky top-0 z-10 border-b border-background-border">
+                          <tr>
+                            <th className="bg-background-hover px-2 py-1.5" />
+                            <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Kod</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Sözleşme</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Ürün</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-center font-medium text-text-secondary">Tip</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Müşteri</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Şantiye</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Çıkış</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-right font-medium text-text-secondary">Miktar</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-right font-medium text-text-secondary">İade</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-right font-medium text-text-secondary">Kalan</th>
+                            <th className="bg-background-hover px-2 py-1.5 text-center font-medium text-text-secondary">Durum</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(movementsData?.movements ?? []).map((row, idx) => {
+                            const returned = row.totals?.returned ?? 0;
+                            const stillOut = row.totals?.stillOut ?? 0;
+                            return (
+                              <tr
+                                key={row.detailId}
+                                onClick={() => setSelectedMovementRow(row)}
+                                className={`cursor-pointer border-b border-background-border hover:bg-background-hover ${
+                                  idx % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'
+                                }`}
+                              >
+                                <td className="w-9 px-2 py-0.5 text-center">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setSelectedMovementRow(row);
+                                    }}
+                                    className="inline-flex h-7 w-7 items-center justify-center rounded font-bold text-primary hover:bg-background-hover"
+                                    title="Tam ekranda gör"
+                                  >
+                                    ⛶
+                                  </button>
+                                </td>
+                                <td className="px-2 py-0.5 font-mono text-text-secondary">{row.item?.ItemCode ?? '—'}</td>
+                                <td className="px-2 py-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openContractDetail(row);
+                                    }}
+                                    className="font-medium text-primary hover:underline"
+                                  >
+                                    {row.contract?.ContractCode ?? `#${row.contract?.ContractId ?? '—'}`}
+                                  </button>
+                                </td>
+                                <td className="px-2 py-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openItemDetail(row);
+                                    }}
+                                    className="font-medium text-primary hover:underline"
+                                  >
+                                    {row.item?.ItemName ?? '—'}
+                                  </button>
+                                </td>
+                                <td className="px-2 py-0.5 text-center">{renderTypeBadge(row.contract?.Type)}</td>
+                                <td className="px-2 py-0.5">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      openCustomerDetail(row);
+                                    }}
+                                    className="text-primary hover:underline"
+                                  >
+                                    {row.customer?.CustomerName ?? '—'}
+                                  </button>
+                                </td>
+                                <td className="px-2 py-0.5">{row.site?.SiteName ?? <span className="text-text-secondary">—</span>}</td>
+                                <td className="px-2 py-0.5">{formatDateTr(row.dispatch?.dispatchDate)}</td>
+                                <td className="px-2 py-0.5 text-right tabular-nums">{formatInt(row.dispatch?.rentedQuantity ?? 0)}</td>
+                                <td className="px-2 py-0.5 text-right tabular-nums">{formatInt(returned)}</td>
+                                <td className="px-2 py-0.5 text-right">{renderStillOut(stillOut)}</td>
+                                <td className="px-2 py-0.5 text-center">{renderStatus(Boolean(row.contract?.isCompleted))}</td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                    <div className="shrink-0 border-t border-background-border bg-background-hover px-2 py-1 text-xs text-text-secondary">
+                      {(movementsData?.movements ?? []).length} hareket satırı
+                    </div>
+                  </div>
+
+                  <div className="min-h-0 flex-1 space-y-2 overflow-auto md:hidden">
+                    {(movementsData?.movements ?? []).map((row) => {
+                      const returned = row.totals?.returned ?? 0;
+                      const stillOut = row.totals?.stillOut ?? 0;
+                      const contractCompleted = Boolean(row.contract?.isCompleted);
+                      return (
+                        <div key={row.detailId} className="rounded border border-background-border bg-background-panel p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <button type="button" onClick={() => openItemDetail(row)} className="text-sm font-medium text-primary hover:underline">
+                                {row.item?.ItemName ?? '—'}
+                              </button>
+                              <div className="mt-0.5 text-xs text-text-secondary">
+                                {row.item?.ItemCode ?? '—'} · {row.contract?.ContractCode ?? `#${row.contract?.ContractId ?? '—'}`}
+                              </div>
                             </div>
-                          )}
-                        </td>
-                        <td className="py-0.5 px-2 text-center align-middle">
-                          <span className="font-medium text-green-500">
-                            {s.Quantity.toLocaleString('tr-TR')}
-                          </span>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                            {renderStatus(contractCompleted)}
+                          </div>
+                          <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {renderTypeBadge(row.contract?.Type)}
+                            <span className="text-xs text-text-secondary">{row.site?.SiteName ?? '—'}</span>
+                          </div>
+                          <div className="mt-2 grid grid-cols-2 gap-2 text-xs">
+                            <div>
+                              <div className="text-text-secondary">Müşteri</div>
+                              <button type="button" onClick={() => openCustomerDetail(row)} className="text-primary hover:underline">
+                                {row.customer?.CustomerName ?? '—'}
+                              </button>
+                            </div>
+                            <div>
+                              <div className="text-text-secondary">Çıkış</div>
+                              <div>{formatDateTr(row.dispatch?.dispatchDate)}</div>
+                            </div>
+                            <div>
+                              <div className="text-text-secondary">Miktar</div>
+                              <div className="tabular-nums">{formatInt(row.dispatch?.rentedQuantity ?? 0)}</div>
+                            </div>
+                            <div>
+                              <div className="text-text-secondary">Kalan</div>
+                              <div>{renderStillOut(stillOut)}</div>
+                            </div>
+                            <div>
+                              <div className="text-text-secondary">İade</div>
+                              <div className="tabular-nums">{formatInt(returned)}</div>
+                            </div>
+                            <div>
+                              <div className="text-text-secondary">Sözleşme</div>
+                              <button type="button" onClick={() => openContractDetail(row)} className="text-primary hover:underline">
+                                {row.contract?.ContractCode ?? `#${row.contract?.ContractId ?? '—'}`}
+                              </button>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedMovementRow(row)}
+                            className="btn-secondary mt-3 w-full py-2 px-3 text-sm"
+                          >
+                            Tam ekranda gör
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
             </div>
-            <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
-              <span>Toplam: {filteredStock.length} çeşit malzeme</span>
-              <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür</span>
-            </div>
-          </div>
-        ))}
-        </>
-        )}
+          )}
+        </div>
       </div>
 
       <WarehouseMovementDetailModal
@@ -1321,4 +1205,3 @@ export default function WarehouseDetailPage() {
     </div>
   );
 }
-

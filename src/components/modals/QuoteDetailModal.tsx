@@ -38,6 +38,8 @@ import PdfPreviewModal from './PdfPreviewModal';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
+import CustomerDetailModal from './CustomerDetailModal';
+import SiteCreateModal from './SiteCreateModal';
 import ContractDetailModal from './ContractDetailModal';
 import {
   applyCreatedSiteId,
@@ -144,6 +146,8 @@ export default function QuoteDetailModal({
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactTitle, setNewContactTitle] = useState('');
   const [isCreatingContact, setIsCreatingContact] = useState(false);
+  const [showCreateCustomerModal, setShowCreateCustomerModal] = useState(false);
+  const [showCreateSiteModal, setShowCreateSiteModal] = useState(false);
 
   // Sözleşmeye dönüştürme — late binding: yalnızca varsayılan depo veya ürün bazlı atama (global mod kaldırıldı)
   const [showConvertModal, setShowConvertModal] = useState(false);
@@ -251,10 +255,6 @@ export default function QuoteDetailModal({
     setNewSiteForm(EMPTY_NEW_SITE_FORM);
   };
 
-  const handleNewSiteFormChange = (field: keyof NewSiteFormState, value: string) => {
-    setNewSiteForm((prev) => ({ ...prev, [field]: value }));
-  };
-
   const handleSiteSelect = (value: number | '' | typeof NEW_SITE_SELECT_VALUE) => {
     if (value === NEW_SITE_SELECT_VALUE) {
       setIsNewSiteMode(true);
@@ -271,6 +271,47 @@ export default function QuoteDetailModal({
     setSelectedAuthorizedContactId('');
     setAuthorizedContactError(null);
     resetSiteSelection();
+  };
+
+  const handleRequestNewSite = () => {
+    if (!selectedCustomerId) {
+      toast.warning('Önce müşteri seçin.');
+      return;
+    }
+    setShowCreateSiteModal(true);
+  };
+
+  const handleSiteCreated = async (site: ConstructionSite) => {
+    if (!selectedCustomerId) return;
+    try {
+      const refreshed = await siteService.getByCustomerAsync(Number(selectedCustomerId), { forceRefresh: true });
+      setSites(refreshed);
+    } catch {
+      setSites((prev) => (prev.some((s) => s.SiteId === site.SiteId) ? prev : [...prev, site]));
+    }
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+    setSelectedSiteId(site.SiteId);
+  };
+
+  const handleCustomerSaved = async (result: { customerId: number; isNew: boolean }) => {
+    try {
+      const [custData, created] = await Promise.all([
+        customerService.getAllAsync(undefined, { forceRefresh: true }),
+        result.isNew ? customerService.getByIdAsync(result.customerId).catch(() => null) : Promise.resolve(null),
+      ]);
+      const merged = created && !custData.some((c) => c.CustomerId === created.CustomerId)
+        ? [created, ...custData]
+        : created
+          ? custData.map((c) => (c.CustomerId === created.CustomerId ? created : c))
+          : custData;
+      setCustomers(merged);
+    } catch (error) {
+      console.error('Reload customers error:', error);
+    }
+    if (result.isNew) {
+      handleCustomerChange(result.customerId);
+    }
   };
 
   const handleCreateContact = async () => {
@@ -716,10 +757,10 @@ export default function QuoteDetailModal({
     }
   }, [quoteType]);
 
-  const loadSites = async (customerId: number) => {
+  const loadSites = async (customerId: number, forceRefresh = false) => {
     try {
       setSitesLoading(true);
-      const data = await siteService.getByCustomerAsync(customerId);
+      const data = await siteService.getByCustomerAsync(customerId, { forceRefresh });
       setSites(data);
     } catch (error) {
       console.error('Load sites error:', error);
@@ -1987,45 +2028,51 @@ export default function QuoteDetailModal({
   const getStatusBadge = () => {
     if (converted) {
       return (
-        <span className="badge bg-indigo-800 text-indigo-100 text-lg px-4 py-1">
+        <span className="badge bg-indigo-800 text-indigo-100 text-[11px] px-2 py-0.5">
           Sözleşmeye dönüştü
         </span>
       );
     }
     switch (status) {
       case QuoteStatus.Pending:
-        return <span className="badge bg-yellow-700 text-yellow-100 text-lg px-4 py-1">Beklemede</span>;
+        return <span className="badge bg-yellow-700 text-yellow-100 text-[11px] px-2 py-0.5">Beklemede</span>;
       case QuoteStatus.Accepted:
-        return <span className="badge bg-green-700 text-green-100 text-lg px-4 py-1">Kabul Edildi</span>;
+        return <span className="badge bg-green-700 text-green-100 text-[11px] px-2 py-0.5">Kabul Edildi</span>;
       case QuoteStatus.Rejected:
-        return <span className="badge bg-red-700 text-red-100 text-lg px-4 py-1">Reddedildi</span>;
+        return <span className="badge bg-red-700 text-red-100 text-[11px] px-2 py-0.5">Reddedildi</span>;
       default:
         return null;
     }
   };
 
+  const compactBtn = '!py-1.5 !px-3 text-xs';
+  const fieldLabel = 'block text-[11px] font-medium text-text-secondary mb-0.5';
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background-main">
-      <header className="shrink-0 flex items-center justify-between px-4 py-3 bg-background-panel border-b border-background-border shadow-sm">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-text-primary tracking-tight">
+    <div className="fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden">
+      <header className="shrink-0 flex items-center justify-between px-3 py-2 bg-background-panel border-b border-background-border">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-base font-semibold text-text-primary tracking-tight truncate">
             {isNew ? 'Yeni Teklif' : 'Teklif Detayı'}
           </h1>
-          <span className="text-sm font-medium text-text-secondary">
-            {quoteType === 'SALE' ? 'Satış Teklifi' : 'Kiralama Teklifi'}
+          <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
+            {quoteType === 'SALE' ? 'Satış' : 'Kiralama'}
           </span>
           {!isNew && getStatusBadge()}
           {isClonedDraft && (
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-200"
+              className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-200"
               title="Bu teklif başka bir tekliften kopyalandı. Kaydedip kullanıcıya paylaşmadan önce gerekli alanları (teklif kodu, tarihler, fiyatlar) gözden geçirin."
             >
               <CopySimpleIcon size={12} weight="bold" aria-hidden />
               Taslak (kopya)
             </span>
           )}
+          <span className="hidden md:inline text-[11px] text-text-secondary truncate">
+            {currentUser?.fullName || currentUser?.username || ''}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {!isNew && activeQuote?.QuoteId && (
             <button
               type="button"
@@ -2033,120 +2080,84 @@ export default function QuoteDetailModal({
               disabled={isBusy || isCloning}
               title="Bu teklifi yeni bir taslak teklif olarak kopyala"
               aria-label="Teklifi Kopyala"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-background-border px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-background-border px-2.5 py-1 text-xs font-medium text-text-primary hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              <CopySimpleIcon size={16} weight="regular" aria-hidden />
-              {isCloning ? 'Kopyalanıyor...' : 'Teklifi Kopyala'}
+              <CopySimpleIcon size={14} weight="regular" aria-hidden />
+              {isCloning ? 'Kopyalanıyor...' : 'Kopyala'}
             </button>
           )}
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+            className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
           >
-            <XIcon size={22} weight="regular" />
+            <XIcon size={20} weight="regular" />
           </button>
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto">
-        <div className="w-full p-3 md:p-4 space-y-4">
-          {converted && (
-            <section className="rounded-xl border border-indigo-700/50 bg-indigo-950/30 p-4 shadow-sm">
-              <p className="text-sm font-semibold text-indigo-100">
-                Bu teklif sözleşmeye dönüştürülmüş
-              </p>
-              <p className="mt-2 text-sm text-indigo-100/90">
-                Operasyonel işlemler sözleşmede yürür. Bu kayıt denetim / geçmiş amacıyla salt okunur tutulur.
-                Bağlantıyı kaldırmak için sözleşmede <span className="font-medium">İptal Et</span>
-                {quoteType === 'SALE' ? (
-                  <> veya <span className="font-medium">Teklife Geri Al</span></>
-                ) : null}{' '}
-                kullanın; teklif tekrar aktif listede görünür.
-              </p>
-              <div className="mt-2 text-xs text-indigo-200/80">
-                {activeQuote?.ConvertedAt ? (
-                  <>Dönüştürülme: {formatShortDateTime(activeQuote.ConvertedAt)}</>
-                ) : null}
-              </div>
-              {!canCancelContract && (
-                <p className="mt-3 text-xs text-amber-200 border border-amber-700/40 rounded-md px-3 py-2 bg-amber-950/30">
-                  Sözleşmeyi iptal etme yetkiniz bulunmuyor. Kaynak teklifi yeniden düzenlemek için yöneticinizden sözleşme iptal yetkisi isteyin.
-                </p>
-              )}
-              <div className="mt-4 flex flex-wrap gap-2">
-                <button
-                  type="button"
-                  onClick={openConvertedContract}
-                  disabled={isBusy || isOpeningConvertedContract}
-                  className="btn-primary text-sm"
-                >
-                  {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
-                </button>
-              </div>
-            </section>
+      {converted && (
+        <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 bg-indigo-950/40 border-b border-indigo-700/50 text-xs text-indigo-100">
+          <span className="font-semibold">Sözleşmeye dönüştürülmüş</span>
+          <span className="text-indigo-100/80">
+            İşlemler sözleşmede yürür. Salt okunur kayıt.
+            {activeQuote?.ConvertedAt ? ` · ${formatShortDateTime(activeQuote.ConvertedAt)}` : ''}
+          </span>
+          {!canCancelContract && (
+            <span className="text-amber-200">Sözleşme iptal yetkisi yok.</span>
           )}
+          <button
+            type="button"
+            onClick={openConvertedContract}
+            disabled={isBusy || isOpeningConvertedContract}
+            className={`btn-primary ml-auto ${compactBtn}`}
+          >
+            {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+          </button>
+        </div>
+      )}
 
-          {/* Üst kısım: yatay bilgi alanları (kompakt) */}
-          <section className="rounded-xl border border-background-border bg-background-panel p-3 shadow-sm">
-            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 pb-1.5 border-b border-background-border">
-              Genel Bilgiler
-            </h3>
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Teklif Kodu (Opsiyonel)</label>
-                <input
-                  type="text"
-                  value={quoteCode}
-                  onChange={(e) => setQuoteCode(e.target.value)}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                  placeholder="Örn: TK-2026-001"
-                  maxLength={50}
-                />
-              </div>
-
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="block text-xs font-medium text-text-primary">Konu</label>
-                  <span className={`text-[11px] ${subject.length > 255 ? 'text-red-300' : 'text-text-secondary'}`}>
-                    {Math.min(subject.length, 255)}/255
-                  </span>
-                </div>
-                <input
-                  type="text"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value.slice(0, 255))}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                  placeholder="Teklif konusu giriniz"
-                  maxLength={255}
-                />
-              </div>
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary" htmlFor="quote-customer-search">
-                  Müşteri Seçimi *
+      <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
+          {/* Üst: müşteri → ayarlar (sayfa kaydırması yok) */}
+          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2">
+            <div className={`grid gap-x-2.5 gap-y-1.5 ${selectedCustomerId ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
+              <div className="min-w-0">
+                <label className={fieldLabel} htmlFor="quote-customer-search">
+                  Müşteri *
                 </label>
-                <CustomerSearchField
-                  key={`${quote?.QuoteId ?? 'new'}-${isNew}`}
-                  id="quote-customer-search"
-                  customers={customers}
-                  value={selectedCustomerId}
-                  onChange={handleCustomerChange}
-                  disabled={isReadOnly}
-                />
+                <div className="flex items-center gap-1 min-w-0">
+                  <div className="flex-1 min-w-0">
+                    <CustomerSearchField
+                      key={`${quote?.QuoteId ?? 'new'}-${isNew}-${selectedCustomerId || 'none'}`}
+                      id="quote-customer-search"
+                      customers={customers}
+                      value={selectedCustomerId}
+                      onChange={handleCustomerChange}
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateCustomerModal(true)}
+                      className="btn-secondary !py-1 !px-1.5 flex-shrink-0"
+                      title="Yeni müşteri ekle"
+                    >
+                      <Plus size={16} weight="bold" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {selectedCustomerId && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
+                <div className="min-w-0 overflow-hidden">
+                  <label className={fieldLabel}>
                     Merkez Yetkili *
                   </label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 min-w-0">
                     {authorizedContactsLoading ? (
-                      <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
+                      <div className="input w-full min-w-0 text-text-secondary text-sm py-1.5">Yükleniyor...</div>
                     ) : authorizedContacts.length > 0 ? (
                       <select
                         value={selectedAuthorizedContactId}
@@ -2155,7 +2166,7 @@ export default function QuoteDetailModal({
                           setAuthorizedContactError(null);
                         }}
                         disabled={isReadOnly}
-                        className="input flex-1 text-sm py-1.5"
+                        className="input min-w-0 flex-1 text-sm py-1.5"
                       >
                         <option value="">Yetkili seçin</option>
                         {authorizedContacts.map((contact) => (
@@ -2168,7 +2179,7 @@ export default function QuoteDetailModal({
                         ))}
                       </select>
                     ) : (
-                      <div className="input flex-1 text-red-300 bg-background-secondary text-sm py-2">
+                      <div className="input min-w-0 flex-1 text-red-300 bg-background-secondary text-sm py-1.5 truncate">
                         Bu müşteri için yetkili tanımlı değil
                       </div>
                     )}
@@ -2176,7 +2187,7 @@ export default function QuoteDetailModal({
                       <button
                         type="button"
                         onClick={() => setShowCreateContactModal(true)}
-                        className="btn-secondary p-1.5 flex-shrink-0"
+                        className="btn-secondary !py-1 !px-1.5 flex-shrink-0"
                         title="Merkez Yetkilisi Ekle"
                       >
                         <Plus size={16} weight="bold" />
@@ -2184,189 +2195,61 @@ export default function QuoteDetailModal({
                     )}
                   </div>
                   {authorizedContactError && (
-                    <p className="text-xs text-red-300">{authorizedContactError}</p>
+                    <p className="text-xs text-red-300 truncate">{authorizedContactError}</p>
                   )}
                 </div>
               )}
 
               {selectedCustomerId && (
-                <SiteSelectField
-                  sites={sites}
-                  sitesLoading={sitesLoading}
-                  selectedSiteId={selectedSiteId}
-                  isNewSiteMode={isNewSiteMode}
-                  newSiteForm={newSiteForm}
-                  onSelectSite={handleSiteSelect}
-                  onNewSiteFormChange={handleNewSiteFormChange}
-                  onCancelNewSite={resetNewSiteMode}
-                  required={quoteType === 'RENTAL' && sites.length > 0}
-                  disabled={isReadOnly}
-                />
-              )}
-
-              {quoteType === 'RENTAL' && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
-                    Kiralama süresi (gün) *
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={rentalDurationDays}
-                    onChange={(e) => {
-                      const v = Math.floor(Number(e.target.value));
-                      setRentalDurationDays(Number.isFinite(v) && v >= 1 ? v : 1);
-                    }}
+                <div className="min-w-0 overflow-hidden">
+                  <SiteSelectField
+                    sites={sites}
+                    sitesLoading={sitesLoading}
+                    selectedSiteId={selectedSiteId}
+                    onSelectSite={handleSiteSelect}
+                    onRequestNewSite={handleRequestNewSite}
+                    required={quoteType === 'RENTAL' && sites.length > 0}
                     disabled={isReadOnly}
-                    className="input w-full text-sm py-1.5 max-w-[140px]"
+                    label="Şantiye"
                   />
-                  <p className="text-[11px] text-text-secondary leading-snug">
-                    Fiyatlandırma sunucuda en az 30 günlük hesaplanır (ör. 10 gün girseniz bile ücret tabanı 30 gündür).
-                    PDF/önizlemede tarih yoksa şablonda &quot;Belirlenecek&quot; görünebilir.
-                  </p>
                 </div>
               )}
+            </div>
 
-
-
-              {quoteType === 'RENTAL' && !isNew && (
-                <div className="text-[11px] text-text-secondary space-y-0.5 rounded border border-background-border/60 p-2">
-                  <div>
-                    <span className="font-medium text-text-primary">Kayıtlı süre:</span>{' '}
-                    {(activeQuote as Quote)?.RentalDurationDays != null &&
-                    Number((activeQuote as Quote).RentalDurationDays) >= 1
-                      ? `${Number((activeQuote as Quote).RentalDurationDays)} gün`
-                      : '—'}
-                  </div>
-                  <div>
-                    <span className="font-medium text-text-primary">Planlanan bitiş (API):</span>{' '}
-                    {(activeQuote as Quote)?.PlannedEndDate != null &&
-                    String((activeQuote as Quote).PlannedEndDate).trim()
-                      ? new Date(String((activeQuote as Quote).PlannedEndDate)).toLocaleDateString('tr-TR')
-                      : 'Sözleşmede belirlenecek'}
-                  </div>
+            <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5">
+              <div className="min-w-[180px] flex-[1.3]">
+                <div className="flex items-center justify-between gap-1">
+                  <label className={fieldLabel}>Konu</label>
+                  <span className={`text-[10px] ${subject.length > 255 ? 'text-red-300' : 'text-text-secondary'}`}>
+                    {Math.min(subject.length, 255)}/255
+                  </span>
                 </div>
-              )}
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Teklif Sahibi</label>
-                <div className="input w-full bg-background-secondary text-text-secondary py-1.5 px-2 text-xs rounded-lg border border-background-border">
-                  {currentUser?.fullName || currentUser?.username || '—'}
-                </div>
-              </div>
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">İskonto (%)</label>
                 <input
-                  type="number"
-                  value={Number(iskonto) || 0}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
-                  }}
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value.slice(0, 255))}
                   disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={0.01}
-                  className="input w-20 text-sm py-1.5"
-                  placeholder="0"
-                  title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz"
+                  className="input w-full text-sm py-1.5"
+                  placeholder="Teklif konusu"
+                  maxLength={255}
                 />
               </div>
 
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">KDV (%)</label>
+              <div className="min-w-[120px] w-[150px]">
+                <label className={fieldLabel}>Teklif Kodu</label>
                 <input
-                  type="number"
-                  value={vatRate}
-                  onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                  type="text"
+                  value={quoteCode}
+                  onChange={(e) => setQuoteCode(e.target.value)}
                   disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={1}
-                  className="input w-20 text-sm py-1.5"
-                  placeholder="20"
+                  className="input w-full text-sm py-1.5"
+                  placeholder="Örn: TK-2026-001"
+                  maxLength={50}
                 />
               </div>
 
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Para Birimi</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                >
-                  <option value="TRY">TRY (TL)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="USD">USD ($)</option>
-                </select>
-              </div>
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Dil</label>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                >
-                  <option value="TR">Türkçe</option>
-                  <option value="EN">English</option>
-                </select>
-              </div>
-
-              {!isNew && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">Durum</label>
-                  <select
-                    value={status}
-                    onChange={(e) => {
-                      setStatus(e.target.value as QuoteStatus);
-                      if (e.target.value !== QuoteStatus.Rejected) {
-                        setRejectionReasonError(null);
-                      }
-                    }}
-                    disabled={isReadOnly || converted}
-                    className="input w-full text-sm py-1.5"
-                  >
-                    <option value={QuoteStatus.Accepted}>Kabul Edildi</option>
-                    <option value={QuoteStatus.Rejected}>Reddedildi</option>
-                  </select>
-                </div>
-              )}
-
-              {!isNew && status === QuoteStatus.Rejected && (
-                <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
-                  <label className="block text-xs font-medium text-text-primary">
-                    Red Gerekçesi {isReadOnly ? '' : '*'}
-                  </label>
-                  {isReadOnly ? (
-                    <div className="input w-full bg-background-secondary text-text-primary text-sm py-2 px-2 rounded-lg border border-background-border min-h-[3rem]">
-                      {rejectionReason.trim() || activeQuote?.RejectionReason?.trim() || '—'}
-                    </div>
-                  ) : (
-                    <>
-                      <textarea
-                        value={rejectionReason}
-                        onChange={(e) => {
-                          setRejectionReason(e.target.value);
-                          setRejectionReasonError(null);
-                        }}
-                        className="input w-full h-20 resize-none text-sm"
-                        placeholder="Red gerekçesini yazın (en az 3 karakter)"
-                      />
-                      {rejectionReasonError && (
-                        <p className="text-xs text-red-300">{rejectionReasonError}</p>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Teklif Tipi</label>
+              <div className="min-w-[120px] w-[140px]">
+                <label className={fieldLabel}>Teklif Tipi</label>
                 {isNew ? (
                   lockNewQuoteType ? (
                     <div className="input w-full bg-background-secondary text-text-secondary text-sm py-1.5 px-2 rounded-lg border border-background-border">
@@ -2389,20 +2272,109 @@ export default function QuoteDetailModal({
                 )}
               </div>
 
-              <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
-                <label className="block text-xs font-medium text-text-primary">Notlar</label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
+              {quoteType === 'RENTAL' && (
+                <div className="min-w-[110px] w-[130px]">
+                  <label className={fieldLabel}>Süre (gün) *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={rentalDurationDays}
+                    onChange={(e) => {
+                      const v = Math.floor(Number(e.target.value));
+                      setRentalDurationDays(Number.isFinite(v) && v >= 1 ? v : 1);
+                    }}
+                    disabled={isReadOnly}
+                    className="input w-full text-sm py-1.5"
+                    title="Fiyatlandırma en az 30 gün üzerinden hesaplanır. PDF'de tarih yoksa 'Belirlenecek' görünebilir."
+                  />
+                </div>
+              )}
+
+              <div className="min-w-[72px] w-[88px]">
+                <label className={fieldLabel} title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz">İskonto %</label>
+                <input
+                  type="number"
+                  value={Number(iskonto) || 0}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
+                  }}
                   disabled={isReadOnly}
-                  className="input w-full h-14 resize-none text-sm"
-                  placeholder="Teklif ile ilgili notlar..."
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="0"
+                  title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz"
                 />
               </div>
 
-              <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
-                <label className="block text-xs font-medium text-text-primary">Teklif Şablonu (Opsiyonel)</label>
-                <div className="flex gap-2">
+              <div className="min-w-[72px] w-[88px]">
+                <label className={fieldLabel}>KDV %</label>
+                <input
+                  type="number"
+                  value={vatRate}
+                  onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                  disabled={isReadOnly}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="20"
+                />
+              </div>
+
+              <div className="min-w-[110px] w-[130px]">
+                <label className={fieldLabel}>Para Birimi</label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TRY">TRY (TL)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="USD">USD ($)</option>
+                </select>
+              </div>
+
+              <div className="min-w-[100px] w-[120px]">
+                <label className={fieldLabel}>Dil</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TR">Türkçe</option>
+                  <option value="EN">English</option>
+                </select>
+              </div>
+
+              {!isNew && (
+                <div className="min-w-[130px] w-[150px]">
+                  <label className={fieldLabel}>Durum</label>
+                  <select
+                    value={status}
+                    onChange={(e) => {
+                      setStatus(e.target.value as QuoteStatus);
+                      if (e.target.value !== QuoteStatus.Rejected) {
+                        setRejectionReasonError(null);
+                      }
+                    }}
+                    disabled={isReadOnly || converted}
+                    className="input w-full text-sm py-1.5"
+                  >
+                    <option value={QuoteStatus.Accepted}>Kabul Edildi</option>
+                    <option value={QuoteStatus.Rejected}>Reddedildi</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="min-w-[220px] flex-[1.3]">
+                <label className={fieldLabel}>Şablon</label>
+                <div className="flex gap-1">
                   <select
                     value={selectedTemplateId}
                     onChange={(e) => setSelectedTemplateId(Number(e.target.value) || '')}
@@ -2435,9 +2407,9 @@ export default function QuoteDetailModal({
                         }
                       }}
                       disabled={loadingTemplate}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
-                      {loadingTemplate ? 'Yükleniyor...' : 'Düzenle'}
+                      {loadingTemplate ? '...' : 'Düzenle'}
                     </button>
                   )}
                   {!isReadOnly && (
@@ -2448,7 +2420,7 @@ export default function QuoteDetailModal({
                         setIsNewTemplate(true);
                         setIsTemplateEditorOpen(true);
                       }}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
                       Yeni
                     </button>
@@ -2456,20 +2428,20 @@ export default function QuoteDetailModal({
                 </div>
               </div>
               {isNew && !isReadOnly && (
-                <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
-                  <label className="block text-xs font-medium text-text-primary">Hazır Paket (Opsiyonel)</label>
+                <div className="min-w-[220px] flex-[1.3]">
+                  <label className={fieldLabel}>Hazır Paket</label>
                   {packagesLoadError && (
-                    <div className="text-xs text-red-300 mb-1">
+                    <div className="text-[10px] text-red-300">
                       Paketler yüklenemedi: {packagesLoadError}
                     </div>
                   )}
-                  <div className="flex gap-2">
+                  <div className="flex gap-1">
                     <select
                       value={selectedPackageId}
                       onChange={(e) => setSelectedPackageId(e.target.value)}
                       className="input w-full text-sm py-1.5"
                     >
-                      <option value="">Paketten oluşturmak için paket seçin</option>
+                      <option value="">Paket seçin</option>
                       {packages.map((p) => (
                         <option key={p.PackageId} value={p.PackageId}>
                           {p.PackageName || `Paket #${p.PackageId}`}
@@ -2480,48 +2452,82 @@ export default function QuoteDetailModal({
                       type="button"
                       onClick={handleCreateFromPackage}
                       disabled={isBusy || !selectedPackageId}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
-                      Paketten Oluştur
+                      Uygula
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowCreatePackageModal(true)}
                       disabled={isBusy}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
                       Yeni
                     </button>
                   </div>
                 </div>
               )}
-            </div>
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-background-border pt-2">
-              <div className="flex flex-wrap items-center gap-4 text-xs text-text-secondary">
-                {quoteType === 'RENTAL' && (
-                  <span>
-                    <span className="font-medium text-text-primary">Planlanan Süre:</span> {plannedDays} gün
-                    <span className="ml-2 text-text-secondary/90">(Faturalama: min 30 → {billedDays} gün)</span>
-                  </span>
-                )}
-                {quoteType === 'SALE' && (
-                  <span className="text-text-secondary/90">Satış teklifinde fiyatlar birim satış fiyatıdır; süre çarpanı uygulanmaz.</span>
-                )}
-                <span>
-                  <span className="font-medium text-text-primary">Durum:</span>{' '}
-                  {status === QuoteStatus.Pending && 'Beklemede'}
-                  {status === QuoteStatus.Accepted && 'Kabul Edildi'}
-                  {status === QuoteStatus.Rejected && 'Reddedildi'}
-                </span>
+              <div className="min-w-[200px] flex-[1.4]">
+                <label className={fieldLabel}>Notlar</label>
+                <input
+                  type="text"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="Teklif notu..."
+                />
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              {!isNew && status === QuoteStatus.Rejected && (
+                <div className="w-full min-w-0">
+                  <label className={fieldLabel}>
+                    Red Gerekçesi {isReadOnly ? '' : '*'}
+                  </label>
+                  {isReadOnly ? (
+                    <div className="input w-full bg-background-secondary text-text-primary text-sm py-1.5 px-2 rounded-lg border border-background-border">
+                      {rejectionReason.trim() || activeQuote?.RejectionReason?.trim() || '—'}
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        value={rejectionReason}
+                        onChange={(e) => {
+                          setRejectionReason(e.target.value);
+                          setRejectionReasonError(null);
+                        }}
+                        className="input w-full text-sm py-1.5"
+                        placeholder="Red gerekçesini yazın (en az 3 karakter)"
+                      />
+                      {rejectionReasonError && (
+                        <p className="text-xs text-red-300">{rejectionReasonError}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Orta: kalemler — yalnızca tablo kayar */}
+          <section className="rounded-lg border border-background-border bg-background-panel flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 border-b border-background-border">
+              <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                Teklif Kalemleri
+                {quoteItems.length > 0 && (
+                  <span className="ml-1.5 font-normal normal-case tracking-normal text-text-secondary/80">
+                    ({quoteItems.length})
+                  </span>
+                )}
+              </h3>
+              <div className="flex flex-wrap items-center gap-1.5">
                 {!isReadOnly && (
                   <button
                     type="button"
                     onClick={() => setShowProductPickerModal(true)}
-                    className="btn-secondary"
+                    className={`btn-secondary ${compactBtn}`}
                   >
                     Ürün Ekle
                   </button>
@@ -2530,9 +2536,9 @@ export default function QuoteDetailModal({
                   <button
                     type="button"
                     onClick={() => setShowManualLineModal(true)}
-                    className="btn-secondary"
+                    className={`btn-secondary ${compactBtn}`}
                   >
-                    Manuel Kalem Ekle
+                    Manuel Kalem
                   </button>
                 )}
                 {!isReadOnly && selectedTemplateId && quoteItems.length > 0 && (
@@ -2567,138 +2573,51 @@ export default function QuoteDetailModal({
                       }
                     }}
                     disabled={isAddingMaterialTable}
-                    className="btn-secondary text-sm"
+                    className={`btn-secondary ${compactBtn}`}
+                    title="Seçili şablona malzeme tablosu yer tutucusu ekler"
                   >
-                    <ClipboardIcon size={16} weight="regular" className="inline mr-1" aria-hidden />
-                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Tabloyu Şablona Ekle'}
+                    <ClipboardIcon size={14} weight="regular" className="inline mr-1" aria-hidden />
+                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Şablona Tablo'}
                   </button>
                 )}
                 {!isNew && activeQuote && selectedTemplateId && (
                   <>
-                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className="btn-primary text-sm">
+                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className={`btn-primary ${compactBtn}`}>
                       {isBusy ? 'Yükleniyor...' : 'Önizle'}
                     </button>
-                    <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className="btn-secondary text-sm">
-                      PDF İndir
+                    <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>
+                      PDF
                     </button>
-                    <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className="btn-secondary text-sm">
-                      Word İndir
-                    </button>
-                  </>
-                )}
-                {!isNew && isReadOnly && (
-                  <>
-                    {converted && (
-                      <button
-                        type="button"
-                        onClick={openConvertedContract}
-                        disabled={isBusy || isOpeningConvertedContract}
-                        className="btn-primary"
-                      >
-                        {isOpeningConvertedContract
-                          ? 'Sözleşme Açılıyor...'
-                          : 'Sözleşmeye git'}
-                      </button>
-                    )}
-                    {!converted && canUpdateQuote && (
-                      <button
-                        onClick={() => setIsReadOnly(false)}
-                        className="btn-primary"
-                      >
-                        Düzenle
-                      </button>
-                    )}
-                    {status === QuoteStatus.Pending && !converted && canUpdateQuote && (
-                      <>
-                        <button onClick={handleAccept} disabled={isBusy} className="btn-success">
-                          Kabul Et
-                        </button>
-                        <button onClick={handleRejectClick} disabled={isBusy} className="btn-danger">
-                          Reddet
-                        </button>
-                      </>
-                    )}
-                    {status === QuoteStatus.Accepted && !converted && canUpdateQuote && (
-                      <button onClick={handleRejectClick} disabled={isBusy} className="btn-danger">
-                        Reddet
-                      </button>
-                    )}
-                    {status === QuoteStatus.Rejected && !converted && canUpdateQuote && (
-                      <button onClick={handleAccept} disabled={isBusy} className="btn-success">
-                        Kabul Et
-                      </button>
-                    )}
-                    {status === QuoteStatus.Accepted && !converted && (
-                      <button
-                        onClick={openConvertModal}
-                        disabled={isBusy}
-                        className="btn-success"
-                      >
-                        Sözleşmeye Dönüştür
-                      </button>
-                    )}
-                  </>
-                )}
-                {!isReadOnly && (
-                  <>
-                    {!isNew && activeQuote && !converted && canDeleteQuote && (
-                      <button
-                        onClick={handleDeleteClick}
-                        disabled={isBusy}
-                        className="btn-danger"
-                      >
-                        Sil
-                      </button>
-                    )}
-                    <button onClick={onClose} className="btn-secondary">
-                      İptal
-                    </button>
-                    <button
-                      onClick={handleSave}
-                      disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
-                      className="btn-primary"
-                    >
-                      {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                    <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>
+                      Word
                     </button>
                   </>
-                )}
-                {isReadOnly && (
-                  <button onClick={onClose} className="btn-secondary">
-                    Kapat
-                  </button>
                 )}
               </div>
             </div>
-          </section>
-
-          {/* Orta kısım: ürün tablosu */}
-          <section className="rounded-xl border border-background-border bg-background-panel shadow-sm flex-1 min-h-[260px] flex flex-col overflow-hidden">
-            <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider px-4 pt-4 pb-2 border-b border-background-border shrink-0">
-              Teklif Kalemleri
-            </h3>
-            <div className="border-0 rounded-b-xl overflow-auto flex-1 min-h-0">
+            <div className="overflow-auto flex-1 min-h-0">
               <table className="w-full text-sm border-collapse text-text-primary">
                 <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
                   <tr>
-                    <th className="text-left px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                    <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       Ürün Kodu
                     </th>
-                    <th className="text-left px-3 py-2 font-semibold text-text-secondary">
+                    <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">
                       Ürün Adı
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary w-24">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-24 text-xs">
                       Miktar
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       {quoteType === 'SALE' ? 'Birim Fiyat' : 'Aylık Fiyat'}
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary w-20">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-20 text-xs">
                       İskonto (%)
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       Toplam
                     </th>
-                    <th className="text-center px-2 py-2 font-semibold text-text-secondary w-20">
+                    <th className="text-center px-2 py-1.5 font-semibold text-text-secondary w-16 text-xs">
                       İşlem
                     </th>
                   </tr>
@@ -2710,8 +2629,7 @@ export default function QuoteDetailModal({
                         colSpan={7}
                         className="px-3 py-6 text-center text-sm text-text-secondary"
                       >
-                        Henüz ürün eklenmedi. Üst kısımdan "Ürün Ekle" butonu ile ürün
-                        seçebilirsiniz.
+                        Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
                       </td>
                     </tr>
                   ) : (
@@ -2740,7 +2658,7 @@ export default function QuoteDetailModal({
                             justAdded ? 'bg-green-500/20' : ''
                           } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
                         >
-                          <td className="px-3 py-2 text-text-secondary">
+                          <td className="px-3 py-1 text-text-secondary">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
                                 <span className="inline-flex items-center gap-1.5 flex-wrap">
@@ -2785,7 +2703,7 @@ export default function QuoteDetailModal({
                                         )
                                       );
                                     }}
-                                    className="btn-secondary text-xs whitespace-nowrap"
+                                    className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
                                     disabled={isBusy}
                                     title="Varsayılana dön"
                                   >
@@ -2797,7 +2715,7 @@ export default function QuoteDetailModal({
                               '—'
                             )}
                           </td>
-                          <td className="px-3 py-2 font-medium">
+                          <td className="px-3 py-1 font-medium">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
                                 language === 'EN' ? (
@@ -2854,7 +2772,7 @@ export default function QuoteDetailModal({
                                         )
                                       );
                                     }}
-                                    className="btn-secondary text-xs whitespace-nowrap"
+                                    className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
                                     disabled={isBusy}
                                     title="Varsayılana dön"
                                   >
@@ -2866,7 +2784,7 @@ export default function QuoteDetailModal({
                               item.Description
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right">
+                          <td className="px-3 py-1 text-right">
                             {isReadOnly ? (
                               item.Quantity
                             ) : (
@@ -2920,7 +2838,7 @@ export default function QuoteDetailModal({
                               />
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right text-text-secondary">
+                          <td className="px-3 py-1 text-right text-text-secondary">
                             {item.kind === 'manual' ? (
                               quoteType === 'SALE' ? (
                                 formatCurrency(item.UnitPriceSnapshot)
@@ -3047,7 +2965,7 @@ export default function QuoteDetailModal({
                               />
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right">
+                          <td className="px-3 py-1 text-right">
                             {isReadOnly ? (
                               Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto) || 0
                             ) : (
@@ -3080,10 +2998,10 @@ export default function QuoteDetailModal({
                               />
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right font-medium text-green-500">
+                          <td className="px-3 py-1 text-right font-medium text-green-500">
                             {formatCurrency(lineTotal)}
                           </td>
-                          <td className="px-2 py-2 text-center">
+                          <td className="px-2 py-1 text-center">
                             {!isReadOnly && (
                               <button
                                 type="button"
@@ -3115,51 +3033,124 @@ export default function QuoteDetailModal({
             </div>
           </section>
 
-          {/* Alt kısım: finansal özet */}
-          <section className="rounded-xl border border-background-border bg-background-panel p-4 shadow-sm shrink-0">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 text-sm">
+          {/* Alt: toplam + kaydet — her zaman görünür */}
+          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
               <div>
-                <div className="text-text-secondary mb-1">Ara Toplam</div>
-                <div className="font-semibold text-text-primary">
-                  {formatCurrency(subtotal)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
+                <span className="font-semibold text-text-primary">{formatCurrency(subtotal)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">
-                  Toplam İskonto
-                </div>
-                <div className="font-semibold text-red-300">
-                  -{formatCurrency(discountAmount)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
+                <span className="font-semibold text-red-300">-{formatCurrency(discountAmount)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">İskontolu Toplam</div>
-                <div className="font-semibold text-text-primary">
-                  {formatCurrency(discountedTotal)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
+                <span className="font-semibold text-text-primary">{formatCurrency(discountedTotal)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">
-                  KDV Toplam ({vatRate || 0}%)
-                </div>
-                <div className="font-semibold text-yellow-300">
-                  {formatCurrency(vatAmount)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
+                <span className="font-semibold text-yellow-300">{formatCurrency(vatAmount)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">Genel Toplam</div>
-                <div className="text-2xl font-bold text-green-400">
-                  {formatCurrency(grandTotal)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
+                <span className="text-lg font-bold text-green-400">{formatCurrency(grandTotal)}</span>
               </div>
+              {quoteType === 'RENTAL' && (
+                <span className="text-[11px] text-text-secondary">
+                  {plannedDays} gün · fatura min 30 → {billedDays} gün
+                </span>
+              )}
+              {quoteType === 'SALE' && (
+                <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
+              )}
             </div>
-            {quoteType === 'RENTAL' && (
-              <div className="mt-2 text-xs text-text-secondary">
-                ({billedDays} gün üzerinden hesaplanmıştır)
-              </div>
-            )}
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              {!isNew && isReadOnly && (
+                <>
+                  {converted && (
+                    <button
+                      type="button"
+                      onClick={openConvertedContract}
+                      disabled={isBusy || isOpeningConvertedContract}
+                      className={`btn-primary ${compactBtn}`}
+                    >
+                      {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+                    </button>
+                  )}
+                  {!converted && canUpdateQuote && (
+                    <button
+                      type="button"
+                      onClick={() => setIsReadOnly(false)}
+                      className={`btn-primary ${compactBtn}`}
+                    >
+                      Düzenle
+                    </button>
+                  )}
+                  {status === QuoteStatus.Pending && !converted && canUpdateQuote && (
+                    <>
+                      <button type="button" onClick={handleAccept} disabled={isBusy} className={`btn-success ${compactBtn}`}>
+                        Kabul Et
+                      </button>
+                      <button type="button" onClick={handleRejectClick} disabled={isBusy} className={`btn-danger ${compactBtn}`}>
+                        Reddet
+                      </button>
+                    </>
+                  )}
+                  {status === QuoteStatus.Accepted && !converted && canUpdateQuote && (
+                    <button type="button" onClick={handleRejectClick} disabled={isBusy} className={`btn-danger ${compactBtn}`}>
+                      Reddet
+                    </button>
+                  )}
+                  {status === QuoteStatus.Rejected && !converted && canUpdateQuote && (
+                    <button type="button" onClick={handleAccept} disabled={isBusy} className={`btn-success ${compactBtn}`}>
+                      Kabul Et
+                    </button>
+                  )}
+                  {status === QuoteStatus.Accepted && !converted && (
+                    <button
+                      type="button"
+                      onClick={openConvertModal}
+                      disabled={isBusy}
+                      className={`btn-success ${compactBtn}`}
+                    >
+                      Sözleşmeye Dönüştür
+                    </button>
+                  )}
+                </>
+              )}
+              {!isReadOnly && (
+                <>
+                  {!isNew && activeQuote && !converted && canDeleteQuote && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteClick}
+                      disabled={isBusy}
+                      className={`btn-danger ${compactBtn}`}
+                    >
+                      Sil
+                    </button>
+                  )}
+                  <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
+                    className={`btn-primary ${compactBtn}`}
+                  >
+                    {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                  </button>
+                </>
+              )}
+              {isReadOnly && (
+                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  Kapat
+                </button>
+              )}
+            </div>
           </section>
-        </div>
       </div>
       {showDeleteReasonModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
@@ -3736,6 +3727,25 @@ export default function QuoteDetailModal({
           </div>,
           document.body
         )}
+      {showCreateCustomerModal &&
+        createPortal(
+          <CustomerDetailModal
+            customer={null}
+            isNew
+            overlayClassName="z-[80]"
+            onSaved={handleCustomerSaved}
+            onClose={() => setShowCreateCustomerModal(false)}
+          />,
+          document.body
+        )}
+      {showCreateSiteModal && selectedCustomerId && (
+        <SiteCreateModal
+          customerId={Number(selectedCustomerId)}
+          customerName={customers.find((c) => c.CustomerId === Number(selectedCustomerId))?.Name}
+          onCreated={handleSiteCreated}
+          onClose={() => setShowCreateSiteModal(false)}
+        />
+      )}
       {isTemplateEditorOpen &&
         createPortal(
           <QuoteTemplateEditorModal

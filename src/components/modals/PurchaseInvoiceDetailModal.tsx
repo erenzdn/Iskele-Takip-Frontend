@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { Plus, XIcon } from '@phosphor-icons/react';
 import { PurchaseInvoice, Customer, Inventory, Warehouse } from '../../models';
 import { purchaseInvoiceService } from '../../services/purchaseInvoiceService';
 import { customerService } from '../../services/customerService';
@@ -6,6 +7,7 @@ import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { formatCurrency } from '../../utils/formatters';
 import ConfirmModal from './ConfirmModal';
+import CustomerSearchField from '../CustomerSearchField';
 import { getApiErrorMessage, getUserFacingApiErrorMessage, getUserFacingErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import {
@@ -69,7 +71,6 @@ export default function PurchaseInvoiceDetailModal({
   const [warehouseId, setWarehouseId] = useState<number | ''>('');
   const [currency, setCurrency] = useState<string>('TL');
   const [exchangeRate, setExchangeRate] = useState('');
-  const [customerSearch, setCustomerSearch] = useState('');
   const [itemSearch, setItemSearch] = useState('');
 
   // Tutar alanları - string olarak tutulur, input'larda doğal düzenleme sağlanır
@@ -167,16 +168,6 @@ export default function PurchaseInvoiceDetailModal({
     }
   };
 
-  const filteredCustomers = useMemo(() => {
-    const search = customerSearch.trim().toLowerCase();
-    if (!search) return customers;
-    return customers.filter((customer) => {
-      const name = String(customer.Name || '').toLowerCase();
-      const taxId = String(customer.TaxId || '').toLowerCase();
-      return name.includes(search) || taxId.includes(search);
-    });
-  }, [customers, customerSearch]);
-
   const filteredItems = useMemo(() => {
     const search = itemSearch.trim().toLowerCase();
     if (!search) return items;
@@ -186,6 +177,15 @@ export default function PurchaseInvoiceDetailModal({
       return name.includes(search) || code.includes(search);
     });
   }, [items, itemSearch]);
+
+  const itemOptions = useMemo(() => {
+    if (!itemId) return filteredItems;
+    const selected = items.find((item) => item.ItemId === Number(itemId));
+    if (selected && !filteredItems.some((item) => item.ItemId === selected.ItemId)) {
+      return [selected, ...filteredItems];
+    }
+    return filteredItems;
+  }, [filteredItems, itemId, items]);
 
   const selectedCustomer = useMemo(
     () => (customerId ? customers.find((customer) => customer.CustomerId === Number(customerId)) ?? null : null),
@@ -355,175 +355,125 @@ export default function PurchaseInvoiceDetailModal({
     }
   };
 
+  const compactBtn = '!py-1.5 !px-3 text-xs';
+  const fieldLabel = 'block text-[11px] font-medium text-text-secondary mb-0.5';
+  const extraFormOpen = !isReadOnly && (showNewCustomerForm || showNewItemForm);
+  const selectedWarehouse = warehouseId
+    ? warehouses.find((wh) => wh.WarehouseId === Number(warehouseId))
+    : undefined;
+
   return (
-    <div
-      className={
-        isNew
-          ? 'fixed inset-0 z-50 flex flex-col bg-background-main'
-          : 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50'
-      }
-    >
-      <div
-        className={
-          isNew
-            ? 'w-full h-full overflow-hidden p-1.5 md:p-2 text-xs leading-tight [&_.input]:text-xs [&_.input]:py-1 [&_.input]:px-2 [&_.input]:min-h-[28px] [&_textarea.input]:min-h-[38px]'
-            : 'bg-background-panel rounded-panel w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto'
-        }
-      >
-        <h2 className="mb-1 text-base font-semibold">
-          {isNew ? 'Yeni Alış Faturası' : 'Fatura Detayı'}
-        </h2>
+    <div className="fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden">
+      <header className="shrink-0 flex items-center justify-between px-3 py-2 bg-background-panel border-b border-background-border">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-base font-semibold text-text-primary tracking-tight truncate">
+            {isNew ? 'Yeni Alış Faturası' : 'Fatura Detayı'}
+          </h1>
+          {!isNew && invoice && (
+            <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
+              #{invoice.InvoiceId}
+            </span>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+          aria-label="Kapat"
+        >
+          <XIcon size={20} weight="regular" />
+        </button>
+      </header>
 
-        {/* Özet Bilgiler - Sadece mevcut faturalarda */}
-        {isReadOnly && !isNew && invoice && (
-          <div className="mb-6 card bg-blue-900 p-4">
-            <div className="grid grid-cols-4 gap-4 text-sm mb-3">
-              <div>
-                <div className="text-text-secondary mb-1">Fatura No</div>
-                <div className="text-xl font-bold">#{invoice.InvoiceId}</div>
-              </div>
-              <div>
-                <div className="text-text-secondary mb-1">Ara Toplam</div>
-                <div className="text-xl font-bold">{formatCurrency(invoice.Subtotal)}</div>
-              </div>
-              <div>
-                <div className="text-text-secondary mb-1">KDV</div>
-                <div className="text-xl font-bold">{formatCurrency(invoice.VatAmount)}</div>
-              </div>
-              <div>
-                <div className="text-text-secondary mb-1">Toplam</div>
-                <div className="text-xl font-bold text-accent">{formatCurrency(invoice.TotalAmount)}</div>
-              </div>
+      <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
+        <section
+          className={`shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 ${
+            extraFormOpen ? 'max-h-[42vh] overflow-auto' : ''
+          }`}
+        >
+          <div className="flex flex-wrap gap-x-2.5 gap-y-1.5">
+            <div className="min-w-[140px] w-[160px]">
+              <label className={fieldLabel}>Fatura Tarihi *</label>
+              <input
+                type="date"
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+                disabled={isReadOnly}
+                className="input w-full text-sm py-1.5"
+                required
+              />
             </div>
-            <div className="grid grid-cols-4 gap-4 text-sm border-t border-blue-800 pt-3">
-              {invoice.DocumentNo && (
-                <div>
-                  <div className="text-text-secondary mb-1">Evrak No</div>
-                  <div className="font-medium">{invoice.DocumentNo}</div>
-                </div>
-              )}
-              {invoice.ItemName && (
-                <div>
-                  <div className="text-text-secondary mb-1">Ürün</div>
-                  <div className="font-medium">{invoice.ItemName}</div>
-                </div>
-              )}
-              {invoice.WarehouseName && (
-                <div>
-                  <div className="text-text-secondary mb-1">Depo</div>
-                  <div className="font-medium">{invoice.WarehouseName}</div>
-                </div>
-              )}
-              {invoice.Quantity != null && invoice.Quantity > 0 && (
-                <div>
-                  <div className="text-text-secondary mb-1">Miktar</div>
-                  <div className="font-medium">{invoice.Quantity} adet</div>
-                </div>
-              )}
-              {invoice.Currency && invoice.Currency !== 'TL' && (
-                <div>
-                  <div className="text-text-secondary mb-1">Döviz</div>
-                  <div className="font-medium">{invoice.Currency} (Kur: {invoice.ExchangeRate ?? '-'})</div>
-                </div>
-              )}
+            <div className="min-w-[140px] w-[160px]">
+              <label className={fieldLabel}>Giriş Tarihi *</label>
+              <input
+                type="date"
+                value={entryDate}
+                onChange={(e) => setEntryDate(e.target.value)}
+                disabled={isReadOnly}
+                className="input w-full text-sm py-1.5"
+                required
+              />
             </div>
-          </div>
-        )}
-
-        <div className="grid h-[calc(100%-66px)] grid-cols-12 gap-2">
-          <div className="col-span-7 space-y-1.5">
-            <div className="grid grid-cols-3 gap-1.5">
-              <div>
-                <label className="mb-1 block text-xs font-medium">Fatura Tarihi *</label>
-                <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} disabled={isReadOnly} className="input w-full" required />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium">Giriş Tarihi *</label>
-                <input type="date" value={entryDate} onChange={(e) => setEntryDate(e.target.value)} disabled={isReadOnly} className="input w-full" required />
-              </div>
-              <div>
-                <label className="mb-1 block text-xs font-medium">Evrak No</label>
-                <input type="text" value={documentNo} onChange={(e) => setDocumentNo(e.target.value)} disabled={isReadOnly} maxLength={100} placeholder="Evrak numarası" className="input w-full" />
-              </div>
+            <div className="min-w-[140px] w-[160px]">
+              <label className={fieldLabel}>Evrak No</label>
+              <input
+                type="text"
+                value={documentNo}
+                onChange={(e) => setDocumentNo(e.target.value)}
+                disabled={isReadOnly}
+                maxLength={100}
+                placeholder="Evrak numarası"
+                className="input w-full text-sm py-1.5"
+              />
             </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium">Tedarikçi *</label>
-              {customersLoading ? (
-                <div className="text-text-secondary">Yükleniyor...</div>
-              ) : (
-                <div className="space-y-1">
-                  {!isReadOnly && (
-                    <input
-                      type="text"
-                      value={customerSearch}
-                      onChange={(e) => setCustomerSearch(e.target.value)}
-                      placeholder="Tedarikçi ara..."
-                      className="input w-full"
+            <div className="min-w-[220px] flex-[1.4]">
+              <label className={fieldLabel} htmlFor="purchase-supplier-search">
+                Tedarikçi *
+              </label>
+              <div className="flex items-center gap-1">
+                {customersLoading ? (
+                  <div className="input w-full text-text-secondary text-sm py-1.5">Yükleniyor...</div>
+                ) : (
+                  <div className="flex-1 min-w-0">
+                    <CustomerSearchField
+                      id="purchase-supplier-search"
+                      customers={customers}
+                      value={customerId}
+                      onChange={setCustomerId}
+                      disabled={isReadOnly}
                     />
-                  )}
-                  {isReadOnly ? (
-                    <input type="text" readOnly value={selectedCustomer?.Name || 'Tedarikçi seçilmedi'} className="input w-full" />
-                  ) : (
-                    <div className="rounded-panel border border-background-border bg-background-secondary p-1">
-                      {selectedCustomer && (
-                        <div className="mb-1 rounded-md border border-background-border bg-background-main px-2 py-1 text-[11px] text-text-secondary">
-                          <span className="mr-1 font-medium text-text-primary">Seçili:</span>
-                          {selectedCustomer.Name}
-                        </div>
-                      )}
-                      <div className="max-h-28 overflow-y-auto pr-0.5">
-                        {filteredCustomers.length === 0 ? (
-                          <div className="px-2 py-1.5 text-[11px] text-text-secondary">Eşleşen tedarikçi bulunamadı.</div>
-                        ) : (
-                          filteredCustomers.map((customer) => {
-                            const isSelected = Number(customerId) === customer.CustomerId;
-                            return (
-                              <button
-                                key={customer.CustomerId}
-                                type="button"
-                                onClick={() => setCustomerId(customer.CustomerId)}
-                                className={`mb-1 w-full rounded-md border px-2 py-1 text-left text-[11px] last:mb-0 ${
-                                  isSelected
-                                    ? 'border-blue-700/50 bg-blue-900/30 text-text-primary'
-                                    : 'border-transparent bg-background-main text-text-primary hover:border-background-border hover:bg-background-hover'
-                                }`}
-                              >
-                                {customer.Name}
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
-                  )}
-                  {!isReadOnly && (
-                    <button type="button" onClick={() => setShowNewCustomerForm(!showNewCustomerForm)} className="btn-secondary whitespace-nowrap">
-                      + Yeni C/H
-                    </button>
-                  )}
-                  {!isReadOnly && customerId && !selectedCustomer && (
-                    <p className="text-[11px] text-amber-600">
-                      Seçili tedarikçi listede yok (muhtemelen arşivlenmiş). Kaydetmek için listeden aktif bir müşteri seçin.
-                    </p>
-                  )}
-                </div>
+                  </div>
+                )}
+                {!isReadOnly && (
+                  <button
+                    type="button"
+                    onClick={() => setShowNewCustomerForm((prev) => !prev)}
+                    className={`btn-secondary shrink-0 ${compactBtn}`}
+                    title="Yeni cari hesap ekle"
+                  >
+                    <Plus size={14} weight="bold" className="inline" /> C/H
+                  </button>
+                )}
+              </div>
+              {!isReadOnly && customerId && !selectedCustomer && (
+                <p className="text-[11px] text-amber-200 mt-0.5">
+                  Seçili tedarikçi listede yok (muhtemelen arşivlenmiş). Kaydetmek için aktif bir müşteri seçin.
+                </p>
               )}
             </div>
-
-            <div>
-              <label className="mb-1 block text-xs font-medium">Ürün</label>
+            <div className="min-w-[240px] flex-[1.5]">
+              <label className={fieldLabel}>Ürün</label>
               {itemsLoading ? (
-                <div className="text-text-secondary text-sm">Yükleniyor...</div>
+                <div className="input w-full text-text-secondary text-sm py-1.5">Yükleniyor...</div>
               ) : (
-                <div className="space-y-1">
+                <div className="flex items-center gap-1">
                   {!isReadOnly && (
                     <input
                       type="text"
                       value={itemSearch}
                       onChange={(e) => setItemSearch(e.target.value)}
-                      placeholder="Ürün ara..."
-                      className="input w-full"
+                      placeholder="Ara..."
+                      className="input w-[110px] shrink-0 text-sm py-1.5"
                     />
                   )}
                   {isReadOnly ? (
@@ -535,233 +485,353 @@ export default function PurchaseInvoiceDetailModal({
                           ? `${selectedItem.ItemCode ? `[${selectedItem.ItemCode}] ` : ''}${selectedItem.ItemName}`
                           : 'Ürün seçilmedi'
                       }
-                      className="input w-full"
+                      className="input w-full text-sm py-1.5"
                     />
                   ) : (
-                    <div className="rounded-panel border border-background-border bg-background-secondary p-1">
-                      {selectedItem && (
-                        <div className="mb-1 rounded-md border border-background-border bg-background-main px-2 py-1 text-[11px] text-text-secondary">
-                          <span className="mr-1 font-medium text-text-primary">Seçili:</span>
-                          {selectedItem.ItemCode ? `[${selectedItem.ItemCode}] ` : ''}
-                          {selectedItem.ItemName}
-                        </div>
-                      )}
-                      <div className="max-h-28 overflow-y-auto pr-0.5">
-                        {filteredItems.length === 0 ? (
-                          <div className="px-2 py-1.5 text-[11px] text-text-secondary">Eşleşen ürün bulunamadı.</div>
-                        ) : (
-                          filteredItems.map((item) => {
-                            const isSelected = Number(itemId) === item.ItemId;
-                            return (
-                              <button
-                                key={item.ItemId}
-                                type="button"
-                                onClick={() => setItemId(item.ItemId)}
-                                className={`mb-1 w-full rounded-md border px-2 py-1 text-left text-[11px] last:mb-0 ${
-                                  isSelected
-                                    ? 'border-blue-700/50 bg-blue-900/30 text-text-primary'
-                                    : 'border-transparent bg-background-main text-text-primary hover:border-background-border hover:bg-background-hover'
-                                }`}
-                              >
-                                <div>{item.ItemName}</div>
-                                <div className="text-[10px] text-text-secondary">Kod: {item.ItemCode || '—'}</div>
-                              </button>
-                            );
-                          })
-                        )}
-                      </div>
-                    </div>
+                    <select
+                      value={itemId}
+                      onChange={(e) => setItemId(e.target.value ? Number(e.target.value) : '')}
+                      className="input flex-1 min-w-0 text-sm py-1.5"
+                    >
+                      <option value="">Ürün seçin (opsiyonel)</option>
+                      {itemOptions.map((item) => (
+                        <option key={item.ItemId} value={item.ItemId}>
+                          {item.ItemCode ? `[${item.ItemCode}] ` : ''}
+                          {item.ItemName}
+                        </option>
+                      ))}
+                    </select>
                   )}
                   {!isReadOnly && (
-                    <button type="button" onClick={() => { setNewItemSaveError(null); setShowNewItemForm((prev) => !prev); }} className="btn-secondary whitespace-nowrap">
-                      {showNewItemForm ? '✕' : '+ Yeni Ürün'}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setNewItemSaveError(null);
+                        setShowNewItemForm((prev) => !prev);
+                      }}
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
+                      title="Yeni ürün ekle"
+                    >
+                      {showNewItemForm ? 'Kapat' : '+ Ürün'}
                     </button>
                   )}
                 </div>
               )}
             </div>
-
-            {showNewCustomerForm && !isReadOnly && (
-              <div className="rounded-panel border border-background-border bg-background-secondary p-2">
-                <h4 className="mb-1 text-xs font-semibold">Yeni Cari Hesap Ekle</h4>
-                <div className="grid grid-cols-2 gap-1.5">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium">Ad/Ünvan *</label>
-                    <input type="text" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Firma veya kişi adı" className="input w-full" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium">Vergi No</label>
-                    <input
-                      type="text"
-                      value={newCustomerTaxId}
-                      onChange={(e) => setNewCustomerTaxId(e.target.value.replace(/\D/g, '').slice(0, 11))}
-                      placeholder="Vergi numarası"
-                      inputMode="numeric"
-                      maxLength={11}
-                      className="input w-full"
-                    />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium">Telefon</label>
-                    <input type="text" value={newCustomerPhone} onChange={(e) => setNewCustomerPhone(e.target.value)} placeholder="0xxx xxx xx xx" className="input w-full" />
-                  </div>
-                  <div>
-                    <label className="mb-1 block text-xs font-medium">E-posta</label>
-                    <input type="email" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} placeholder="ornek@email.com" className="input w-full" />
-                  </div>
-                  <div className="col-span-2">
-                    <label className="mb-1 block text-xs font-medium">Adres</label>
-                    <input type="text" value={newCustomerAddress} onChange={(e) => setNewCustomerAddress(e.target.value)} placeholder="Adres bilgisi" className="input w-full" />
-                  </div>
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <button type="button" onClick={resetNewCustomerForm} className="btn-secondary" disabled={savingCustomer}>İptal</button>
-                  <button type="button" onClick={handleSaveNewCustomer} className="btn-primary" disabled={savingCustomer}>{savingCustomer ? 'Kaydediliyor...' : 'Kaydet'}</button>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="col-span-5 space-y-1.5">
-            <div className="grid grid-cols-2 gap-1.5">
-              <div className="col-span-2">
-                <label className="mb-1 block text-xs font-medium">Depo</label>
-                {warehousesLoading ? (
-                  <div className="text-text-secondary text-sm">Yükleniyor...</div>
-                ) : (
-                  <select value={warehouseId} onChange={(e) => setWarehouseId(e.target.value ? Number(e.target.value) : '')} disabled={isReadOnly} className="input w-full">
-                    <option value="">Depo seçin (opsiyonel)</option>
-                    {warehouses.map((wh) => (
-                      <option key={wh.WarehouseId} value={wh.WarehouseId}>{wh.WarehouseName}</option>
-                    ))}
-                  </select>
-                )}
-              </div>
-            </div>
-
-            {showNewItemForm && !isReadOnly && (
-              <div className="rounded-panel border border-background-border bg-background-secondary p-2">
-                <h4 className="mb-1 text-xs font-semibold">Yeni Ürün Ekle</h4>
-                {newItemSaveError && (
-                  <div role="alert" className="mb-2 rounded-md border border-red-600/60 bg-red-950/45 p-2 text-xs text-red-100 whitespace-pre-wrap">{newItemSaveError}</div>
-                )}
-                <div className="space-y-1.5">
-                  <div>
-                    <label className="mb-1 block text-xs font-medium">Ürün Adı *</label>
-                    <input type="text" value={newItemName} onChange={(e) => { setNewItemName(e.target.value); setNewItemSaveError(null); }} placeholder="Ürün adı" className="input w-full" />
-                  </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    <div>
-                      <label className="mb-1 block text-xs font-medium">Ürün Kodu</label>
-                      <input type="text" value={newItemCode} onChange={(e) => setNewItemCode(e.target.value)} placeholder="Alfanümerik kod" maxLength={50} className="input w-full" />
-                    </div>
-                    <div>
-                      <label className="mb-1 block text-xs font-medium">Stok Adedi</label>
-                      <input type="number" value={newItemTotalStock} onChange={(e) => setNewItemTotalStock(e.target.value)} min="0" step="1" placeholder="0" className="input w-full" />
-                    </div>
-                  </div>
-                </div>
-                <div className="mt-2 flex gap-2">
-                  <button type="button" onClick={resetNewItemForm} className="btn-secondary text-xs py-1 px-2" disabled={savingItem}>İptal</button>
-                  <button type="button" onClick={handleSaveNewItem} className="btn-primary text-xs py-1 px-2" disabled={savingItem}>{savingItem ? 'Kaydediliyor...' : 'Kaydet'}</button>
-                </div>
-              </div>
-            )}
-
-            {!isReadOnly && itemId && warehouseId && (
-              <div className="flex items-start gap-2 rounded-md border border-green-700/40 bg-green-900/20 p-2 text-[11px] text-green-300">
-                <span className="mt-0.5 shrink-0">&#9432;</span>
-                <span>Ürün ve depo seçili olduğundan, fatura kaydedildiğinde <strong>{parseFloat(quantity) || 0} adet</strong> ürün otomatik olarak envanter stokuna ve depo stokuna eklenecektir.</span>
-              </div>
-            )}
-
-            <div>
-              <label className="mb-1 block text-xs font-medium">Açıklama</label>
-              <textarea value={description} onChange={(e) => setDescription(e.target.value)} disabled={isReadOnly} placeholder="Fatura açıklaması (opsiyonel)" className="input h-14 w-full resize-none" />
-            </div>
-
-            <div className="rounded-panel border border-background-border bg-background-secondary p-2">
-              <h3 className="mb-1 text-xs font-semibold">Tutar Bilgileri</h3>
-              <div className="mb-1 grid grid-cols-2 gap-1.5">
-                <div>
-                  <label className="mb-1 block text-xs font-medium">Miktar *</label>
-                  <input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} disabled={isReadOnly} min="0" step="1" placeholder="1" className="input w-full" required />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium">Birim Fiyat *</label>
-                  <input type="number" value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} disabled={isReadOnly} min="0" step="0.01" placeholder="0.00" className="input w-full" required />
-                </div>
-              </div>
-              <div className="mb-1 grid grid-cols-4 gap-1.5">
-                <div>
-                  <label className="mb-1 block text-xs font-medium">İskonto (%)</label>
-                  <input type="number" value={iskonto} onChange={(e) => setIskonto(e.target.value)} disabled={isReadOnly} min="0" max="100" step="0.01" placeholder="0" className="input w-full" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium">KDV (%)</label>
-                  <input type="number" value={vatRate} onChange={(e) => setVatRate(e.target.value)} disabled={isReadOnly} min="0" max="100" step="1" placeholder="20" className="input w-full" />
-                </div>
-                <div>
-                  <label className="mb-1 block text-xs font-medium">Para Birimi</label>
-                  <select value={currency} onChange={(e) => { setCurrency(e.target.value); if (e.target.value === 'TL') setExchangeRate(''); }} disabled={isReadOnly} className="input w-full">
-                    <option value="TL">TL</option>
-                    <option value="EUR">EUR</option>
-                  </select>
-                </div>
-                {currency === 'EUR' && (
-                  <div>
-                    <label className="mb-1 block text-xs font-medium">Kur</label>
-                    <input type="number" value={exchangeRate} onChange={(e) => setExchangeRate(e.target.value)} disabled={isReadOnly} min="0" step="0.0001" placeholder="Kur" className="input w-full" />
-                  </div>
-                )}
-              </div>
-              <div className="rounded-md border border-background-border bg-background-main p-2">
-                <div className="mb-1 flex justify-between"><span className="text-text-secondary">Toplam:</span><span>{formatCurrency(calculations.grossTotal)}</span></div>
-                {calculations.discountAmount > 0 && <div className="mb-1 flex justify-between text-red-400"><span>İskonto:</span><span>-{formatCurrency(calculations.discountAmount)}</span></div>}
-                <div className="mb-1 flex justify-between border-t border-background-border pt-1"><span className="text-text-secondary">Ara Toplam:</span><span>{formatCurrency(calculations.subtotal)}</span></div>
-                <div className="mb-1 flex justify-between"><span className="text-text-secondary">KDV:</span><span>{formatCurrency(calculations.vatAmount)}</span></div>
-                <div className="mt-1 flex justify-between border-t border-background-border pt-1 text-xs font-semibold"><span>Genel Toplam:</span><span className="text-accent">{formatCurrency(calculations.totalAmount)}</span></div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        {/* Action Buttons */}
-        <div className="flex gap-2 mt-3">
-          {!isNew && isReadOnly && (
-            <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
-              Düzenle
-            </button>
-          )}
-          {!isReadOnly && (
-            <>
-              {!isNew && invoice && (
-                <button
-                  onClick={handleDeleteClick}
-                  disabled={isBusy}
-                  className="btn-danger flex-1"
+            <div className="min-w-[180px] flex-1">
+              <label className={fieldLabel}>Depo</label>
+              {warehousesLoading ? (
+                <div className="input w-full text-text-secondary text-sm py-1.5">Yükleniyor...</div>
+              ) : (
+                <select
+                  value={warehouseId}
+                  onChange={(e) => setWarehouseId(e.target.value ? Number(e.target.value) : '')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
                 >
-                  Sil
-                </button>
+                  <option value="">Depo seçin (opsiyonel)</option>
+                  {warehouses.map((wh) => (
+                    <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                      {wh.WarehouseName}
+                    </option>
+                  ))}
+                </select>
               )}
-              <button onClick={onClose} className="btn-secondary flex-1 !text-sm !py-2 !px-4">
-                İptal
-              </button>
-              <button
-                onClick={handleSave}
-                disabled={isBusy}
-                className="btn-primary flex-1 !text-sm !py-2 !px-4"
+            </div>
+            <div className="min-w-[110px] w-[130px]">
+              <label className={fieldLabel}>Para Birimi</label>
+              <select
+                value={currency}
+                onChange={(e) => {
+                  setCurrency(e.target.value);
+                  if (e.target.value === 'TL') setExchangeRate('');
+                }}
+                disabled={isReadOnly}
+                className="input w-full text-sm py-1.5"
               >
-                {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                <option value="TL">TL</option>
+                <option value="EUR">EUR</option>
+              </select>
+            </div>
+            {currency === 'EUR' && (
+              <div className="min-w-[110px] w-[130px]">
+                <label className={fieldLabel}>Kur</label>
+                <input
+                  type="number"
+                  value={exchangeRate}
+                  onChange={(e) => setExchangeRate(e.target.value)}
+                  disabled={isReadOnly}
+                  min="0"
+                  step="0.0001"
+                  placeholder="Kur"
+                  className="input w-full text-sm py-1.5"
+                />
+              </div>
+            )}
+            <div className="min-w-[200px] flex-[1.4]">
+              <label className={fieldLabel}>Açıklama</label>
+              <input
+                type="text"
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                disabled={isReadOnly}
+                placeholder="Fatura açıklaması..."
+                className="input w-full text-sm py-1.5"
+              />
+            </div>
+          </div>
+
+          {showNewCustomerForm && !isReadOnly && (
+            <div className="mt-2 rounded-lg border border-background-border bg-background-secondary p-2">
+              <h4 className="mb-1.5 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
+                Yeni Cari Hesap
+              </h4>
+              <div className="flex flex-wrap gap-2">
+                <div className="min-w-[160px] flex-1">
+                  <label className={fieldLabel}>Ad/Ünvan *</label>
+                  <input type="text" value={newCustomerName} onChange={(e) => setNewCustomerName(e.target.value)} placeholder="Firma veya kişi adı" className="input w-full text-sm py-1.5" />
+                </div>
+                <div className="min-w-[120px] w-[140px]">
+                  <label className={fieldLabel}>Vergi No</label>
+                  <input
+                    type="text"
+                    value={newCustomerTaxId}
+                    onChange={(e) => setNewCustomerTaxId(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                    placeholder="Vergi no"
+                    inputMode="numeric"
+                    maxLength={11}
+                    className="input w-full text-sm py-1.5"
+                  />
+                </div>
+                <div className="min-w-[130px] w-[150px]">
+                  <label className={fieldLabel}>Telefon</label>
+                  <input type="text" value={newCustomerPhone} onChange={(e) => setNewCustomerPhone(e.target.value)} placeholder="0xxx xxx xx xx" className="input w-full text-sm py-1.5" />
+                </div>
+                <div className="min-w-[160px] flex-1">
+                  <label className={fieldLabel}>E-posta</label>
+                  <input type="email" value={newCustomerEmail} onChange={(e) => setNewCustomerEmail(e.target.value)} placeholder="ornek@email.com" className="input w-full text-sm py-1.5" />
+                </div>
+                <div className="min-w-[200px] flex-[1.4]">
+                  <label className={fieldLabel}>Adres</label>
+                  <input type="text" value={newCustomerAddress} onChange={(e) => setNewCustomerAddress(e.target.value)} placeholder="Adres" className="input w-full text-sm py-1.5" />
+                </div>
+                <div className="flex items-end gap-1">
+                  <button type="button" onClick={resetNewCustomerForm} className={`btn-secondary ${compactBtn}`} disabled={savingCustomer}>
+                    İptal
+                  </button>
+                  <button type="button" onClick={handleSaveNewCustomer} className={`btn-primary ${compactBtn}`} disabled={savingCustomer}>
+                    {savingCustomer ? 'Kaydediliyor...' : 'Cari Kaydet'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {showNewItemForm && !isReadOnly && (
+            <div className="mt-2 rounded-lg border border-background-border bg-background-secondary p-2">
+              <h4 className="mb-1.5 text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
+                Yeni Ürün
+              </h4>
+              {newItemSaveError && (
+                <div role="alert" className="mb-1.5 rounded-md border border-red-600/60 bg-red-950/45 p-2 text-xs text-red-100 whitespace-pre-wrap">
+                  {newItemSaveError}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <div className="min-w-[180px] flex-1">
+                  <label className={fieldLabel}>Ürün Adı *</label>
+                  <input
+                    type="text"
+                    value={newItemName}
+                    onChange={(e) => {
+                      setNewItemName(e.target.value);
+                      setNewItemSaveError(null);
+                    }}
+                    placeholder="Ürün adı"
+                    className="input w-full text-sm py-1.5"
+                  />
+                </div>
+                <div className="min-w-[120px] w-[150px]">
+                  <label className={fieldLabel}>Ürün Kodu</label>
+                  <input type="text" value={newItemCode} onChange={(e) => setNewItemCode(e.target.value)} placeholder="Kod" maxLength={50} className="input w-full text-sm py-1.5" />
+                </div>
+                <div className="min-w-[100px] w-[120px]">
+                  <label className={fieldLabel}>Stok Adedi</label>
+                  <input type="number" value={newItemTotalStock} onChange={(e) => setNewItemTotalStock(e.target.value)} min="0" step="1" placeholder="0" className="input w-full text-sm py-1.5" />
+                </div>
+                <div className="flex items-end gap-1">
+                  <button type="button" onClick={resetNewItemForm} className={`btn-secondary ${compactBtn}`} disabled={savingItem}>
+                    İptal
+                  </button>
+                  <button type="button" onClick={handleSaveNewItem} className={`btn-primary ${compactBtn}`} disabled={savingItem}>
+                    {savingItem ? 'Kaydediliyor...' : 'Ürün Kaydet'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+        </section>
+
+        <section className="flex-1 min-h-0 rounded-lg border border-background-border bg-background-panel flex flex-col overflow-hidden">
+          <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 border-b border-background-border">
+            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+              Fatura Kalemi
+            </h3>
+            {!isReadOnly && itemId && warehouseId && (
+              <span className="text-[11px] text-green-300">
+                Kayıtta {parseFloat(quantity) || 0} adet stoka eklenecek
+              </span>
+            )}
+          </div>
+          <div className="overflow-auto flex-1 min-h-0">
+            <table className="w-full text-sm border-collapse text-text-primary">
+              <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
+                <tr>
+                  <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">Ürün</th>
+                  <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">Depo</th>
+                  <th className="text-right px-3 py-1.5 font-semibold text-text-secondary text-xs w-28">Miktar *</th>
+                  <th className="text-right px-3 py-1.5 font-semibold text-text-secondary text-xs w-36">Birim Fiyat *</th>
+                  <th className="text-right px-3 py-1.5 font-semibold text-text-secondary text-xs w-24">İskonto %</th>
+                  <th className="text-right px-3 py-1.5 font-semibold text-text-secondary text-xs w-24">KDV %</th>
+                  <th className="text-right px-3 py-1.5 font-semibold text-text-secondary text-xs whitespace-nowrap">Satır Toplamı</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr className="border-b border-background-border bg-background-surface">
+                  <td className="px-3 py-1.5 text-text-secondary">
+                    {selectedItem
+                      ? `${selectedItem.ItemCode ? `[${selectedItem.ItemCode}] ` : ''}${selectedItem.ItemName}`
+                      : 'Ürün seçilmedi'}
+                  </td>
+                  <td className="px-3 py-1.5 text-text-secondary">
+                    {selectedWarehouse?.WarehouseName || 'Depo seçilmedi'}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    {isReadOnly ? (
+                      quantity
+                    ) : (
+                      <input
+                        type="number"
+                        value={quantity}
+                        onChange={(e) => setQuantity(e.target.value)}
+                        min="0"
+                        step="1"
+                        placeholder="1"
+                        className="input w-full text-right text-sm py-1"
+                        required
+                      />
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    {isReadOnly ? (
+                      formatCurrency(parseFloat(unitPrice) || 0)
+                    ) : (
+                      <input
+                        type="number"
+                        value={unitPrice}
+                        onChange={(e) => setUnitPrice(e.target.value)}
+                        min="0"
+                        step="0.01"
+                        placeholder="0.00"
+                        className="input w-full text-right text-sm py-1"
+                        required
+                      />
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    {isReadOnly ? (
+                      iskonto
+                    ) : (
+                      <input
+                        type="number"
+                        value={iskonto}
+                        onChange={(e) => setIskonto(e.target.value)}
+                        min="0"
+                        max="100"
+                        step="0.01"
+                        placeholder="0"
+                        className="input w-full text-right text-sm py-1"
+                      />
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-right">
+                    {isReadOnly ? (
+                      vatRate
+                    ) : (
+                      <input
+                        type="number"
+                        value={vatRate}
+                        onChange={(e) => setVatRate(e.target.value)}
+                        min="0"
+                        max="100"
+                        step="1"
+                        placeholder="20"
+                        className="input w-full text-right text-sm py-1"
+                      />
+                    )}
+                  </td>
+                  <td className="px-3 py-1.5 text-right font-medium text-green-400">
+                    {formatCurrency(calculations.totalAmount)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+
+        <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
+            <div>
+              <span className="text-[11px] text-text-secondary mr-1.5">Toplam</span>
+              <span className="font-semibold text-text-primary">{formatCurrency(calculations.grossTotal)}</span>
+            </div>
+            {calculations.discountAmount > 0 && (
+              <div>
+                <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
+                <span className="font-semibold text-red-300">-{formatCurrency(calculations.discountAmount)}</span>
+              </div>
+            )}
+            <div>
+              <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
+              <span className="font-semibold text-text-primary">{formatCurrency(calculations.subtotal)}</span>
+            </div>
+            <div>
+              <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
+              <span className="font-semibold text-yellow-300">{formatCurrency(calculations.vatAmount)}</span>
+            </div>
+            <div>
+              <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
+              <span className="text-lg font-bold text-green-400">{formatCurrency(calculations.totalAmount)}</span>
+            </div>
+          </div>
+          <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+            {!isNew && isReadOnly && (
+              <button type="button" onClick={() => setIsReadOnly(false)} className={`btn-primary ${compactBtn}`}>
+                Düzenle
               </button>
-            </>
-          )}
-          {isReadOnly && !isNew && (
-            <button onClick={onClose} className="btn-secondary flex-1">
-              Kapat
-            </button>
-          )}
-        </div>
+            )}
+            {!isReadOnly && (
+              <>
+                {!isNew && invoice && (
+                  <button type="button" onClick={handleDeleteClick} disabled={isBusy} className={`btn-danger ${compactBtn}`}>
+                    Sil
+                  </button>
+                )}
+                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  İptal
+                </button>
+                <button type="button" onClick={handleSave} disabled={isBusy} className={`btn-primary ${compactBtn}`}>
+                  {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                </button>
+              </>
+            )}
+            {isReadOnly && !isNew && (
+              <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                Kapat
+              </button>
+            )}
+          </div>
+        </section>
       </div>
       <ConfirmModal
         open={showDeleteConfirm}
