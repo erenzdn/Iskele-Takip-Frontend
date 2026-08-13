@@ -296,7 +296,7 @@ export default function CashAccountDetailPage() {
 
   if (accountLoading && !account) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Hesap yükleniyor...</div>
       </div>
     );
@@ -304,7 +304,7 @@ export default function CashAccountDetailPage() {
 
   if (accountError || !account) {
     return (
-      <div className="p-8 space-y-4">
+      <div className="space-y-3">
         <div className="text-red-400">{accountError || 'Hesap bulunamadı.'}</div>
         <button type="button" onClick={() => navigate('/cash')} className="btn-secondary inline-flex items-center gap-2">
           <ArrowLeftIcon size={18} />
@@ -317,27 +317,25 @@ export default function CashAccountDetailPage() {
   const typeLabel = account.type === 'CASH' ? 'Kasa' : 'Banka';
 
   return (
-    <div className="p-8 space-y-6">
-      <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
-        <div>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2 min-w-0">
           <button
             type="button"
             onClick={() => navigate('/cash')}
-            className="btn-secondary mb-3 inline-flex items-center gap-2 py-2 px-3 text-sm"
+            className="btn-secondary inline-flex items-center gap-1.5 py-1.5 px-3 text-sm"
           >
-            <ArrowLeftIcon size={18} />
-            Kasa & Banka listesine dön
+            <ArrowLeftIcon size={16} />
+            Listeye dön
           </button>
-          <h1 className="text-2xl font-bold text-text-primary">{account.name}</h1>
-          <p className="text-sm text-text-secondary mt-1">
-            {typeLabel} hesabı — işlemleri filtreleyin, onaylayın veya iptal edin.
-          </p>
+          <h1 className="text-lg font-semibold text-text-primary truncate">{account.name}</h1>
+          <span className="text-xs text-text-secondary">{typeLabel}</span>
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
             type="button"
             onClick={() => void refreshAll()}
-            className="btn-secondary py-2 px-3 text-sm"
+            className="btn-secondary py-1.5 px-3 text-sm"
             disabled={accountLoading || txLoading}
           >
             Yenile
@@ -345,7 +343,7 @@ export default function CashAccountDetailPage() {
           <button
             type="button"
             onClick={() => setIsAccountModalOpen(true)}
-            className="btn-secondary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+            className="btn-secondary py-1.5 px-3 text-sm inline-flex items-center gap-1.5"
           >
             <PencilSimpleIcon size={16} weight="bold" />
             Hesabı düzenle
@@ -354,7 +352,7 @@ export default function CashAccountDetailPage() {
             <button
               type="button"
               onClick={() => setIsCreateModalOpen(true)}
-              className="btn-primary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+              className="btn-primary py-1.5 px-3 text-sm inline-flex items-center gap-1.5"
             >
               <PlusIcon size={16} weight="bold" />
               Yeni İşlem
@@ -473,7 +471,7 @@ export default function CashAccountDetailPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-320px)] min-h-[320px]">
+          <div className="overflow-auto max-h-[calc(100vh-240px)] min-h-[320px]">
             <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>

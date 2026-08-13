@@ -1,5 +1,6 @@
 import { apiClient } from './apiClient';
 import { ContractQuoteType, Quote, QuoteDetail, QuoteStatus } from '../models';
+import { CreateSiteRequest } from './siteService';
 
 export interface CreateQuoteDetailRequest {
   ItemId: number;
@@ -28,6 +29,7 @@ export interface CreateQuoteRequest {
   CustomerId: number;
   CustomerAuthorizedContactId: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   StartDate?: string; // ISO 8601 (RENTAL için opsiyonel; boşsa gönderilmez)
   /** Kiralama (RENTAL) için tarih aralığı kullanılır; başlangıç tarihi backendce dönüşüm anında atanabilir */
   PlannedEndDate?: string; // ISO 8601
@@ -48,6 +50,7 @@ export interface UpdateQuoteRequest {
   Subject?: string | null;
   CustomerAuthorizedContactId?: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   /** RENTAL */
   StartDate?: string;
   /** RENTAL */
@@ -64,8 +67,15 @@ export interface UpdateQuoteRequest {
   details?: CreateQuoteDetailRequest[];
 }
 
+export interface UpdateQuoteResponse {
+  warnings?: string[];
+  CreatedSiteId?: number;
+}
+
 export interface CreateQuoteResponse {
   QuoteId: number;
+  warnings?: string[];
+  CreatedSiteId?: number;
 }
 
 export interface ConvertQuoteResponse {
@@ -95,6 +105,7 @@ export interface CreateQuoteFromPackageRequest {
   CustomerId: number;
   CustomerAuthorizedContactId: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   StartDate?: string;
   /** Kiralama için opsiyonel */
   PlannedEndDate?: string;
@@ -106,6 +117,8 @@ export interface CreateQuoteFromPackageRequest {
 export interface CreateQuoteFromPackageResponse {
   QuoteId: number;
   message: string;
+  warnings?: string[];
+  CreatedSiteId?: number;
 }
 
 export interface WarehouseAssignment {
@@ -114,11 +127,18 @@ export interface WarehouseAssignment {
   Quantity: number;
 }
 
-/** GET /quotes sorgu parametreleri (backend: status + type=SALE|RENTAL + search) */
+/**
+ * GET /quotes sorgu parametreleri.
+ * `converted` = geçmiş liste filtresi (DB Status değil; ConvertedContractId dolu kayıtlar).
+ * Varsayılan liste dönüşmüş teklifleri döndürmez; `includeConverted` yalnızca denetim için.
+ */
+export type QuoteListStatus = QuoteStatus | 'converted';
+
 export type QuoteListQuery = {
-  status?: QuoteStatus;
+  status?: QuoteListStatus;
   quoteType?: ContractQuoteType;
   search?: string;
+  includeConverted?: boolean;
 };
 
 function buildQuotesListPath(query?: QuoteListQuery): string {
@@ -127,12 +147,13 @@ function buildQuotesListPath(query?: QuoteListQuery): string {
   if (query?.quoteType) sp.set('type', query.quoteType);
   const s = query?.search?.trim();
   if (s) sp.set('search', s);
+  if (query?.includeConverted === true) sp.set('includeConverted', 'true');
   const qs = sp.toString();
   return qs ? `/quotes?${qs}` : '/quotes';
 }
 
 function parseQuoteListArg(
-  arg?: QuoteStatus | QuoteListQuery
+  arg?: QuoteListStatus | QuoteListQuery
 ): QuoteListQuery | undefined {
   if (arg === undefined) return undefined;
   if (typeof arg === 'string') return { status: arg };
@@ -140,9 +161,21 @@ function parseQuoteListArg(
 }
 
 function normalizeQuote(raw: any): Quote {
+  const convertedContractId = raw?.ConvertedContractId ?? raw?.convertedContractId;
+  const isConvertedRaw = raw?.IsConverted ?? raw?.isConverted;
+  const isConverted =
+    isConvertedRaw === true ||
+    isConvertedRaw === 1 ||
+    isConvertedRaw === 'true' ||
+    (convertedContractId != null && convertedContractId !== '');
   return {
     ...(raw as Quote),
+    ConvertedContractId:
+      convertedContractId != null && convertedContractId !== ''
+        ? Number(convertedContractId)
+        : undefined,
     ConvertedAt: raw?.ConvertedAt ?? raw?.convertedAt ?? null,
+    IsConverted: isConverted,
     RentalDurationDays: raw?.RentalDurationDays ?? raw?.rentalDurationDays ?? null,
   };
 }
@@ -157,7 +190,7 @@ export const quoteService = {
    * Teklif listesi.
    * Sunucu filtresi: getAllAsync({ quoteType: 'SALE', status: 'pending' })
    */
-  async getAllAsync(arg?: QuoteStatus | QuoteListQuery): Promise<Quote[]> {
+  async getAllAsync(arg?: QuoteListStatus | QuoteListQuery): Promise<Quote[]> {
     const query = parseQuoteListArg(arg);
     const url = buildQuotesListPath(query);
     try {
@@ -165,8 +198,8 @@ export const quoteService = {
       return normalizeQuoteList(rows);
     } catch (error) {
       // Bazı backend sürümlerinde /quotes (parametresiz) 500 dönebilir.
-      // status veya type ile filtre varsa birleştirme denemesi yapılmaz.
-      if (query?.status != null || query?.quoteType != null) throw error;
+      // status, type veya includeConverted ile filtre varsa birleştirme denemesi yapılmaz.
+      if (query?.status != null || query?.quoteType != null || query?.includeConverted) throw error;
       const failures: unknown[] = [];
       const s = query?.search?.trim();
       const base: QuoteListQuery = s ? { search: s } : {};
@@ -243,20 +276,18 @@ export const quoteService = {
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
-      delete payload.SiteId;
       delete payload.RentalDurationDays;
     }
     return apiClient.post<CreateQuoteResponse>('/quotes', payload);
   },
 
-  async updateAsync(id: number, data: UpdateQuoteRequest): Promise<Quote> {
+  async updateAsync(id: number, data: UpdateQuoteRequest): Promise<Quote & UpdateQuoteResponse> {
     const payload: Record<string, unknown> = { ...data };
     const qType = String((data as any).Type ?? '').toUpperCase();
     // Type gönderilmese bile, SALE akışında tarih/saha gibi alanları göndermemek güvenli.
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
-      delete payload.SiteId;
       delete payload.RentalDurationDays;
     }
     const normalizedStartDate = typeof (payload as any).StartDate === 'string' ? String((payload as any).StartDate).trim() : '';
@@ -274,11 +305,16 @@ export const quoteService = {
     } else {
       payload.RentalDurationDays = Math.floor(rdUp);
     }
-    return apiClient.patch<Quote>(`/quotes/${id}`, payload);
+    return apiClient.patch<Quote & UpdateQuoteResponse>(`/quotes/${id}`, payload).then((raw) => ({
+      ...normalizeQuote(raw),
+      CreatedSiteId: (raw as UpdateQuoteResponse)?.CreatedSiteId ?? (raw as any)?.createdSiteId,
+    }));
   },
 
-  async deleteAsync(id: number): Promise<void> {
-    return apiClient.delete<void>(`/quotes/${id}`);
+  async deleteAsync(id: number, options?: { reason?: string }): Promise<void> {
+    const trimmed = options?.reason?.trim();
+    const body = trimmed ? { reason: trimmed } : undefined;
+    return apiClient.delete<void>(`/quotes/${id}`, body);
   },
 
   /**
@@ -313,8 +349,8 @@ export const quoteService = {
     return apiClient.patch<Quote>(`/quotes/${id}`, { Status: 'accepted' });
   },
 
-  async rejectQuoteAsync(id: number): Promise<Quote> {
-    return apiClient.patch<Quote>(`/quotes/${id}`, { Status: 'rejected' });
+  async rejectQuoteAsync(id: number, rejectionReason: string): Promise<Quote> {
+    return apiClient.patch<Quote>(`/quotes/${id}`, { Status: 'rejected', rejectionReason });
   },
 
   async cloneQuoteAsync(id: number): Promise<CloneQuoteResponse> {
@@ -358,7 +394,6 @@ export const quoteService = {
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
-      delete payload.SiteId;
       delete payload.RentalDurationDays;
     }
     return apiClient.post<CreateQuoteFromPackageResponse>(

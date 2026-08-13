@@ -31,8 +31,16 @@ export interface AddStockResponse {
 
 export const warehouseService = {
   // Warehouse CRUD
-  async getAllAsync(): Promise<Warehouse[]> {
-    return apiClient.get<Warehouse[]>('/warehouses');
+  async getAllAsync(params?: { includeArchived?: boolean }): Promise<Warehouse[]> {
+    const sp = new URLSearchParams();
+    if (params?.includeArchived) sp.set('includeArchived', 'true');
+    const qs = sp.toString();
+    return apiClient.get<Warehouse[]>(qs ? `/warehouses?${qs}` : '/warehouses');
+  },
+
+  /** Yeni işlem formları için yalnızca aktif depolar (backend varsayılanı). */
+  async getActiveAsync(): Promise<Warehouse[]> {
+    return this.getAllAsync();
   },
 
   async getByIdAsync(id: number): Promise<Warehouse> {

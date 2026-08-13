@@ -1,11 +1,34 @@
-import { useState, useEffect } from 'react';
-import { CheckIcon, XIcon } from '@phosphor-icons/react';
-import { AuditLog, Warehouse, WarehouseStock, Inventory } from '../../models';
+import { useState, useEffect, useMemo, type ReactNode } from 'react';
+import {
+  ArchiveIcon,
+  CheckIcon,
+  MagnifyingGlassIcon,
+  PackageIcon,
+  PencilIcon,
+  Plus,
+  TrashIcon,
+  WarehouseIcon,
+  XIcon,
+} from '@phosphor-icons/react';
+import {
+  AuditLog,
+  Warehouse,
+  WarehouseStock,
+  Inventory,
+  isWarehouseArchived,
+  isInventoryArchived,
+  pickWarehouseDeletedAt,
+} from '../../models';
 import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
+import SearchableItemCombobox from '../SearchableItemCombobox';
 import { toast } from '../../hooks/useToast';
+import { getUserFacingApiErrorMessage, getWarehouseDeleteErrorMessage } from '../../utils/apiError';
+import { formatShortDateTime } from '../../utils/formatters';
+import { useAuthStore } from '../../store/authStore';
+import { canDeleteWarehouse, canUpdateWarehouse } from '../../utils/warehousePermissions';
 
 interface WarehouseDetailModalProps {
   warehouse: Warehouse | null;
@@ -13,27 +36,79 @@ interface WarehouseDetailModalProps {
   onClose: () => void;
 }
 
+function SectionCard({
+  title,
+  subtitle,
+  icon,
+  extra,
+  children,
+  className = '',
+}: {
+  title: string;
+  subtitle?: string;
+  icon?: ReactNode;
+  extra?: ReactNode;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <section className={`flex min-h-0 flex-col rounded-lg border border-background-border bg-background-surface p-3 ${className}`}>
+      <div className="mb-2.5 flex shrink-0 items-start justify-between gap-2">
+        <div className="min-w-0">
+          <h3 className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+            {icon}
+            {title}
+          </h3>
+          {subtitle ? <p className="mt-0.5 text-[11px] leading-snug text-text-secondary">{subtitle}</p> : null}
+        </div>
+        {extra ? <div className="shrink-0">{extra}</div> : null}
+      </div>
+      <div className="flex min-h-0 flex-1 flex-col">{children}</div>
+    </section>
+  );
+}
+
+function FieldLabel({ children, required }: { children: ReactNode; required?: boolean }) {
+  return (
+    <label className="mb-1 block text-xs font-medium text-text-secondary">
+      {children}
+      {required ? <span className="ml-0.5 text-error">*</span> : null}
+    </label>
+  );
+}
+
 export default function WarehouseDetailModal({
   warehouse,
   isNew,
   onClose,
 }: WarehouseDetailModalProps) {
+  const user = useAuthStore((state) => state.user);
+  const canDelete = canDeleteWarehouse(user);
+  const canUpdateStock = canUpdateWarehouse(user);
+  const archived = useMemo(
+    () => Boolean(warehouse && !isNew && isWarehouseArchived(warehouse)),
+    [warehouse, isNew]
+  );
+  const archivedAtLabel = (() => {
+    const raw = warehouse ? pickWarehouseDeletedAt(warehouse) : undefined;
+    if (!raw) return null;
+    const formatted = formatShortDateTime(raw);
+    return formatted && formatted !== '-' ? formatted : raw;
+  })();
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [warehouseName, setWarehouseName] = useState('');
   const [address, setAddress] = useState('');
   const [description, setDescription] = useState('');
   const [isBusy, setIsBusy] = useState(false);
 
-  // Stok yönetimi state'leri
   const [stock, setStock] = useState<WarehouseStock[]>([]);
   const [loadingStock, setLoadingStock] = useState(false);
-  const [showAddStock, setShowAddStock] = useState(false);
+  const [stockQuery, setStockQuery] = useState('');
   const [inventoryItems, setInventoryItems] = useState<Inventory[]>([]);
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
-  /** Miktar inputu – sadece rakam, string state ile giriş kaybı önlenir */
-  const [quantityStr, setQuantityStr] = useState<string>('0');
+  const [quantityStr, setQuantityStr] = useState('');
   const [editingStockId, setEditingStockId] = useState<number | null>(null);
-  const [editingQuantityStr, setEditingQuantityStr] = useState<string>('0');
+  const [editingQuantityStr, setEditingQuantityStr] = useState('0');
   const [activeTab, setActiveTab] = useState<'info' | 'history'>('info');
   const [warehouseLogs, setWarehouseLogs] = useState<AuditLog[]>([]);
   const [warehouseLogsLoading, setWarehouseLogsLoading] = useState(false);
@@ -46,13 +121,12 @@ export default function WarehouseDetailModal({
       setWarehouseName(warehouse.WarehouseName);
       setAddress(warehouse.Address || '');
       setDescription(warehouse.Description || '');
-      loadStock();
+      void loadStock();
     }
   }, [warehouse]);
 
   const loadStock = async () => {
     if (!warehouse) return;
-    
     try {
       setLoadingStock(true);
       const response = await warehouseService.getStockAsync(warehouse.WarehouseId);
@@ -95,7 +169,18 @@ export default function WarehouseDetailModal({
     }
   };
 
+  useEffect(() => {
+    if (!isNew) {
+      void loadInventoryItems();
+    }
+  }, [isNew]);
+
+  useEffect(() => {
+    if (archived) setIsReadOnly(true);
+  }, [archived]);
+
   const handleSave = async () => {
+    if (archived) return;
     if (!warehouseName.trim()) {
       toast.warning('Depo adı zorunludur');
       return;
@@ -136,20 +221,15 @@ export default function WarehouseDetailModal({
       setIsBusy(true);
       await warehouseService.deleteAsync(warehouse.WarehouseId);
       setShowDeleteConfirm(false);
+      toast.success('Depo kullanımdan kaldırıldı.');
       onClose();
     } catch (error) {
-      console.error('Delete warehouse error:', error);
-      toast.error('Silme hatası');
+      console.error('Deactivate warehouse error:', error);
+      setShowDeleteConfirm(false);
+      toast.error(getWarehouseDeleteErrorMessage(error));
     } finally {
       setIsBusy(false);
     }
-  };
-
-  const handleOpenAddStock = async () => {
-    await loadInventoryItems();
-    setShowAddStock(true);
-    setSelectedItemId('');
-    setQuantityStr('0');
   };
 
   const handleAddStock = async () => {
@@ -165,13 +245,12 @@ export default function WarehouseDetailModal({
         ItemId: Number(selectedItemId),
         Quantity: qty,
       });
-      setShowAddStock(false);
       setSelectedItemId('');
-      setQuantityStr('0');
+      setQuantityStr('');
       await loadStock();
     } catch (error) {
       console.error('Add stock error:', error);
-      toast.error('Stok ekleme hatası');
+      toast.error(getUserFacingApiErrorMessage(error, 'generic'));
     } finally {
       setIsBusy(false);
     }
@@ -231,318 +310,445 @@ export default function WarehouseDetailModal({
     }
   };
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-background-panel rounded-panel w-full max-w-3xl p-6 max-h-[90vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-4">
-          {isNew ? 'Yeni Depo' : 'Depo Detayı'}
-        </h2>
+  const stockItemIds = useMemo(() => new Set(stock.map((s) => s.ItemId)), [stock]);
+  const availableItems = useMemo(
+    () => inventoryItems.filter((item) => !stockItemIds.has(item.ItemId) && !isInventoryArchived(item)),
+    [inventoryItems, stockItemIds]
+  );
 
-        {!isNew && (
-          <div className="flex gap-2 mb-4 border-b border-background-border">
+  const filteredStock = useMemo(() => {
+    const q = stockQuery.trim().toLocaleLowerCase('tr-TR');
+    const list = q
+      ? stock.filter(
+          (s) =>
+            (s.ItemName ?? '').toLocaleLowerCase('tr-TR').includes(q) ||
+            (s.CategoryName ?? '').toLocaleLowerCase('tr-TR').includes(q)
+        )
+      : stock;
+    return [...list].sort((a, b) => (a.ItemName ?? '').localeCompare(b.ItemName ?? '', 'tr-TR'));
+  }, [stock, stockQuery]);
+
+  const uniqueItems = stock.length;
+  const totalQuantity = stock.reduce((sum, s) => sum + (s.Quantity ?? 0), 0);
+  const canManageStock = Boolean(canUpdateStock && !archived && !isNew);
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background-panel">
+      <header className="shrink-0 border-b border-background-border px-3 py-2 sm:px-4">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h2 className="text-lg font-bold">
+                {isNew ? 'Yeni Depo' : (warehouseName.trim() || 'Depo Detayı')}
+              </h2>
+              {archived && (
+                <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-xs font-semibold text-amber-100">
+                  Pasif{archivedAtLabel ? ` • ${archivedAtLabel}` : ''}
+                </span>
+              )}
+            </div>
+            {archived ? (
+              <p className="mt-0.5 text-xs text-amber-800 dark:text-amber-100/90">
+                Bu depo pasif durumda. Yeni işlem yapılamaz; geçmiş kayıtlar korunur.
+              </p>
+            ) : isNew ? (
+              <p className="mt-0.5 text-xs text-text-secondary">
+                Depo adı zorunludur. Kaydettikten sonra bu depoya stok ekleyebilirsiniz.
+              </p>
+            ) : (
+              <p className="mt-0.5 text-xs text-text-secondary">
+                Depo bilgilerini düzenleyin; stok ekleme ve miktar güncelleme sağ taraftan yapılır.
+              </p>
+            )}
+          </div>
+
+          <div className="flex shrink-0 items-center gap-2">
+            {!isNew && (
+              <div className="hidden items-center gap-1.5 sm:flex">
+                <div className="rounded-md border border-background-border bg-background-surface px-2.5 py-1 text-center">
+                  <div className="text-[10px] text-text-secondary">Ürün çeşidi</div>
+                  <div className="text-sm font-bold text-blue-500">{uniqueItems}</div>
+                </div>
+                <div className="rounded-md border border-background-border bg-background-surface px-2.5 py-1 text-center">
+                  <div className="text-[10px] text-text-secondary">Toplam miktar</div>
+                  <div className="text-sm font-bold text-green-600 dark:text-green-500">
+                    {totalQuantity.toLocaleString('tr-TR')}
+                  </div>
+                </div>
+              </div>
+            )}
             <button
+              type="button"
+              onClick={onClose}
+              className="rounded-lg p-2 text-text-primary hover:bg-background-hover"
+              aria-label="Kapat"
+            >
+              <XIcon size={22} weight="regular" aria-hidden />
+            </button>
+          </div>
+        </div>
+      </header>
+
+      <div className="mx-auto flex min-h-0 w-full max-w-screen-2xl flex-1 flex-col px-3 py-2 sm:px-4">
+        {!isNew && (
+          <div className="mb-2 flex shrink-0 gap-1 rounded border border-background-border bg-background-surface p-0.5">
+            <button
+              type="button"
               onClick={() => setActiveTab('info')}
-              className={`px-4 py-2 font-medium transition-colors ${
+              className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
                 activeTab === 'info'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
+                  ? 'bg-accent/15 text-accent'
+                  : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
               }`}
             >
               Bilgiler
             </button>
             <button
+              type="button"
               onClick={() => setActiveTab('history')}
-              className={`px-4 py-2 font-medium transition-colors ${
+              className={`rounded px-3 py-1.5 text-sm font-medium transition-colors ${
                 activeTab === 'history'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
+                  ? 'bg-accent/15 text-accent'
+                  : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
               }`}
             >
-              Geçmiş
+              Aktivite Geçmişi
             </button>
           </div>
         )}
 
-        {activeTab === 'history' && !isNew && (
-          <>
-            <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
+        {activeTab === 'history' && !isNew ? (
+          <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border p-3">
             <AuditLogTimeline logs={warehouseLogs} loading={warehouseLogsLoading} />
-            <div className="flex gap-3 mt-6">
-              <button onClick={onClose} className="btn-secondary flex-1">
-                Kapat
-              </button>
-            </div>
-          </>
-        )}
-
-        {(activeTab === 'info' || isNew) && (
-        <>
-        {/* Depo Özet Bilgileri (sadece mevcut depolarda) */}
-        {isReadOnly && !isNew && warehouse && (
-          <div className="mb-6 card bg-blue-900 p-4">
-            <div className="grid grid-cols-2 gap-4 text-sm">
-              <div>
-                <div className="text-text-secondary mb-1">Ürün Çeşidi</div>
-                <div className="text-xl font-bold text-blue-400">{warehouse.UniqueItems}</div>
-              </div>
-              <div>
-                <div className="text-text-secondary mb-1">Toplam Miktar</div>
-                <div className="text-xl font-bold text-green-500">
-                  {warehouse.TotalQuantity.toLocaleString('tr-TR')}
-                </div>
-              </div>
-            </div>
           </div>
-        )}
-
-        {/* Depo Bilgileri Formu */}
-        <div className="space-y-4 mb-6">
-          <div>
-            <label className="block text-sm font-medium mb-2">Depo Adı *</label>
-            <input
-              type="text"
-              value={warehouseName}
-              onChange={(e) => setWarehouseName(e.target.value)}
-              disabled={isReadOnly}
-              placeholder="Örn: Ana Depo"
-              className="input w-full"
-              required
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">Adres</label>
-            <input
-              type="text"
-              value={address}
-              onChange={(e) => setAddress(e.target.value)}
-              disabled={isReadOnly}
-              placeholder="Depo adresi"
-              className="input w-full"
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium mb-2">Açıklama</label>
-            <textarea
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              disabled={isReadOnly}
-              placeholder="Depo hakkında notlar..."
-              className="input w-full"
-              rows={2}
-            />
-          </div>
-        </div>
-
-        {/* Stok Listesi (sadece mevcut depolarda) */}
-        {!isNew && warehouse && (
-          <div className="border-t border-background-border pt-6">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold">Depodaki Ürünler</h3>
-              <button
-                onClick={handleOpenAddStock}
-                disabled={isBusy}
-                className="btn-secondary text-sm"
+        ) : (
+          <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto lg:grid-cols-2 lg:overflow-hidden">
+            <div className="flex min-h-0 flex-col gap-3 lg:overflow-hidden">
+              <SectionCard
+                title="Depo bilgisi"
+                subtitle="Ad zorunludur. Adres ve açıklama isteğe bağlıdır."
+                icon={<WarehouseIcon size={16} weight="duotone" />}
+                className="flex-1"
               >
-                + Ürün Ekle
-              </button>
-            </div>
-
-            {/* Ürün Ekleme Formu */}
-            {showAddStock && (
-              <div className="mb-4 p-4 bg-background-secondary rounded-lg">
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="col-span-2">
-                    <label className="block text-sm font-medium mb-2">Ürün Seç</label>
-                    <select
-                      value={selectedItemId}
-                      onChange={(e) => setSelectedItemId(Number(e.target.value) || '')}
-                      className="input w-full"
-                    >
-                      <option value="">Ürün seçin...</option>
-                      {inventoryItems.map((item) => (
-                        <option key={item.ItemId} value={item.ItemId}>
-                          {item.ItemName} (Mevcut: {item.TotalStock - item.OnRent})
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                <div className="space-y-2.5">
                   <div>
-                    <label className="block text-sm font-medium mb-2">Miktar</label>
+                    <FieldLabel required>Depo adı</FieldLabel>
                     <input
                       type="text"
-                      inputMode="numeric"
-                      pattern="[0-9]*"
-                      value={quantityStr}
-                      onChange={(e) => setQuantityStr(e.target.value.replace(/[^0-9]/g, ''))}
-                      className="input w-full"
-                      placeholder="0"
+                      value={warehouseName}
+                      onChange={(e) => setWarehouseName(e.target.value)}
+                      disabled={isReadOnly}
+                      placeholder="Örn: Ana Depo"
+                      className="input w-full py-2"
+                      required
+                      autoFocus={isNew}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel>Adres</FieldLabel>
+                    <input
+                      type="text"
+                      value={address}
+                      onChange={(e) => setAddress(e.target.value)}
+                      disabled={isReadOnly}
+                      placeholder="Depo adresi"
+                      className="input w-full py-2"
+                    />
+                  </div>
+                  <div className="flex min-h-0 flex-1 flex-col">
+                    <FieldLabel>Açıklama</FieldLabel>
+                    <textarea
+                      value={description}
+                      onChange={(e) => setDescription(e.target.value)}
+                      disabled={isReadOnly}
+                      placeholder="Depo hakkında notlar…"
+                      className="input min-h-[88px] w-full flex-1 resize-none py-2"
                     />
                   </div>
                 </div>
-                <div className="flex gap-2 mt-4">
-                  <button
-                    onClick={handleAddStock}
-                    disabled={isBusy || !selectedItemId || (parseInt(quantityStr, 10) || 0) <= 0}
-                    className="btn-primary text-sm"
-                  >
-                    Ekle
-                  </button>
-                  <button
-                    onClick={() => setShowAddStock(false)}
-                    className="btn-secondary text-sm"
-                  >
-                    İptal
-                  </button>
-                </div>
-              </div>
-            )}
+              </SectionCard>
+            </div>
 
-            {loadingStock ? (
-              <div className="text-center py-4 text-text-secondary">Yükleniyor...</div>
-            ) : stock.length === 0 ? (
-              <div className="text-center py-8 text-text-secondary">
-                Bu depoda henüz ürün bulunmuyor
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm table-compact text-text-primary">
-                  <thead className="bg-background-surface">
-                    <tr className="border-b border-background-border">
-                      <th className="text-left p-3 font-semibold">Ürün</th>
-                      <th className="text-left p-3 font-semibold">Kategori</th>
-                      <th className="text-center p-3 font-semibold">Miktar</th>
-                      <th className="text-center p-3 font-semibold">İşlem</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {stock.map((item) => (
-                      <tr key={item.StockId} className="border-b border-background-border bg-background-surface hover:bg-background-hover transition-colors">
-                        <td className="p-3 font-medium">{item.ItemName}</td>
-                        <td className="p-3 text-text-secondary">{item.CategoryName || '-'}</td>
-                        <td className="p-3 text-center">
-                          {editingStockId === item.StockId ? (
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              value={editingQuantityStr}
-                              onChange={(e) => setEditingQuantityStr(e.target.value.replace(/[^0-9]/g, ''))}
-                              className="input w-20 text-center"
-                              autoFocus
-                            />
-                          ) : (
-                            <span className="font-bold text-green-500">
-                              {item.Quantity.toLocaleString('tr-TR')}
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3 text-center">
-                          {editingStockId === item.StockId ? (
-                            <div className="flex gap-1 justify-center">
-                              <button
-                                onClick={() => handleSaveEditStock(item)}
-                                disabled={isBusy}
-                                className="text-green-500 hover:text-green-400 px-2 inline-flex items-center justify-center"
-                                title="Kaydet"
-                              >
-                                <CheckIcon size={18} weight="bold" aria-hidden />
-                              </button>
-                              <button
-                                onClick={handleCancelEditStock}
-                                className="text-gray-500 hover:text-gray-400 px-2 inline-flex items-center justify-center"
-                                title="İptal"
-                              >
-                                <XIcon size={18} weight="regular" aria-hidden />
-                              </button>
-                            </div>
-                          ) : (
-                            <div className="flex gap-1 justify-center">
-                              <button
-                                onClick={() => handleStartEditStock(item)}
-                                disabled={isBusy}
-                                className="text-blue-500 hover:text-blue-400 px-2"
-                                title="Düzenle"
-                              >
-                                ✎
-                              </button>
-                              <button
-                                onClick={() => handleRemoveStockClick(item)}
-                                disabled={isBusy}
-                                className="text-red-500 hover:text-red-400 px-2"
-                                title="Kaldır"
-                              >
-                                🗑
-                              </button>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
+            <div className="flex min-h-0 flex-col gap-3 lg:overflow-hidden">
+              {isNew ? (
+                <SectionCard
+                  title="Depo stoğu"
+                  subtitle="Önce depoyu kaydedin; ardından ürün ekleyebilirsiniz."
+                  icon={<PackageIcon size={16} weight="duotone" />}
+                  className="flex-1"
+                >
+                  <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-background-border px-4 py-8 text-center">
+                    <PackageIcon size={36} weight="duotone" className="mb-2 text-text-secondary" />
+                    <p className="text-sm font-medium text-text-primary">Stok henüz eklenemez</p>
+                    <p className="mt-1 max-w-sm text-xs text-text-secondary">
+                      Depoyu kaydettikten sonra bu ekranı tekrar açarak ürün ve miktar girebilirsiniz.
+                    </p>
+                  </div>
+                </SectionCard>
+              ) : (
+                <SectionCard
+                  title="Depodaki ürünler"
+                  subtitle="Ürün eklemek için aşağıdan seçin. Miktarı satırdaki kalemle değiştirin."
+                  icon={<PackageIcon size={16} weight="duotone" />}
+                  extra={
+                    <span className="text-[11px] text-text-secondary">
+                      {filteredStock.length}
+                      {stockQuery.trim() ? ` / ${stock.length}` : ''} kalem
+                    </span>
+                  }
+                  className="flex-1"
+                >
+                  {canManageStock && (
+                    <div className="mb-2 shrink-0 rounded-lg border border-background-border bg-background-panel p-2">
+                      <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
+                        Ürün ekle
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <div className="min-w-[200px] flex-1">
+                          <SearchableItemCombobox
+                            items={availableItems}
+                            value={selectedItemId}
+                            onChange={setSelectedItemId}
+                            placeholder="Ürün adı veya kodu ile ara…"
+                            displayMode="quote"
+                          />
+                        </div>
+                        <div className="w-24 shrink-0">
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            pattern="[0-9]*"
+                            value={quantityStr}
+                            onChange={(e) => setQuantityStr(e.target.value.replace(/[^0-9]/g, ''))}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault();
+                                void handleAddStock();
+                              }
+                            }}
+                            className="input w-full py-2"
+                            placeholder="Miktar"
+                            aria-label="Miktar"
+                          />
+                        </div>
+                        <button
+                          type="button"
+                          onClick={() => void handleAddStock()}
+                          disabled={isBusy || !selectedItemId || (parseInt(quantityStr, 10) || 0) <= 0}
+                          className="btn-primary inline-flex items-center gap-1 px-3 py-2 text-sm disabled:opacity-50"
+                        >
+                          <Plus size={14} weight="bold" />
+                          Ekle
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="relative mb-2 shrink-0">
+                    <MagnifyingGlassIcon
+                      size={16}
+                      className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary"
+                    />
+                    <input
+                      type="text"
+                      value={stockQuery}
+                      onChange={(e) => setStockQuery(e.target.value)}
+                      placeholder="Listede ürün veya kategori ara…"
+                      className="input w-full py-2 pl-9"
+                    />
+                  </div>
+
+                  {loadingStock ? (
+                    <div className="flex flex-1 items-center justify-center text-sm text-text-secondary">
+                      Yükleniyor…
+                    </div>
+                  ) : stock.length === 0 ? (
+                    <div className="flex min-h-0 flex-1 flex-col items-center justify-center rounded-lg border border-dashed border-background-border px-3 py-6 text-center text-sm text-text-secondary">
+                      Bu depoda henüz ürün yok.
+                      {canManageStock ? ' Yukarıdan ürün ekleyebilirsiniz.' : ''}
+                    </div>
+                  ) : filteredStock.length === 0 ? (
+                    <div className="flex min-h-0 flex-1 items-center justify-center text-sm text-text-secondary">
+                      Aramaya uygun ürün yok.
+                    </div>
+                  ) : (
+                    <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border">
+                      <table className="w-full text-sm table-compact text-text-primary">
+                        <thead className="sticky top-0 bg-background-surface">
+                          <tr className="border-b border-background-border">
+                            <th className="p-2 text-left font-semibold">Ürün</th>
+                            <th className="p-2 text-left font-semibold">Kategori</th>
+                            <th className="p-2 text-center font-semibold">Miktar</th>
+                            {canManageStock && (
+                              <th className="p-2 text-center font-semibold">İşlem</th>
+                            )}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filteredStock.map((item) => (
+                            <tr
+                              key={item.StockId}
+                              className="border-b border-background-border bg-background-panel hover:bg-background-hover"
+                            >
+                              <td className="p-2 font-medium">{item.ItemName}</td>
+                              <td className="p-2 text-text-secondary">{item.CategoryName || '—'}</td>
+                              <td className="p-2 text-center">
+                                {editingStockId === item.StockId ? (
+                                  <input
+                                    type="text"
+                                    inputMode="numeric"
+                                    pattern="[0-9]*"
+                                    value={editingQuantityStr}
+                                    onChange={(e) => setEditingQuantityStr(e.target.value.replace(/[^0-9]/g, ''))}
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') {
+                                        e.preventDefault();
+                                        void handleSaveEditStock(item);
+                                      } else if (e.key === 'Escape') {
+                                        handleCancelEditStock();
+                                      }
+                                    }}
+                                    className="input mx-auto w-20 py-1 text-center"
+                                    autoFocus
+                                  />
+                                ) : (
+                                  <span className="font-bold text-green-600 dark:text-green-500">
+                                    {item.Quantity.toLocaleString('tr-TR')}
+                                  </span>
+                                )}
+                              </td>
+                              {canManageStock && (
+                                <td className="p-2">
+                                  {editingStockId === item.StockId ? (
+                                    <div className="flex justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => void handleSaveEditStock(item)}
+                                        disabled={isBusy}
+                                        className="inline-flex items-center justify-center p-1.5 text-green-600 hover:text-green-500"
+                                        title="Kaydet"
+                                      >
+                                        <CheckIcon size={18} weight="bold" aria-hidden />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={handleCancelEditStock}
+                                        className="inline-flex items-center justify-center p-1.5 text-text-secondary hover:text-text-primary"
+                                        title="İptal"
+                                      >
+                                        <XIcon size={18} weight="regular" aria-hidden />
+                                      </button>
+                                    </div>
+                                  ) : (
+                                    <div className="flex justify-center gap-1">
+                                      <button
+                                        type="button"
+                                        onClick={() => handleStartEditStock(item)}
+                                        disabled={isBusy}
+                                        className="inline-flex items-center justify-center p-1.5 text-blue-500 hover:text-blue-400"
+                                        title="Miktarı düzenle"
+                                      >
+                                        <PencilIcon size={16} weight="regular" aria-hidden />
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => handleRemoveStockClick(item)}
+                                        disabled={isBusy}
+                                        className="inline-flex items-center justify-center p-1.5 text-error hover:opacity-80"
+                                        title="Kaldır"
+                                      >
+                                        <TrashIcon size={16} weight="regular" aria-hidden />
+                                      </button>
+                                    </div>
+                                  )}
+                                </td>
+                              )}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </SectionCard>
+              )}
+            </div>
           </div>
         )}
 
-        {/* Aksiyon Butonları */}
-        <div className="flex gap-3 mt-6 pt-6 border-t border-background-border">
-          {!isNew && isReadOnly && (
-            <button onClick={() => setIsReadOnly(false)} className="btn-primary flex-1">
-              Düzenle
+        <div className="mt-2 flex shrink-0 items-center gap-2 border-t border-background-border pt-2">
+          {isReadOnly && !isNew && canDelete && !archived && warehouse && (
+            <button
+              type="button"
+              onClick={handleDeleteClick}
+              disabled={isBusy}
+              className="btn-danger inline-flex items-center gap-2 px-4 py-2.5 disabled:opacity-50"
+              title="Depoyu kullanımdan kaldır"
+            >
+              <ArchiveIcon size={18} weight="bold" aria-hidden />
+              Kullanımdan Kaldır
             </button>
           )}
-          {!isReadOnly && (
-            <>
-              {!isNew && warehouse && (
-                <button
-                  onClick={handleDeleteClick}
-                  disabled={isBusy}
-                  className="btn-danger flex-1"
-                >
-                  Sil
+          <div className="ml-auto flex gap-2">
+            {isReadOnly && !isNew && !archived && (
+              <button type="button" onClick={() => setIsReadOnly(false)} className="btn-primary px-6 py-2.5">
+                Düzenle
+              </button>
+            )}
+            {!isReadOnly && (
+              <>
+                <button type="button" onClick={onClose} className="btn-secondary px-5 py-2.5">
+                  İptal
                 </button>
-              )}
-              <button onClick={onClose} className="btn-secondary flex-1">
-                İptal
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={isBusy}
+                  className="btn-primary px-6 py-2.5 disabled:opacity-50"
+                >
+                  {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                </button>
+              </>
+            )}
+            {isReadOnly && !isNew && (
+              <button type="button" onClick={onClose} className="btn-secondary px-6 py-2.5">
+                Kapat
               </button>
-              <button
-                onClick={handleSave}
-                disabled={isBusy}
-                className="btn-primary flex-1"
-              >
-                {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
-              </button>
-            </>
-          )}
-          {isReadOnly && !isNew && (
-            <button onClick={onClose} className="btn-secondary flex-1">
-              Kapat
-            </button>
-          )}
+            )}
+          </div>
         </div>
-        </>
-        )}
       </div>
+
       <ConfirmModal
         open={showDeleteConfirm}
-        title="Onaylıyor musunuz?"
-        message="Bu depoyu silmek istediğinizden emin misiniz?\nDikkat: Depodaki tüm stok kayıtları da silinecektir!"
+        title="Depoyu kullanımdan kaldırmak istiyor musunuz?"
+        message={
+          warehouse
+            ? `"${warehouse.WarehouseName}" deposu kullanımdan kaldırılacak.\n\nBu depo geçmiş kayıtlarda kullanılmış olabilir. Kullanımdan kaldırıldığında yeni işlemlerde seçilemez; geçmiş sözleşme ve hareket kayıtları korunur.\n\nHiç kullanılmamış boş depolar tamamen silinir. Devam etmek istiyor musunuz?`
+            : ''
+        }
         variant="danger"
         loading={isBusy}
+        confirmLabel="Kullanımdan Kaldır"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
+        zIndexClass="z-[70]"
       />
       <ConfirmModal
         open={showRemoveStockConfirm}
         title="Onaylıyor musunuz?"
-        message={removeStockTarget ? `"${removeStockTarget.ItemName}" ürününü depodan kaldırmak istediğinizden emin misiniz?` : ''}
+        message={
+          removeStockTarget
+            ? `"${removeStockTarget.ItemName}" ürününü depodan kaldırmak istediğinizden emin misiniz?`
+            : ''
+        }
         variant="danger"
         loading={isBusy}
         onConfirm={handleRemoveStockConfirm}
-        onCancel={() => { setShowRemoveStockConfirm(false); setRemoveStockTarget(null); }}
+        onCancel={() => {
+          setShowRemoveStockConfirm(false);
+          setRemoveStockTarget(null);
+        }}
+        zIndexClass="z-[70]"
       />
     </div>
   );

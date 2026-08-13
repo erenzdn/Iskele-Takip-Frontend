@@ -1,4 +1,5 @@
 import { useEffect, useState, useMemo } from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   ClipboardText,
   Users,
@@ -62,6 +63,7 @@ function DistributionBar({
 }
 
 export default function DashboardPage() {
+  const navigate = useNavigate();
   const [activeContractsCount, setActiveContractsCount] = useState(0);
   const [totalCustomersCount, setTotalCustomersCount] = useState(0);
   const [itemsOnRentCount, setItemsOnRentCount] = useState(0);
@@ -273,7 +275,7 @@ export default function DashboardPage() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center min-h-[400px]">
+      <div className="flex items-center justify-center min-h-[400px]">
         <div className="flex flex-col items-center gap-3">
           <ArrowClockwise size={32} className="text-text-secondary animate-spin" />
           <span className="text-text-secondary text-sm">Yükleniyor...</span>
@@ -283,23 +285,19 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-8 flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-semibold tracking-tight text-text-primary mb-1">Dashboard</h1>
-          <p className="text-text-secondary text-sm">Genel bakış ve istatistikler</p>
-        </div>
+    <div>
+      <div className="mb-3 flex items-center justify-end">
         <button
           onClick={loadDashboardData}
-          className="btn-primary flex items-center gap-2"
+          className="btn-primary flex items-center gap-2 py-2 px-3 text-sm"
         >
-          <ArrowClockwise size={18} weight="bold" />
+          <ArrowClockwise size={16} weight="bold" />
           Yenile
         </button>
       </div>
 
       {/* Stat Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="card border-l-4 border-l-success pl-6">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 rounded-lg bg-success/10 text-success">
@@ -318,7 +316,12 @@ export default function DashboardPage() {
           </div>
           <div className="text-2xl font-semibold tracking-tight">{totalCustomersCount}</div>
         </div>
-        <div className="card border-l-4 border-l-warning pl-6">
+        <button
+          type="button"
+          onClick={() => navigate('/inventory?stockStatus=onRent')}
+          title="Envanterde kiradaki malzemeleri gör"
+          className="card border-l-4 border-l-warning pl-6 text-left w-full hover:bg-background-hover transition-colors cursor-pointer"
+        >
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 rounded-lg bg-warning/10 text-warning">
               <Package size={22} weight="regular" />
@@ -326,7 +329,8 @@ export default function DashboardPage() {
             <span className="text-text-secondary text-sm">Kirada Olan Malzeme</span>
           </div>
           <div className="text-2xl font-semibold tracking-tight">{itemsOnRentCount}</div>
-        </div>
+          <div className="mt-1 text-xs text-text-secondary">Envanterde gör →</div>
+        </button>
         <div className="card border-l-4 border-l-[#a855f7] pl-6">
           <div className="flex items-center gap-3 mb-3">
             <div className="p-2 rounded-lg bg-purple/10 text-purple">
@@ -339,7 +343,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Grafikler */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 card">
           <div className="flex items-center gap-2 mb-6">
             <ChartBar size={20} weight="regular" className="text-primary" />
@@ -411,7 +415,7 @@ export default function DashboardPage() {
 
       {/* Stok Kullanım Özeti */}
       {totalStockSum > 0 && (
-        <div className="card mb-8">
+        <div className="card mb-6">
           <div className="flex items-center gap-2 mb-5">
             <Package size={20} weight="regular" className="text-primary" />
             <h2 className="text-lg font-semibold">Stok Kullanım Özeti</h2>
@@ -449,7 +453,7 @@ export default function DashboardPage() {
       )}
 
       {/* Bu Ay Özeti + Dikkat Gerektiren */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
         <div className="lg:col-span-2 card">
           <h2 className="text-lg font-semibold mb-4">Bu Ay Özeti</h2>
           <div className="grid grid-cols-3 gap-6">

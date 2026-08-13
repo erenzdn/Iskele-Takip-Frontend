@@ -1,4 +1,5 @@
 import ImageResize from 'tiptap-extension-resize-image';
+import { useAuthStore } from '../../store/authStore';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 
@@ -25,7 +26,8 @@ export const CustomImage = ImageResize.extend({
 
           if (attributes.src.startsWith('image:')) {
             const imageId = attributes.src.replace('image:', '');
-            const token = localStorage.getItem('auth_token');
+            // Zustand store'dan token al (memory-only)
+            const token = useAuthStore.getState().token;
             const imageUrl = token
               ? `${BASE_URL}/template-images/${imageId}?token=${encodeURIComponent(token)}`
               : `${BASE_URL}/template-images/${imageId}`;

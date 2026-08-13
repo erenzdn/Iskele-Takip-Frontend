@@ -12,7 +12,7 @@ import {
 import { apiClient } from '../services/apiClient';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/useToast';
-import { getApiErrorMessage } from '../utils/apiError';
+import { formatInventoryRelatedApiText, getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
 import { resolveInventoryImportErrors } from '../utils/inventoryExcelImportUi';
@@ -25,6 +25,13 @@ const PERMISSIONS: Record<ExcelModuleType, { view: string; create: string }> = {
   checks: { view: 'checks_view', create: 'checks_create' },
   stockReceipts: { view: 'stockReceipts_view', create: 'stockReceipts_create' },
 };
+
+function excelImportErrorMessage(moduleType: ExcelModuleType, error: unknown, fallback: string): string {
+  if (moduleType === 'inventory') {
+    return getUserFacingApiErrorMessage(error, 'excel-import');
+  }
+  return getApiErrorMessage(error) || fallback;
+}
 
 export type ExcelErrorCategory = 'COERCION' | 'VALIDATION' | 'BUSINESS';
 
@@ -393,16 +400,19 @@ export default function ExcelManager({
     if (!canView) return;
     setBusy('export');
     try {
-      const downloadPath =
-        type === 'inventory' ? '/excel/template/inventory' : `/excel/export/${type}`;
-      const { blob, filename } = await apiClient.getBlobDownload(downloadPath);
-      const fallbackName = type === 'inventory' ? 'envanter_sablonu.xlsx' : `export_${type}.xlsx`;
+      const { blob, filename } = await apiClient.getBlobDownload(`/excel/export/${type}`);
+      const fallbackName =
+        type === 'inventory'
+          ? 'envanter_export.xlsx'
+          : type === 'customers'
+            ? 'musteri_export.xlsx'
+            : `export_${type}.xlsx`;
       triggerBlobDownload(blob, fallbackName, filename);
       toast.success(
         type === 'customers'
-          ? 'Müşteri Excel şablonu indirildi (Customers + CustomerContacts).'
+          ? 'Müşteri Excel dışa aktarma indirildi.'
           : type === 'inventory'
-            ? 'Envanter Excel şablonu indirildi.'
+            ? 'Envanter Excel dışa aktarma indirildi.'
             : 'Excel dosyası indirildi.'
       );
     } catch (e) {
@@ -483,7 +493,9 @@ export default function ExcelManager({
           } else {
             setLastFile(file);
             toast.error(
-              normalized?.message ||
+              (type === 'inventory' && normalized?.message
+                ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
+                : normalized?.message) ||
                 (type === 'inventory'
                   ? 'İçe aktarma başarısız. Excel’de işaretli satırları düzeltin veya hatalı satırları atlayarak yükleyin.'
                   : 'İçe aktarma başarısız. Hata detayları aşağıda.')
@@ -491,7 +503,10 @@ export default function ExcelManager({
           }
 
           setErrorModal({
-            message: normalized?.message || 'İçe aktarma sırasında sorunlar oluştu.',
+            message:
+              (type === 'inventory' && normalized?.message
+                ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
+                : normalized?.message) || 'İçe aktarma sırasında sorunlar oluştu.',
             errors: rows,
             errorsByRow: rowsByRow,
             count: normalized?.count,
@@ -522,7 +537,7 @@ export default function ExcelManager({
           const rowsByRow = prepared.errorsByRow;
           setLastFile(file);
           setErrorModal({
-            message: normalized.message || getApiErrorMessage(e),
+            message: excelImportErrorMessage(type, e, 'İçe aktarma sırasında sorunlar oluştu.'),
             errors: rows,
             errorsByRow: rowsByRow,
             count: normalized.count,
@@ -536,10 +551,10 @@ export default function ExcelManager({
               !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
             validRowCount: normalized.validRowCount,
           });
-          toast.error(normalized.message || getApiErrorMessage(e));
+          toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
           return;
         }
-        toast.error(getApiErrorMessage(e));
+        toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
       } finally {
         setBusy(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
@@ -690,7 +705,7 @@ export default function ExcelManager({
               </button>
             </div>
 
-            <div className="p-4 space-y-3 text-sm">
+            <div className="p-4 space-y-3 text-sm max-h-[70vh] overflow-y-auto">
               <div className="rounded-md border border-background-border bg-background-muted/30 p-3 text-text-secondary">
                 {importInfoChecklist}
               </div>
@@ -781,7 +796,7 @@ export default function ExcelManager({
               </p>
             </div>
 
-            <div className="p-4 border-t border-background-border flex items-center justify-end gap-2">
+            <div className="p-4 border-t border-background-border flex flex-wrap items-center justify-end gap-2">
               <button
                 type="button"
                 onClick={() => setImportInfoModalType(null)}

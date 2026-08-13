@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+﻿import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   CalendarBlankIcon,
   CheckIcon,
   FileTextIcon,
-  FunnelSimpleIcon,
   PlusIcon,
   TrashIcon,
 } from '@phosphor-icons/react';
@@ -17,6 +16,7 @@ import EmptyState from '../components/EmptyState';
 import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 const LIMIT = 20;
 
@@ -76,6 +76,7 @@ function getStatusBadgeClass(status: CashTransaction['status']) {
 
 export default function CashPage() {
   const navigate = useNavigate();
+  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const permissions = user?.permissions ?? [];
 
@@ -294,66 +295,68 @@ export default function CashPage() {
     []
   );
 
+  const headerActions = useMemo(
+    () => (
+      <>
+        <button
+          type="button"
+          onClick={() => {
+            void loadAccounts();
+            void loadData();
+          }}
+          className="btn-secondary py-2 px-3 text-sm"
+        >
+          Yenile
+        </button>
+        {canCreateAccount ? (
+          <button
+            type="button"
+            onClick={() => {
+              setSelectedAccount(null);
+              setIsNewAccount(true);
+              setIsAccountModalOpen(true);
+            }}
+            className="btn-secondary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+          >
+            <PlusIcon size={16} weight="bold" />
+            Yeni Hesap
+          </button>
+        ) : null}
+        {canCreate ? (
+          <button
+            type="button"
+            onClick={() => setIsCreateModalOpen(true)}
+            className="btn-primary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+          >
+            <PlusIcon size={16} weight="bold" />
+            Yeni İşlem
+          </button>
+        ) : null}
+      </>
+    ),
+    [canCreateAccount, canCreate, loadAccounts, loadData]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
+
   if (loading && transactions.length === 0) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <div>
-          <h1 className="text-xl font-semibold text-text-primary">Kasa & Banka</h1>
-          <p className="text-xs text-text-secondary mt-0.5">
-            Kasa/banka işlemlerini takip edin, onaylayın ve gerektiğinde iptal edin.
-          </p>
-        </div>
-
-        <div className="flex items-center gap-2">
-          {canCreateAccount && (
-            <button
-              type="button"
-              onClick={() => {
-                setSelectedAccount(null);
-                setIsNewAccount(true);
-                setIsAccountModalOpen(true);
-              }}
-              className="btn-secondary py-2 px-3 text-sm inline-flex items-center gap-1.5"
-            >
-              <PlusIcon size={16} weight="bold" />
-              Yeni Hesap
-            </button>
-          )}
-          {canCreate && (
-            <button
-              type="button"
-              onClick={() => setIsCreateModalOpen(true)}
-              className="btn-primary py-2 px-3 text-sm inline-flex items-center gap-1.5"
-            >
-              <PlusIcon size={16} weight="bold" />
-              Yeni İşlem
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="mb-3 rounded-panel border border-background-border bg-background-panel p-3 space-y-2">
-        <div className="flex items-center justify-between gap-2">
-          <div className="flex items-center gap-2 text-xs text-text-secondary">
-            <FileTextIcon size={14} className="text-text-secondary" />
-            <span>Hesaplar (Kasa / Banka)</span>
-          </div>
-          <button
-            type="button"
-            onClick={() => void loadAccounts()}
-            className="btn-secondary py-1 px-2 text-[11px]"
-            disabled={accountsLoading}
-          >
-            {accountsLoading ? 'Yükleniyor...' : 'Yenile'}
-          </button>
+    <div>
+      <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 space-y-1.5">
+        <div className="flex items-center gap-2 text-xs text-text-secondary">
+          <FileTextIcon size={14} className="text-text-secondary" />
+          <span>Hesaplar (Kasa / Banka)</span>
+          {accountsLoading ? <span className="text-text-secondary/70">yükleniyor…</span> : null}
         </div>
 
         {accountsError && (
@@ -575,71 +578,58 @@ export default function CashPage() {
         )}
       </div>
 
-      <div className="mb-3 rounded-panel border border-background-border bg-background-panel p-3 space-y-2">
-        <div className="flex items-center gap-2 text-xs text-text-secondary">
-          <FunnelSimpleIcon size={14} className="text-text-secondary" />
-          <span>Filtreler</span>
-        </div>
+      <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 flex flex-wrap items-center gap-1.5">
+        <select
+          value={selectedStatus}
+          onChange={(e) => {
+            setSelectedStatus((e.target.value || '') as CashTransaction['status'] | '');
+            setOffset(0);
+          }}
+          className="input py-1.5 px-2 text-sm min-w-[140px]"
+        >
+          <option value="">Tüm durumlar</option>
+          {statusSelect}
+        </select>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="min-w-[200px]">
-            <select
-              value={selectedStatus}
-              onChange={(e) => {
-                setSelectedStatus((e.target.value || '') as CashTransaction['status'] | '');
-                setOffset(0);
-              }}
-              className="input py-1.5 px-2 text-sm w-full"
-            >
-              <option value="">Tüm Durumlar</option>
-              {statusSelect}
-            </select>
-          </div>
+        <select
+          value={selectedType}
+          onChange={(e) => {
+            setSelectedType((e.target.value || '') as CashTransaction['type'] | '');
+            setOffset(0);
+          }}
+          className="input py-1.5 px-2 text-sm min-w-[140px]"
+        >
+          <option value="">Tüm türler</option>
+          {typeSelect}
+        </select>
 
-          <div className="min-w-[200px]">
-            <select
-              value={selectedType}
-              onChange={(e) => {
-                setSelectedType((e.target.value || '') as CashTransaction['type'] | '');
-                setOffset(0);
-              }}
-              className="input py-1.5 px-2 text-sm w-full"
-            >
-              <option value="">Tüm Türler</option>
-              {typeSelect}
-            </select>
-          </div>
-
-          <div className="flex items-center gap-2 text-xs">
-            <CalendarBlankIcon size={14} className="text-text-secondary" />
-            <input
-              type="date"
-              value={dateFrom}
-              onChange={(e) => {
-                setDateFrom(e.target.value);
-                setOffset(0);
-              }}
-              className="input py-1 px-2 text-xs"
-            />
-            <span className="text-text-secondary">-</span>
-            <input
-              type="date"
-              value={dateTo}
-              onChange={(e) => {
-                setDateTo(e.target.value);
-                setOffset(0);
-              }}
-              className="input py-1 px-2 text-xs"
-            />
-          </div>
-        </div>
-
-        {error && (
-          <div className="text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
-            {error}
-          </div>
-        )}
+        <CalendarBlankIcon size={14} className="text-text-secondary" />
+        <input
+          type="date"
+          value={dateFrom}
+          onChange={(e) => {
+            setDateFrom(e.target.value);
+            setOffset(0);
+          }}
+          className="input py-1 px-2 text-xs"
+        />
+        <span className="text-text-secondary text-xs">–</span>
+        <input
+          type="date"
+          value={dateTo}
+          onChange={(e) => {
+            setDateTo(e.target.value);
+            setOffset(0);
+          }}
+          className="input py-1 px-2 text-xs"
+        />
       </div>
+
+      {error && (
+        <div className="mb-1.5 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+          {error}
+        </div>
+      )}
 
       {transactions.length === 0 ? (
         <EmptyState
@@ -653,7 +643,7 @@ export default function CashPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-260px)] min-h-[320px]">
+          <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>

@@ -17,6 +17,12 @@ import {
   ContractTemplate,
   Warehouse,
   resolveContractQuoteType,
+  isContractActive,
+  isContractCancelled,
+  isContractCompleted,
+  isContractArchived,
+  isContractArchivable,
+  pickContractArchivedAt,
 } from '../../models';
 import { contractService } from '../../services/contractService';
 import { customerService } from '../../services/customerService';
@@ -29,15 +35,28 @@ import PdfPreviewModal from './PdfPreviewModal';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
-import { getApiErrorMessage, getApiFieldErrors, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
-import { formatInventoryLineBilingualLabel, formatMoney } from '../../utils/formatters';
+import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
+import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
+import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
+import StockErrorPanel from '../StockErrorPanel';
 import { useAuthStore } from '../../store/authStore';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
+import SiteSelectField from '../SiteSelectField';
 import ContractAddLineItemModal from './ContractAddLineItemModal';
 import SettleNonReturnModal from './SettleNonReturnModal';
+import {
+  applyCreatedSiteId,
+  buildSiteRequestFields,
+  EMPTY_NEW_SITE_FORM,
+  isSaveBlockedByNewSite,
+  isSiteRelatedApiMessage,
+  NEW_SITE_SELECT_VALUE,
+  NewSiteFormState,
+  validateSiteSelection,
+} from '../../utils/siteSelection';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -49,6 +68,9 @@ interface ContractDetailModalProps {
   /** true ise yeni kayıtta tip seçilemez (ayrı menü sayfaları) */
   lockNewContractType?: boolean;
   initiallyFullScreen?: boolean;
+  onDataChanged?: (hint?: { quoteReleased?: boolean }) => void | Promise<void>;
+  /** Teklif modalı üzerinden açıldığında üst katmanda göster */
+  stackAboveParent?: boolean;
 }
 
 function unitPriceForContractInventory(
@@ -78,6 +100,8 @@ export default function ContractDetailModal({
   defaultTypeForNew,
   lockNewContractType,
   initiallyFullScreen,
+  onDataChanged,
+  stackAboveParent = false,
 }: ContractDetailModalProps) {
   const navigate = useNavigate();
   const [isFullScreen, setIsFullScreen] = useState(Boolean(initiallyFullScreen));
@@ -92,6 +116,8 @@ export default function ContractDetailModal({
   const [sites, setSites] = useState<ConstructionSite[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState<number | ''>('');
   const [sitesLoading, setSitesLoading] = useState(false);
+  const [isNewSiteMode, setIsNewSiteMode] = useState(false);
+  const [newSiteForm, setNewSiteForm] = useState<NewSiteFormState>(EMPTY_NEW_SITE_FORM);
   const [startDate, setStartDate] = useState(
     new Date().toISOString().split('T')[0]
   );
@@ -133,12 +159,19 @@ export default function ContractDetailModal({
   const [contractLogs, setContractLogs] = useState<AuditLog[]>([]);
   const [contractLogsLoading, setContractLogsLoading] = useState(false);
   const [fullContract, setFullContract] = useState<Contract | null>(null);
-  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showCancelReasonModal, setShowCancelReasonModal] = useState(false);
+  const [showCancelConfirm, setShowCancelConfirm] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelReasonError, setCancelReasonError] = useState<string | null>(null);
   const [showReturnConfirm, setShowReturnConfirm] = useState(false);
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
   const [showRevertConfirm, setShowRevertConfirm] = useState(false);
   const [showRevertRetryConfirm, setShowRevertRetryConfirm] = useState(false);
   const [revertRetryMessage, setRevertRetryMessage] = useState<string>('');
+  const [showArchiveModal, setShowArchiveModal] = useState(false);
+  const [archiveReason, setArchiveReason] = useState('');
+  const [archiveReasonError, setArchiveReasonError] = useState<string | null>(null);
+  const [showUnarchiveConfirm, setShowUnarchiveConfirm] = useState(false);
   const [iskonto, setIskonto] = useState<number>(0);
   /** Satır bazlı iskonto (%) - key: "ItemId-WarehouseId". Üstteki iskonto değişince tüm satırlara yansır; satırda tek tek de düzenlenebilir. */
   const [itemIskonto, setItemIskonto] = useState<Record<string, number>>({});
@@ -155,6 +188,7 @@ export default function ContractDetailModal({
   const itemsGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
+  const [saveStockError, setSaveStockError] = useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
@@ -163,6 +197,42 @@ export default function ContractDetailModal({
   const [showAddLineItemModal, setShowAddLineItemModal] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
   const canRevertToQuote = Boolean(currentUser?.permissions?.includes('contracts_delete'));
+  const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
+  const canArchiveContract = Boolean(
+    currentUser?.permissions?.includes('contracts_archive') ||
+    currentUser?.permissions?.includes('contracts_delete')
+  );
+
+  const effectiveContract = fullContract ?? contract;
+  const sourceQuoteId = (() => {
+    const raw = effectiveContract?.SourceQuoteId ?? (effectiveContract as { sourceQuoteId?: number | null } | null)?.sourceQuoteId;
+    if (raw == null) return null;
+    const n = Number(raw);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  })();
+  const sourceQuoteCode = (() => {
+    const raw =
+      effectiveContract?.SourceQuoteCode ??
+      (effectiveContract as { sourceQuoteCode?: string | null } | null)?.sourceQuoteCode;
+    if (raw == null) return null;
+    const s = String(raw).trim();
+    return s || null;
+  })();
+  const hasSourceQuote = sourceQuoteId != null;
+  const archived = Boolean(effectiveContract && !isNew && isContractArchived(effectiveContract));
+  const archivedAtLabel = (() => {
+    const raw = effectiveContract ? pickContractArchivedAt(effectiveContract) : undefined;
+    if (!raw) return '';
+    try {
+      return formatShortDateTime(raw);
+    } catch {
+      return '';
+    }
+  })();
+  const cancelled = Boolean(effectiveContract && isContractCancelled(effectiveContract));
+  const active = Boolean(effectiveContract && isContractActive(effectiveContract));
+  const completed = Boolean(effectiveContract && isContractCompleted(effectiveContract));
+  const archivable = Boolean(effectiveContract && !isNew && isContractArchivable(effectiveContract));
 
   const formatAuthorizedContactLabel = (contact: NonNullable<Customer['AuthorizedContacts']>[number]) => {
     const titlePart = contact.Title ? ` - ${contact.Title}` : '';
@@ -170,10 +240,37 @@ export default function ContractDetailModal({
     return `${contact.Name}${titlePart}${phonePart}`;
   };
 
+  const resetSiteSelection = () => {
+    setSelectedSiteId('');
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+  };
+
+  const resetNewSiteMode = () => {
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+  };
+
+  const handleNewSiteFormChange = (field: keyof NewSiteFormState, value: string) => {
+    setNewSiteForm((prev) => ({ ...prev, [field]: value }));
+  };
+
+  const handleSiteSelect = (value: number | '' | typeof NEW_SITE_SELECT_VALUE) => {
+    if (value === NEW_SITE_SELECT_VALUE) {
+      setIsNewSiteMode(true);
+      setSelectedSiteId('');
+      return;
+    }
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+    setSelectedSiteId(value);
+  };
+
   const handleCustomerChange = (value: number | '') => {
     setSelectedCustomerId(value);
     setSelectedAuthorizedContactId('');
     setAuthorizedContactError(null);
+    resetSiteSelection();
   };
 
 
@@ -215,6 +312,19 @@ export default function ContractDetailModal({
     } else {
       setFullContract(null);
     }
+  }, [contract?.ContractId, isNew]);
+
+  useEffect(() => {
+    if (cancelled || archived || completed) {
+      setIsReadOnly(true);
+    }
+  }, [cancelled, archived, completed]);
+
+  useEffect(() => {
+    setShowArchiveModal(false);
+    setArchiveReason('');
+    setArchiveReasonError(null);
+    setShowUnarchiveConfirm(false);
   }, [contract?.ContractId, isNew]);
 
   const refreshContract = async () => {
@@ -429,10 +539,9 @@ export default function ContractDetailModal({
   useEffect(() => {
     if (selectedCustomerId) {
       loadSites(Number(selectedCustomerId));
-      setSelectedSiteId(''); // Müşteri değişince şantiye seçimini sıfırla
     } else {
       setSites([]);
-      setSelectedSiteId('');
+      resetSiteSelection();
     }
   }, [selectedCustomerId]);
 
@@ -530,7 +639,7 @@ export default function ContractDetailModal({
       const [custData, invData, whData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(),
-        warehouseService.getAllAsync(),
+        warehouseService.getActiveAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
@@ -849,9 +958,15 @@ export default function ContractDetailModal({
       return;
     }
 
-    // Eğer müşterinin şantiyeleri varsa ve şantiye seçilmemişse uyar
-    if (sites.length > 0 && !selectedSiteId) {
-      toast.warning('Bu müşterinin şantiyeleri bulunuyor. Lütfen bir şantiye seçin.');
+    const siteValidationError = validateSiteSelection({
+      sites,
+      isNewSiteMode,
+      selectedSiteId,
+      newSiteName: newSiteForm.SiteName,
+      siteRequired: sites.length > 0,
+    });
+    if (siteValidationError) {
+      toast.warning(siteValidationError);
       return;
     }
 
@@ -867,6 +982,7 @@ export default function ContractDetailModal({
 
     try {
       setIsBusy(true);
+      setSaveStockError(null);
 
       const normalizeOptionalOverride = (raw: unknown): string | null => {
         const s = typeof raw === 'string' ? raw.trim() : '';
@@ -909,9 +1025,8 @@ export default function ContractDetailModal({
           requestBody.PlannedEndDate = new Date(plannedEndDate).toISOString();
         }
 
-        if (selectedSiteId) {
-          requestBody.SiteId = Number(selectedSiteId);
-        }
+        const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+        Object.assign(requestBody, siteFields);
         if (normalizeText(contractCode)) {
           requestBody.ContractCode = normalizeText(contractCode);
         }
@@ -925,6 +1040,18 @@ export default function ContractDetailModal({
         }
 
         const result = await contractService.createAsync(requestBody as any);
+        if (result.warnings && result.warnings.length > 0) {
+          toast.warning(result.warnings.join('\n'));
+        }
+        if (result.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: result.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
         toast.success(`Sözleşme başarıyla oluşturuldu! (ID: ${result.ContractId})`);
         onClose();
         return;
@@ -939,9 +1066,16 @@ export default function ContractDetailModal({
         }
 
         const originalSiteId = (source as { SiteId?: number | null } | null | undefined)?.SiteId ?? null;
-        const nextSiteId = selectedSiteId ? Number(selectedSiteId) : null;
-        if (originalSiteId !== nextSiteId) {
-          if (nextSiteId != null) updateBody.SiteId = nextSiteId;
+        const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+        if (isNewSiteMode) {
+          if (siteFields.newSite) {
+            updateBody.newSite = siteFields.newSite;
+          }
+        } else {
+          const nextSiteId = selectedSiteId ? Number(selectedSiteId) : null;
+          if (originalSiteId !== nextSiteId) {
+            if (nextSiteId != null) updateBody.SiteId = nextSiteId;
+          }
         }
 
         const originalIskonto = Number((source as { Iskonto?: number } | null | undefined)?.Iskonto ?? 0) || 0;
@@ -998,7 +1132,16 @@ export default function ContractDetailModal({
           return;
         }
 
-        await contractService.updateAsync(contract.ContractId, updateBody as any);
+        const updateResult = await contractService.updateAsync(contract.ContractId, updateBody as any);
+        if (updateResult.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: updateResult.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
         const rentalDatesChanged =
           isRentalContract && (updateBody.StartDate != null || updateBody.PlannedEndDate != null);
         toast.success(
@@ -1035,8 +1178,12 @@ export default function ContractDetailModal({
             : 'Seçilen merkez yetkili bu müşteriye ait değil.'
         );
       }
-      if (errorMsg.includes('Yetersiz') || errorMsg.includes('stok')) {
-        toast.error(`Stok hatası: ${errorMsg}\nLütfen ürün miktarlarını kontrol edin.`);
+      if (errorMsg.includes('Yetersiz') || errorMsg.includes('stok') || isStockErrorMessage(errorMsg)) {
+        setSaveStockError(errorMsg);
+      } else if (isSiteRelatedApiMessage(errorMsg)) {
+        toast.error(errorMsg);
+      } else if (isArchivedInventoryApiError(error)) {
+        toast.error(getUserFacingApiErrorMessage(error, 'contract-save'));
       } else {
         toast.error(userMessageForCustomerRelatedApiError(error, errorMsg || 'Kaydetme hatası'));
       }
@@ -1045,23 +1192,133 @@ export default function ContractDetailModal({
     }
   };
 
-  const handleDeleteClick = () => {
-    if (!contract || contract.IsCompleted) return;
-    setShowDeleteConfirm(true);
+  const handleReduceSaveStockQuantity = (available: number) => {
+    const itemName = extractFirstQuotedName(saveStockError ?? '');
+    if (!itemName) return;
+    setContractItems((prev) =>
+      prev.map((i) => {
+        if (i.kind !== 'inventory') return i;
+        const inv = availableItems.find((a) => a.ItemId === i.ItemId);
+        const label = inv
+          ? formatInventoryLineBilingualLabel(inv.ItemName, inv.ItemNameEn, inv)
+          : i.ItemName;
+        if (label.includes(itemName) || i.ItemName === itemName) {
+          return { ...i, RentedQuantity: Math.max(1, Math.min(i.RentedQuantity, available)) };
+        }
+        return i;
+      })
+    );
+    setSaveStockError(null);
   };
 
-  const handleDeleteConfirm = async () => {
-    if (!contract || contract.IsCompleted) return;
+  const handleCancelClick = () => {
+    if (!contract || !active) return;
+    if (!canCancelContract) {
+      toast.error('Sözleşmeyi iptal etmek için yetkiniz bulunmuyor.');
+      return;
+    }
+    setCancelReason('');
+    setCancelReasonError(null);
+    setShowCancelReasonModal(true);
+  };
+
+  const handleRevertClick = () => {
+    if (!canRevertToQuote) {
+      toast.error('Teklife geri alma işlemi için yetkiniz bulunmuyor.');
+      return;
+    }
+    setShowRevertConfirm(true);
+  };
+
+  const handleArchiveClick = () => {
+    if (!contract || !archivable) return;
+    if (!canArchiveContract) {
+      toast.error('Sözleşmeyi arşivlemek için yetkiniz bulunmuyor.');
+      return;
+    }
+    setArchiveReason('');
+    setArchiveReasonError(null);
+    setShowArchiveModal(true);
+  };
+
+  const handleArchiveConfirm = async () => {
+    if (!contract || !archivable) return;
+    const trimmedReason = archiveReason.trim();
+    if (trimmedReason.length > 0 && trimmedReason.length < 3) {
+      setArchiveReasonError('Not en az 3 karakter olmalıdır.');
+      return;
+    }
     try {
       setIsBusy(true);
-      await contractService.deleteAsync(contract.ContractId);
-      setShowDeleteConfirm(false);
-      toast.success('Sözleşme silindi. İade edilmemiş ürünlerin stokları geri eklendi.');
+      await contractService.archiveAsync(
+        contract.ContractId,
+        trimmedReason.length >= 3 ? trimmedReason : undefined
+      );
+      setShowArchiveModal(false);
+      setArchiveReason('');
+      toast.success('Sözleşme arşivlendi.');
+      await onDataChanged?.();
       onClose();
     } catch (error) {
-      console.error('Delete contract error:', error);
-      setShowDeleteConfirm(false);
-      toast.error(getApiErrorMessage(error) || 'Silme hatası');
+      console.error('Archive contract error:', error);
+      toast.error(getApiErrorMessage(error) || getUserFacingApiErrorMessage(error, 'contract-archive'));
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleUnarchiveConfirm = async () => {
+    if (!contract || !archived) return;
+    if (!canArchiveContract) {
+      toast.error('Sözleşmeyi geri getirmek için yetkiniz bulunmuyor.');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      await contractService.unarchiveAsync(contract.ContractId);
+      setShowUnarchiveConfirm(false);
+      toast.success('Sözleşme arşivden geri getirildi.');
+      await onDataChanged?.();
+      onClose();
+    } catch (error) {
+      console.error('Unarchive contract error:', error);
+      toast.error(getApiErrorMessage(error) || 'Sözleşme geri getirilemedi.');
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const handleCancelReasonContinue = () => {
+    const reason = cancelReason.trim();
+    if (reason.length < 3) {
+      setCancelReasonError('İptal gerekçesi en az 3 karakter olmalıdır.');
+      return;
+    }
+    setCancelReasonError(null);
+    setShowCancelReasonModal(false);
+    setShowCancelConfirm(true);
+  };
+
+  const handleCancelConfirm = async () => {
+    if (!contract || !active) return;
+    const reason = cancelReason.trim();
+    if (reason.length < 3) return;
+    try {
+      setIsBusy(true);
+      const result = await contractService.cancelAsync(contract.ContractId, reason);
+      setShowCancelConfirm(false);
+      setCancelReason('');
+      if (result.QuoteReleased && result.QuoteId) {
+        toast.success(`Sözleşme iptal edildi. Teklif #${result.QuoteId} aktif tekliflere geri döndü.`);
+      } else {
+        toast.success('Sözleşme iptal edildi.');
+      }
+      await onDataChanged?.({ quoteReleased: Boolean(result.QuoteReleased) });
+      onClose();
+    } catch (error) {
+      console.error('Cancel contract error:', error);
+      setShowCancelConfirm(false);
+      toast.error(getUserFacingApiErrorMessage(error, 'contract-cancel'));
     } finally {
       setIsBusy(false);
     }
@@ -1074,11 +1331,13 @@ export default function ContractDetailModal({
       const result = await contractService.revertToQuoteAsync(contract.ContractId);
       setShowRevertConfirm(false);
       if (result.QuoteId) {
-        toast.success('Sözleşme iptal edildi, teklife dönüldü.');
+        toast.success('Sözleşme kaldırıldı; kaynak teklif aktif listeye döndü.');
+        await onDataChanged?.({ quoteReleased: true });
         onClose();
         navigate('/contracts/sale', { replace: true, state: { openQuoteId: result.QuoteId } });
       } else {
-        toast.success('Sözleşme iptal edildi.');
+        toast.success('Sözleşme kaldırıldı.');
+        await onDataChanged?.({ quoteReleased: true });
         onClose();
         navigate('/contracts/sale', { replace: true });
       }
@@ -1104,13 +1363,14 @@ export default function ContractDetailModal({
 
   const handleComplete = async () => {
     if (!isRentalContract) return;
-    if (!contract || contract.IsCompleted) return;
+    if (!contract || !active) return;
 
     const today = new Date().toISOString();
     try {
       setIsBusy(true);
       await contractService.completeContractAsync(contract.ContractId, today);
       toast.success('Sözleşme tamamlandı. Kalan ürünlerin stokları geri eklendi.');
+      await onDataChanged?.();
       onClose();
     } catch (error) {
       console.error('Complete contract error:', error);
@@ -1122,8 +1382,8 @@ export default function ContractDetailModal({
 
   const handleReturnClick = () => {
     if (!isRentalContract) return;
-    const effectiveContract = fullContract ?? contract;
-    if (!contract || !effectiveContract || effectiveContract.IsCompleted || !returnDetailKey) return;
+    const effectiveContractForReturn = fullContract ?? contract;
+    if (!contract || !effectiveContractForReturn || !active || !returnDetailKey) return;
     const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
     const itemId = Number(itemIdStr);
     const warehouseId = Number(warehouseIdStr);
@@ -1143,8 +1403,8 @@ export default function ContractDetailModal({
 
   const handleReturnItem = async () => {
     if (!isRentalContract) return;
-    const effectiveContract = fullContract ?? contract;
-    if (!contract || !effectiveContract || effectiveContract.IsCompleted || !returnDetailKey) return;
+    const effectiveContractForReturn = fullContract ?? contract;
+    if (!contract || !effectiveContractForReturn || !active || !returnDetailKey) return;
 
     const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
     const itemId = Number(itemIdStr);
@@ -1340,19 +1600,133 @@ export default function ContractDetailModal({
     }
   };
 
+  const handleOpenSourceQuote = () => {
+    if (!sourceQuoteId) return;
+    const path = contractType === 'SALE' ? '/contracts/sale' : '/contracts/rental';
+    onClose();
+    navigate(path, { replace: false, state: { openQuoteId: sourceQuoteId } });
+  };
+
   const modalTree = (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background-main">
+    <div className={`fixed inset-0 flex flex-col bg-background-main ${stackAboveParent ? 'z-[60]' : 'z-50'}`}>
       {/* Üst başlık çubuğu - sistem penceresi görünümü */}
-      <header className="shrink-0 flex items-center justify-between px-6 py-4 bg-background-panel border-b border-background-border shadow-sm">
-        <div className="flex items-center gap-3 min-w-0">
+      <header className="shrink-0 flex items-center justify-between px-6 py-4 bg-background-panel border-b border-background-border shadow-sm gap-3">
+        <div className="flex items-center gap-3 min-w-0 flex-wrap">
           <h1 className="text-xl font-semibold text-text-primary tracking-tight truncate">
             {isNew ? 'Yeni Sözleşme' : `Sözleşme #${contract?.ContractId ?? ''} Detayı`}
           </h1>
           <span className="text-sm font-medium text-text-secondary shrink-0">
             {contractType === 'SALE' ? 'Satış Sözleşmesi' : 'Kiralama Sözleşmesi'}
           </span>
+          {!isNew && cancelled && (
+            <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-xs font-semibold text-amber-100 shrink-0">
+              İptal Edildi
+              {effectiveContract?.CancelledAt
+                ? ` • ${formatShortDateTime(effectiveContract.CancelledAt)}`
+                : ''}
+            </span>
+          )}
+          {!isNew && completed && !cancelled && !archived && (
+            <span className="rounded border border-green-700/50 bg-green-900/30 px-2 py-0.5 text-xs font-semibold text-green-100 shrink-0">
+              Tamamlandı
+            </span>
+          )}
+          {!isNew && archived && (
+            <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-xs font-semibold text-amber-100 shrink-0">
+              Arşivlenmiş{archivedAtLabel ? ` • ${archivedAtLabel}` : ''}
+            </span>
+          )}
+          {!isNew && active && (
+            <span className="rounded border border-blue-700/50 bg-blue-900/30 px-2 py-0.5 text-xs font-semibold text-blue-100 shrink-0">
+              Aktif
+            </span>
+          )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+          {!isNew && hasSourceQuote && (
+            <button
+              type="button"
+              onClick={handleOpenSourceQuote}
+              disabled={isBusy}
+              className="btn-secondary text-sm py-1.5 px-3"
+              title="Bu sözleşmenin kaynak teklifini açar"
+            >
+              {sourceQuoteCode
+                ? `Kaynak teklife git (${sourceQuoteCode})`
+                : 'Kaynak teklife git'}
+            </button>
+          )}
+          {!isNew && isReadOnly && active && (
+            <button type="button" onClick={() => setIsReadOnly(false)} className="btn-primary text-sm py-1.5 px-3" disabled={isBusy}>
+              Düzenle
+            </button>
+          )}
+          {archivable && (
+            <button
+              type="button"
+              onClick={handleArchiveClick}
+              disabled={isBusy || !canArchiveContract}
+              className={`btn-danger text-sm py-1.5 px-3 ${!canArchiveContract ? 'opacity-60 cursor-not-allowed' : ''}`}
+              title={
+                canArchiveContract
+                  ? 'Sözleşmeyi listeden kaldırır; kayıt silinmez'
+                  : 'Arşivleme yetkiniz bulunmuyor'
+              }
+            >
+              Arşivle
+            </button>
+          )}
+          {!isNew && archived && canArchiveContract && (
+            <button
+              type="button"
+              onClick={() => setShowUnarchiveConfirm(true)}
+              disabled={isBusy}
+              className="btn-primary text-sm py-1.5 px-3"
+              title="Sözleşmeyi arşivden geri getirir"
+            >
+              Geri Getir
+            </button>
+          )}
+          {!isNew && active && !cancelled && (
+            <button
+              type="button"
+              onClick={handleCancelClick}
+              disabled={isBusy}
+              className={`btn-danger text-sm py-1.5 px-3 ${!canCancelContract ? 'opacity-60' : ''}`}
+              title={
+                canCancelContract
+                  ? 'Sözleşmeyi iptal eder; kaynak teklif varsa aktif tekliflere geri döner'
+                  : 'Sözleşme iptal yetkiniz yok'
+              }
+            >
+              İptal Et
+            </button>
+          )}
+          {!isNew && active && !cancelled && contractType === 'SALE' && hasSourceQuote && (
+            <button
+              type="button"
+              onClick={handleRevertClick}
+              disabled={isBusy}
+              className={`btn-danger text-sm py-1.5 px-3 ${!canRevertToQuote ? 'opacity-60' : ''}`}
+              title={
+                canRevertToQuote
+                  ? 'Sözleşmeyi kaldırır ve kaynak teklifi beklemede duruma alır'
+                  : 'Teklife geri alma yetkiniz yok'
+              }
+            >
+              Teklife Geri Al
+            </button>
+          )}
+          {!isNew && isRentalContract && active && !cancelled && (
+            <button
+              type="button"
+              onClick={() => setShowCompleteConfirm(true)}
+              disabled={isBusy}
+              className="btn-success text-sm py-1.5 px-3"
+            >
+              Tamamla
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setIsFullScreen(prev => !prev)}
@@ -1385,6 +1759,38 @@ export default function ContractDetailModal({
 
       <div className="flex-1 overflow-auto">
         <div className={`w-full mx-auto p-6 transition-all duration-200 ${isFullScreen ? 'max-w-none px-8' : 'max-w-6xl'}`}>
+        {!isNew && archivable && (
+          <section className="mb-4 rounded-xl border border-green-800/40 bg-green-950/20 px-4 py-3 text-sm text-green-100">
+            Bu sözleşme {cancelled ? 'iptal edilmiş' : 'tamamlanmış'}; bilgiler salt okunurdur. Listeden kaldırmak için{' '}
+            <span className="font-medium">Arşivle</span> kullanın.
+          </section>
+        )}
+        {!isNew && archived && (
+          <section className="mb-4 rounded-xl border border-amber-700/40 bg-amber-900/15 px-4 py-3 text-sm text-amber-100">
+            Bu kayıt arşivlenmiştir; düzenleme, iptal ve iade yapılamaz. Bilgiler salt okunurdur.
+            {effectiveContract?.ArchiveReason?.trim() ? (
+              <span className="block mt-1 text-amber-200/90">
+                Arşiv notu: {effectiveContract.ArchiveReason.trim()}
+              </span>
+            ) : null}
+          </section>
+        )}
+        {!isNew && cancelled && !archived && (
+          <section className="mb-4 rounded-xl border border-amber-700/40 bg-amber-900/15 px-4 py-3 text-sm text-amber-100">
+            Bu sözleşme iptal edilmiş; tekrar iptal edilemez.
+          </section>
+        )}
+        {!isNew && !active && !cancelled && !completed && effectiveContract && (
+          <section className="mb-4 rounded-xl border border-background-border bg-background-panel px-4 py-3 text-sm text-text-secondary">
+            Sözleşme durumu belirlenemedi. Sayfayı yenileyip tekrar deneyin.
+          </section>
+        )}
+        {!isNew && active && !canCancelContract && (
+          <section className="mb-4 rounded-xl border border-amber-700/40 bg-amber-900/15 px-4 py-3 text-sm text-amber-100">
+            Bu sözleşmeyi iptal etmek için yetkiniz bulunmuyor. Eski &quot;Sil&quot; işlemi kaldırıldı;
+            bağlı teklifi serbest bırakmak için <span className="font-medium">sözleşme iptal</span> yetkisi gerekir.
+          </section>
+        )}
         {!isNew && (
           <div className="flex gap-2 mb-4 border-b border-background-border pb-2">
             <button
@@ -1397,7 +1803,7 @@ export default function ContractDetailModal({
             >
               Bilgiler
             </button>
-            {isRentalContract && (fullContract ?? contract) && !(fullContract ?? contract)!.IsCompleted && (
+            {isRentalContract && active && (fullContract ?? contract) && (
             <button
               type="button"
               onClick={() => {
@@ -1678,6 +2084,31 @@ export default function ContractDetailModal({
         {(activeTab === 'info' || isNew) && (
         <>
         <div className="space-y-4">
+          {cancelled && effectiveContract && (
+            <section className="rounded-xl border border-amber-700/50 bg-amber-900/20 p-4 shadow-sm">
+              <h3 className="text-sm font-semibold text-amber-100 mb-2">İptal Bilgileri</h3>
+              <div className="text-sm text-amber-50/90 space-y-1">
+                <p>
+                  <span className="font-medium">İptal Tarihi:</span>{' '}
+                  {effectiveContract.CancelledAt
+                    ? formatShortDateTime(effectiveContract.CancelledAt)
+                    : '—'}
+                </p>
+                <p>
+                  <span className="font-medium">İptal Gerekçesi:</span>{' '}
+                  {effectiveContract.CancellationReason?.trim() || '—'}
+                </p>
+              </div>
+            </section>
+          )}
+          {isNew && saveStockError && (
+            <StockErrorPanel
+              message={saveStockError}
+              onRetry={handleSave}
+              onReduceQuantity={handleReduceSaveStockQuantity}
+              onDismiss={() => setSaveStockError(null)}
+            />
+          )}
           {/* Üst: Genel Bilgiler - teklif ekranı gibi yatay grid */}
           <section className="rounded-xl border border-background-border bg-background-panel p-3 shadow-sm">
             <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 pb-1.5 border-b border-background-border">
@@ -1806,35 +2237,18 @@ export default function ContractDetailModal({
               )}
 
               {selectedCustomerId && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
-                    Şantiye Seçimi {sites.length > 0 ? '*' : '(Opsiyonel)'}
-                  </label>
-                  {sitesLoading ? (
-                    <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
-                  ) : sites.length > 0 ? (
-                    <select
-                      value={selectedSiteId}
-                      onChange={(e) => setSelectedSiteId(Number(e.target.value) || '')}
-                      disabled={isReadOnly}
-                      className="input w-full text-sm py-1.5"
-                      required={sites.length > 0}
-                    >
-                      <option value="">Şantiye seçin</option>
-                      {sites.map((site) => (
-                        <option key={site.SiteId} value={site.SiteId}>
-                          {site.SiteName}
-                          {site.SiteAddress && ` - ${site.SiteAddress}`}
-                          {site.ResponsiblePerson && ` (${site.ResponsiblePerson})`}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="input w-full text-text-secondary bg-background-secondary text-sm py-2">
-                      Bu müşterinin şantiyesi yok
-                    </div>
-                  )}
-                </div>
+                <SiteSelectField
+                  sites={sites}
+                  sitesLoading={sitesLoading}
+                  selectedSiteId={selectedSiteId}
+                  isNewSiteMode={isNewSiteMode}
+                  newSiteForm={newSiteForm}
+                  onSelectSite={handleSiteSelect}
+                  onNewSiteFormChange={handleNewSiteFormChange}
+                  onCancelNewSite={resetNewSiteMode}
+                  required={sites.length > 0}
+                  disabled={isReadOnly}
+                />
               )}
 
               <div className="space-y-0.5">
@@ -1985,7 +2399,10 @@ export default function ContractDetailModal({
                 {contractType === 'SALE' && (
                   <span className="text-text-secondary/90">Satış sözleşmesinde tutarlar birim satış fiyatı × miktar; kiralama süresi çarpanı uygulanmaz.</span>
                 )}
-                <span><span className="font-medium text-text-primary">Durum:</span> {contract?.IsCompleted ? 'Tamamlandı' : 'Aktif'}</span>
+                <span>
+                  <span className="font-medium text-text-primary">Durum:</span>{' '}
+                  {cancelled ? 'İptal Edildi' : completed ? 'Tamamlandı' : 'Aktif'}
+                </span>
               </div>
               <div className="flex flex-wrap gap-2">
                 {/* Not: Mevcut sözleşmede picker ile ürün ekleme backend'e gitmediği için kapalı.
@@ -2048,28 +2465,7 @@ export default function ContractDetailModal({
                     {isAddingMaterialTable ? 'Ekleniyor...' : 'Tabloyu Şablona Ekle'}
                   </button>
                 )}
-                {!isNew && isReadOnly && (
-                  <>
-                    <button type="button" onClick={() => setIsReadOnly(false)} className="btn-primary" disabled={isBusy}>
-                      Düzenle
-                    </button>
-                    {contract &&
-                      contractType === 'SALE' &&
-                      !contract.IsCompleted &&
-                      canRevertToQuote && (
-                        <button
-                          type="button"
-                          onClick={() => setShowRevertConfirm(true)}
-                          disabled={isBusy}
-                          className="btn-danger"
-                          title="Satışlarda planlanan bitiş tarihi kullanılmaz; bu işlem sözleşmeyi teklife geri alır."
-                        >
-                          Teklife Geri Al
-                        </button>
-                      )}
-                  </>
-                )}
-                {!isNew && contract && !contract.IsCompleted && (
+                {!isNew && contract && active && (
                   <button
                     type="button"
                     onClick={() => setShowAddLineItemModal(true)}
@@ -2077,14 +2473,6 @@ export default function ContractDetailModal({
                   >
                     Kalem Ekle
                   </button>
-                )}
-                {!isReadOnly && !isNew && contract && !contract.IsCompleted && (
-                  <>
-                    <button type="button" onClick={handleDeleteClick} disabled={isBusy} className="btn-danger">Sil</button>
-                    {isRentalContract && (
-                      <button type="button" onClick={() => setShowCompleteConfirm(true)} disabled={isBusy} className="btn-success">Tamamla</button>
-                    )}
-                  </>
                 )}
                 {!isNew && contract && selectedTemplateId && (
                   <>
@@ -2095,10 +2483,15 @@ export default function ContractDetailModal({
                     <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className="btn-secondary text-sm">Word İndir</button>
                   </>
                 )}
-                {!isReadOnly && (
+                {!isReadOnly && !completed && (
                   <>
                     <button type="button" onClick={onClose} className="btn-secondary">İptal</button>
-                    <button type="button" onClick={handleSave} disabled={isBusy} className="btn-primary">
+                    <button
+                      type="button"
+                      onClick={handleSave}
+                      disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
+                      className="btn-primary"
+                    >
                       {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
                     </button>
                   </>
@@ -2341,7 +2734,7 @@ export default function ContractDetailModal({
                             </td>
                             <td className="px-3 py-2 text-right font-medium text-green-500">{formatCurrency(getLineTotal(item))}</td>
                             <td className="px-2 py-2 text-center">
-                              {isRentalContract && !isNew && item.kind === 'inventory' && (fullContract ?? contract) && !(fullContract ?? contract)!.IsCompleted && remainingOnRent > 0 && isReadOnly && (
+                              {isRentalContract && !isNew && item.kind === 'inventory' && active && remainingOnRent > 0 && isReadOnly && (
                                 <button type="button" onClick={() => openReturnForm(item)} className="btn-secondary text-xs px-2 py-1" disabled={isReturning}>İade Et</button>
                               )}
                               {!isReadOnly && (
@@ -2440,7 +2833,7 @@ export default function ContractDetailModal({
               </div>
             )}
 
-            {!isNew && contract && !contract.IsCompleted && (
+            {!isNew && contract && active && (
               <div className="mt-3 pt-3 border-t border-background-border">
                 <div className="flex items-center justify-between mb-2">
                   <div>
@@ -2483,20 +2876,135 @@ export default function ContractDetailModal({
         )}
       </div>
 
+      {showCancelReasonModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">İptal Gerekçesi</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Sözleşmeyi iptal etmek için lütfen gerekçeyi belirtin.
+            </p>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => {
+                setCancelReason(e.target.value);
+                setCancelReasonError(null);
+              }}
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Müşteri talebi / Yanlış kayıt"
+            />
+            {cancelReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {cancelReasonError}
+              </div>
+            )}
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCancelReasonModal(false);
+                  setCancelReason('');
+                  setCancelReasonError(null);
+                }}
+                disabled={isBusy}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={handleCancelReasonContinue}
+                disabled={isBusy}
+                className="btn-primary flex-1"
+              >
+                Devam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <ConfirmModal
-        open={showDeleteConfirm}
-        title="Onaylıyor musunuz?"
-        message="Bu sözleşmeyi silmek istediğinizden emin misiniz?"
+        open={showCancelConfirm}
+        title="Sözleşmeyi iptal et"
+        message={`Aşağıdaki sözleşmeyi iptal edeceksiniz.\n\nSözleşme: #${contract?.ContractId ?? '-'}\nİptal Gerekçesi: ${cancelReason.trim()}`}
+        confirmLabel="İptal Et"
+        cancelLabel="Vazgeç"
         variant="danger"
         loading={isBusy}
-        onConfirm={handleDeleteConfirm}
-        onCancel={() => setShowDeleteConfirm(false)}
+        onConfirm={() => void handleCancelConfirm()}
+        onCancel={() => {
+          setShowCancelConfirm(false);
+          setCancelReason('');
+          setCancelReasonError(null);
+        }}
+      />
+
+      {showArchiveModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">Sözleşmeyi arşivle</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Bu sözleşme listeden kaldırılacaktır. Kayıt silinmeyecek; raporlar ve geçmiş veriler korunacaktır.
+            </p>
+            <label className="block text-xs text-text-secondary mb-1">İsteğe bağlı not</label>
+            <textarea
+              value={archiveReason}
+              onChange={(e) => {
+                setArchiveReason(e.target.value);
+                setArchiveReasonError(null);
+              }}
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Eski kayıt — listeden kaldır"
+              disabled={isBusy}
+            />
+            {archiveReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {archiveReasonError}
+              </div>
+            )}
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  if (isBusy) return;
+                  setShowArchiveModal(false);
+                  setArchiveReason('');
+                  setArchiveReasonError(null);
+                }}
+                disabled={isBusy}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleArchiveConfirm()}
+                disabled={isBusy || !canArchiveContract}
+                className="btn-danger flex-1"
+              >
+                {isBusy ? 'Arşivleniyor…' : 'Arşivle'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={showUnarchiveConfirm}
+        title="Sözleşmeyi arşivden geri getir"
+        message="Sözleşme tekrar ilgili durum sekmesinde (Tamamlanan / İptal Edilen) görünecektir."
+        confirmLabel="Geri Getir"
+        cancelLabel="Vazgeç"
+        loading={isBusy}
+        onConfirm={() => void handleUnarchiveConfirm()}
+        onCancel={() => setShowUnarchiveConfirm(false)}
+        zIndexClass="z-[70]"
       />
 
       <ConfirmModal
         open={showRevertConfirm}
         title="Teklife geri alınsın mı?"
-        message="Sözleşme silinecek, stok hareketleri ve dönüşümle oluşan stok fişi geri alınacak. Kaynak teklif varsa tekrar 'Beklemede' duruma alınacak ve düzenlenebilir olacak. Devam edilsin mi?"
+        message="Sözleşme tamamen silinecek, kaynak teklif taslak durumuna dönecek. Devam?"
         confirmLabel="Teklife Geri Al"
         cancelLabel="Vazgeç"
         variant="danger"

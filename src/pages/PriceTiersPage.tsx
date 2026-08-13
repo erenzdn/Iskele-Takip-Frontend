@@ -92,23 +92,20 @@ export default function PriceTiersPage() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Fiyat Tarifeleri</h1>
-        <div className="flex items-center gap-2">
-          <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
-          <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Tarife</button>
-        </div>
+    <div>
+      <div className="mb-2 flex items-center justify-end gap-2">
+        <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">Yenile</button>
+        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">+ Yeni Tarife</button>
       </div>
 
-      <div className="mb-3 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
+      <div className="mb-2 rounded border border-background-border bg-background-panel p-2 flex flex-wrap items-center gap-2">
         <span className="text-xs text-text-secondary whitespace-nowrap">Kriterler:</span>
         <select
           value={selectedInventoryFilter?.ItemId || ''}
@@ -134,7 +131,7 @@ export default function PriceTiersPage() {
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-200px)] min-h-[280px]">
+          <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>

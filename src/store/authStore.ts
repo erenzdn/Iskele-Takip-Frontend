@@ -6,71 +6,43 @@ interface AuthState {
   user: LoginUserDto | null;
   isAuthenticated: boolean;
   login: (token: string, user: LoginUserDto) => void;
-  logout: () => void;
+  logout: () => void | Promise<void>;
+  setToken: (token: string) => void;
 }
 
-function isValidPersistedUser(value: unknown): value is LoginUserDto {
-  if (!value || typeof value !== 'object') return false;
-  const candidate = value as Record<string, unknown>;
-  const hasValidUserId =
-    typeof candidate.userId === 'number' ||
-    typeof candidate.userId === 'string';
-  const hasValidUsername = typeof candidate.username === 'string';
-  return hasValidUserId && hasValidUsername;
-}
+export const useAuthStore = create<AuthState>((set, get) => ({
+  // Zero-Trust: Uygulama açıldığında token/user null, kullanıcı login ekranına yönlendirilir
+  token: null,
+  user: null,
+  isAuthenticated: false,
 
-function readPersistedAuth(): { token: string | null; user: LoginUserDto | null } {
-  let token = localStorage.getItem('auth_token');
-  let user: LoginUserDto | null = null;
-
-  const rawUser = localStorage.getItem('auth_user');
-  if (rawUser) {
-    try {
-      const parsed = JSON.parse(rawUser) as Record<string, unknown>;
-      if (parsed.UserId !== undefined) {
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('auth_user');
-        token = null;
-        user = null;
-      } else if (!isValidPersistedUser(parsed)) {
-        localStorage.removeItem('auth_token');
-        localStorage.removeItem('auth_user');
-        token = null;
-        user = null;
-      } else {
-        user = parsed as unknown as LoginUserDto;
-      }
-    } catch {
-      localStorage.removeItem('auth_token');
-      localStorage.removeItem('auth_user');
-      token = null;
-      user = null;
-    }
-  }
-
-  if (!token || !user) {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_user');
-    return { token: null, user: null };
-  }
-
-  return { token, user };
-}
-
-const { token: initialToken, user: initialUser } = readPersistedAuth();
-
-export const useAuthStore = create<AuthState>((set) => ({
-  token: initialToken,
-  user: initialUser,
-  isAuthenticated: !!initialToken && !!initialUser,
   login: (token: string, user: LoginUserDto) => {
-    localStorage.setItem('auth_token', token);
-    localStorage.setItem('auth_user', JSON.stringify(user));
+    // Token ve kullanıcı bilgisini sadece RAM'de (Zustand state) tutuyoruz
     set({ token, user, isAuthenticated: true });
   },
-  logout: () => {
-    localStorage.removeItem('auth_token');
-    localStorage.removeItem('auth_user');
+
+  logout: async () => {
+    // State'i temizle
     set({ token: null, user: null, isAuthenticated: false });
+
+    // Backend'e logout isteği at (httpOnly cookie temizliği için)
+    try {
+      const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
+      await fetch(`${BASE_URL}/auth/logout`, {
+        method: 'POST',
+        credentials: 'include', // Refresh token cookie'sini gönder
+      });
+    } catch (error) {
+      console.warn('[AUTH] Logout isteği başarısız oldu:', error);
+      // Hata olsa bile client tarafında state temizlendi, devam et
+    }
+  },
+
+  // Silent refresh sonrası yeni accessToken'ı set etmek için
+  setToken: (token: string) => {
+    const currentUser = get().user;
+    if (currentUser) {
+      set({ token, isAuthenticated: true });
+    }
   },
 }));

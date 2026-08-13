@@ -37,6 +37,9 @@ interface CustomerDetailModalProps {
   startInEditMode?: boolean;
   initialTab?: CustomerModalInitialTab;
   onClose: () => void;
+  /** Kayıt başarılı olunca çağrılır (teklif ekranından yeni müşteri seçmek için). */
+  onSaved?: (result: { customerId: number; isNew: boolean }) => void;
+  overlayClassName?: string;
 }
 
 export default function CustomerDetailModal({
@@ -45,6 +48,8 @@ export default function CustomerDetailModal({
   startInEditMode = false,
   initialTab = 'info',
   onClose,
+  onSaved,
+  overlayClassName = 'z-50',
 }: CustomerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<'info' | 'sites' | 'history'>(initialTab);
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
@@ -326,9 +331,11 @@ export default function CustomerDetailModal({
         AuthorizedContacts: normalizeAuthorizedContactsForPayload(authorizedContacts),
       };
       if (isNew) {
-        await customerService.createAsync(payload);
+        const created = await customerService.createAsync(payload);
+        onSaved?.({ customerId: created.CustomerId, isNew: true });
       } else if (customer) {
         await customerService.updateAsync(customer.CustomerId, payload);
+        onSaved?.({ customerId: customer.CustomerId, isNew: false });
       }
       onClose();
     } catch (error: any) {
@@ -475,7 +482,7 @@ export default function CustomerDetailModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/60 p-3">
+    <div className={`fixed inset-0 ${overlayClassName} bg-black/60 p-3`}>
       <div className="mx-auto flex h-[calc(100vh-1.5rem)] w-full max-w-[1600px] flex-col rounded-panel border border-background-border bg-background-panel p-4 shadow-2xl">
         <div className="mb-2 flex items-start justify-between rounded border border-background-border bg-background-surface px-3 py-2">
           <div>

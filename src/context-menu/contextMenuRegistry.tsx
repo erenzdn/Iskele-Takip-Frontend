@@ -1,4 +1,5 @@
 import {
+  ArchiveIcon,
   BuildingsIcon,
   CheckCircleIcon,
   CircleIcon,
@@ -16,10 +17,13 @@ import {
   TrashIcon,
   WrenchIcon,
 } from '@phosphor-icons/react';
+import { isInventoryArchived } from '../models';
 import type { ContextMenuActionConfig, ContextMenuEnvironment, ContextMenuKey, ContextMenuTarget } from './types';
 
 const iconSize = 16;
 const isScaffoldTarget = (target: ContextMenuTarget) => target.entityType === 'scaffold';
+const isScaffoldArchived = (target: ContextMenuTarget) =>
+  isScaffoldTarget(target) && isInventoryArchived(target.rawData);
 const isCustomerTarget = (target: ContextMenuTarget) => target.entityType === 'customer';
 const isContractTarget = (target: ContextMenuTarget) => target.entityType === 'contract';
 const isQuoteTarget = (target: ContextMenuTarget) => target.entityType === 'quote';
@@ -75,22 +79,37 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
           label: 'Stok Gir',
           icon: <PlusCircleIcon size={iconSize} />,
           requiredPermissions: ['inventory_update'],
-          enabledWhen: (target) => isScaffoldTarget(target) && target.rawData.TotalStock >= 0,
+          enabledWhen: (target) =>
+            isScaffoldTarget(target) &&
+            !isScaffoldArchived(target) &&
+            target.rawData.TotalStock >= 0,
           handlerKey: 'scaffold.stockEntry',
         },
         {
           id: 'delete',
-          label: 'Sil',
+          label: 'Listeden Kaldır',
           icon: <TrashIcon size={iconSize} />,
           intent: 'danger',
           requiredPermissions: ['inventory_delete'],
-          enabledWhen: (target) => isScaffoldTarget(target) && target.rawData.OnRent === 0,
+          enabledWhen: (target) =>
+            isScaffoldTarget(target) &&
+            !isScaffoldArchived(target) &&
+            target.rawData.OnRent === 0,
           handlerKey: 'scaffold.delete',
           confirm: {
-            title: 'Kaydi silmek istiyor musunuz?',
-            message: (target) => `"${target.itemName}" kaydini silmek istediginize emin misiniz?`,
-            confirmLabel: 'Sil',
+            title: 'Ürünü pasife almak istiyor musunuz?',
+            message: (target) =>
+              `"${target.itemName}" ürününü pasife almak istediğinize emin misiniz? Pasif ürünler yeni teklif ve sözleşmelerde seçilemez; geçmiş kayıtlar korunur.`,
+            confirmLabel: 'Listeden Kaldır',
           },
+        },
+        {
+          id: 'restore',
+          label: 'Geri Getir',
+          icon: <ArrowsCounterClockwiseIcon size={iconSize} />,
+          requiredPermissions: ['inventory_delete'],
+          enabledWhen: (target) => isScaffoldTarget(target) && isScaffoldArchived(target),
+          handlerKey: 'scaffold.restore',
         },
       ],
     },
@@ -110,7 +129,8 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
           label: 'Aktif',
           icon: <CheckCircleIcon size={iconSize} />,
           requiredPermissions: ['inventory_update'],
-          enabledWhen: (target) => isScaffoldTarget(target) && target.rawData.TotalStock > 0,
+          enabledWhen: (target) =>
+            isScaffoldTarget(target) && !isScaffoldArchived(target) && target.rawData.TotalStock > 0,
           handlerKey: 'scaffold.status.active',
         },
         {
@@ -118,7 +138,8 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
           label: 'Pasif',
           icon: <CircleIcon size={iconSize} />,
           requiredPermissions: ['inventory_update'],
-          enabledWhen: (target) => isScaffoldTarget(target) && target.rawData.TotalStock > 0,
+          enabledWhen: (target) =>
+            isScaffoldTarget(target) && !isScaffoldArchived(target) && target.rawData.TotalStock > 0,
           handlerKey: 'scaffold.status.passive',
         },
         {
@@ -126,7 +147,8 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
           label: 'Bakimda',
           icon: <WrenchIcon size={iconSize} />,
           requiredPermissions: ['inventory_update'],
-          enabledWhen: (target) => isScaffoldTarget(target) && target.rawData.TotalStock > 0,
+          enabledWhen: (target) =>
+            isScaffoldTarget(target) && !isScaffoldArchived(target) && target.rawData.TotalStock > 0,
           handlerKey: 'scaffold.status.maintenance',
         },
       ],
@@ -224,7 +246,33 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       icon: <ClockIcon size={iconSize} />,
       handlerKey: 'contract.returnTab',
       enabledWhen: (target) =>
-        Boolean(isContractTarget(target) && target.rawData.IsRental && !target.rawData.IsCompleted),
+        Boolean(
+          isContractTarget(target) &&
+            target.rawData.IsRental &&
+            !target.rawData.IsCompleted &&
+            !target.rawData.IsCancelled &&
+            !target.rawData.IsArchived
+        ),
+    },
+    {
+      id: 'contract-archive',
+      label: 'Arsivle',
+      icon: <ArchiveIcon size={iconSize} />,
+      handlerKey: 'contract.archive',
+      enabledWhen: (target) =>
+        Boolean(
+          isContractTarget(target) &&
+            !target.rawData.IsArchived &&
+            (target.rawData.IsCompleted || target.rawData.IsCancelled)
+        ),
+    },
+    {
+      id: 'contract-unarchive',
+      label: 'Geri Getir',
+      icon: <ArrowsCounterClockwiseIcon size={iconSize} />,
+      handlerKey: 'contract.unarchive',
+      enabledWhen: (target) =>
+        Boolean(isContractTarget(target) && target.rawData.IsArchived),
     },
     {
       id: 'contract-complete',
@@ -232,7 +280,13 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       icon: <CheckCircleIcon size={iconSize} />,
       handlerKey: 'contract.complete',
       enabledWhen: (target) =>
-        Boolean(isContractTarget(target) && target.rawData.IsRental && !target.rawData.IsCompleted),
+        Boolean(
+          isContractTarget(target) &&
+            target.rawData.IsRental &&
+            !target.rawData.IsCompleted &&
+            !target.rawData.IsCancelled &&
+            !target.rawData.IsArchived
+        ),
       confirm: {
         title: 'Sozlesme tamamlansin mi?',
         message: (target) => `"${target.itemName}" sozlesmesini tamamlamak istediginize emin misiniz?`,
@@ -283,7 +337,11 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
           icon: <CheckCircleIcon size={iconSize} />,
           handlerKey: 'quote.accept',
           enabledWhen: (target) =>
-            Boolean(isQuoteTarget(target) && target.rawData.Status !== 'accepted'),
+            Boolean(
+              isQuoteTarget(target) &&
+                target.rawData.Status !== 'accepted' &&
+                !target.rawData.ConvertedContractId
+            ),
         },
         {
           id: 'quote-rollback',
@@ -291,7 +349,11 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
           icon: <ArrowsCounterClockwiseIcon size={iconSize} />,
           handlerKey: 'quote.rollback',
           enabledWhen: (target) =>
-            Boolean(isQuoteTarget(target) && target.rawData.Status !== 'pending'),
+            Boolean(
+              isQuoteTarget(target) &&
+                target.rawData.Status !== 'pending' &&
+                !target.rawData.ConvertedContractId
+            ),
         },
         {
           id: 'quote-convert',
@@ -299,9 +361,21 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
           icon: <ClipboardTextIcon size={iconSize} />,
           handlerKey: 'quote.convert',
           enabledWhen: (target) =>
-            Boolean(isQuoteTarget(target) && target.rawData.Status === 'accepted'),
+            Boolean(
+              isQuoteTarget(target) &&
+                target.rawData.Status === 'accepted' &&
+                !target.rawData.ConvertedContractId
+            ),
         },
       ],
+    },
+    {
+      id: 'quote-open-contract',
+      label: 'Sozlesmeye git',
+      icon: <ClipboardTextIcon size={iconSize} />,
+      handlerKey: 'quote.openContract',
+      enabledWhen: (target) =>
+        Boolean(isQuoteTarget(target) && target.rawData.ConvertedContractId),
     },
     {
       id: 'quote-delete',

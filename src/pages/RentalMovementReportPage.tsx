@@ -267,7 +267,7 @@ export default function RentalMovementReportPage() {
 
   if (!hasPermission) {
     return (
-      <div className="p-8">
+      <div>
         <div className="card p-8 text-center">
           <p className="text-lg text-text-secondary">Bu sayfayı görüntüleme yetkiniz yok.</p>
           <p className="text-sm text-text-secondary mt-2">
@@ -279,16 +279,11 @@ export default function RentalMovementReportPage() {
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Kiralama Hareket Raporu</h1>
-      </div>
-
-      <div className="card p-4 mb-3">
-        <h2 className="font-semibold mb-3">Filtreler</h2>
-
-        <div className="mb-4">
-          <label className="block text-sm text-text-secondary mb-2">Rapor Türü</label>
+    <div>
+      {/* Başlık layout'ta; filtreler aşağıda */}
+      <div className="card p-3 mb-2">
+        <div className="mb-3">
+          <label className="block text-xs text-text-secondary mb-1.5">Rapor Türü</label>
           <div className="flex flex-wrap gap-4">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
@@ -517,7 +512,7 @@ export default function RentalMovementReportPage() {
         />
       ) : data && data.items.length > 0 ? (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
-          <div className="overflow-auto max-h-[calc(100vh-420px)] min-h-[280px]">
+          <div className="overflow-auto max-h-[calc(100vh-340px)] min-h-[280px]">
             <table className="w-full text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>

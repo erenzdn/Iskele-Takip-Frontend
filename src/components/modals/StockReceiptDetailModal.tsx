@@ -15,7 +15,7 @@ import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
 import { reportTemplateService } from '../../services/reportTemplateService';
 import { useAuthStore } from '../../store/authStore';
-import { getApiErrorMessage, getStockReceiptDeleteErrorMessage } from '../../utils/apiError';
+import { getApiErrorMessage, getStockReceiptDeleteErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { canDeleteStockReceipt, isStockReceiptCancelled } from '../../utils/stockReceiptPermissions';
 import { toast } from '../../hooks/useToast';
 import { formatShortDateTime } from '../../utils/formatters';
@@ -85,7 +85,7 @@ export default function StockReceiptDetailModal({
   const [isNewTemplate, setIsNewTemplate] = useState(false);
 
   useEffect(() => {
-    warehouseService.getAllAsync().then(setWarehouses).catch(() => setWarehouses([]));
+    warehouseService.getActiveAsync().then(setWarehouses).catch(() => setWarehouses([]));
     inventoryService.getAllAsync().then(setInventoryItems).catch(() => setInventoryItems([]));
   }, []);
 
@@ -274,13 +274,13 @@ export default function StockReceiptDetailModal({
       await stockReceiptService.createAsync(payload);
       const [refetchedInventory, refetchedWarehouses] = await Promise.all([
         inventoryService.getAllAsync(),
-        warehouseService.getAllAsync(),
+        warehouseService.getActiveAsync(),
       ]);
       setInventoryItems(refetchedInventory ?? []);
       setWarehouses(refetchedWarehouses ?? []);
       onClose();
     } catch (error) {
-      setCreateError(getApiErrorMessage(error) || 'Fiş oluşturulamadı.');
+      setCreateError(getUserFacingApiErrorMessage(error, 'stock-receipt'));
     } finally {
       setIsBusy(false);
     }

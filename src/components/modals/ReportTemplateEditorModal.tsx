@@ -68,6 +68,11 @@ export default function ReportTemplateEditorModal({
       content: [],
     },
     editable: true,
+    editorProps: {
+      attributes: {
+        class: 'focus:outline-none',
+      },
+    },
   });
 
   useEffect(() => {
@@ -176,12 +181,12 @@ export default function ReportTemplateEditorModal({
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
-      <div className="bg-background-panel rounded-panel w-full max-w-6xl p-6 max-h-[95vh] overflow-y-auto">
-        <h2 className="text-2xl font-bold mb-6">
-          {isNew ? 'Yeni Rapor Şablonu Oluştur' : 'Rapor Şablonu Düzenle'}
-        </h2>
+      <div className="bg-background-panel rounded-panel w-full max-w-6xl flex flex-col max-h-[95vh] overflow-hidden">
+        <div className="px-6 pt-6 pb-4 shrink-0">
+          <h2 className="text-2xl font-bold mb-4">
+            {isNew ? 'Yeni Rapor Şablonu Oluştur' : 'Rapor Şablonu Düzenle'}
+          </h2>
 
-        <div className="space-y-4">
           <div>
             <label className="block text-sm font-medium mb-2">Şablon Adı *</label>
             <input
@@ -192,7 +197,9 @@ export default function ReportTemplateEditorModal({
               placeholder="Örn: Standart Kiralama Hareket Raporu"
             />
           </div>
+        </div>
 
+        <div className="px-6 shrink-0">
           <div className="card p-3 flex flex-wrap gap-2">
             <button
               onClick={() => editor.chain().focus().toggleBold().run()}
@@ -277,30 +284,32 @@ export default function ReportTemplateEditorModal({
               Hareket Tablosu
             </button>
           </div>
+        </div>
 
-          <div className="card p-4 min-h-[400px]">
+        <div className="template-editor-workspace flex-1 p-2 md:p-4 flex justify-center overflow-auto min-h-0">
+          <div className="template-editor-paper text-text-primary my-2">
             <EditorContent editor={editor} />
           </div>
+        </div>
 
-          <div className="flex gap-3">
-            <button onClick={onClose} className="btn-secondary flex-1">
-              İptal
-            </button>
-            <button
-              onClick={handlePreview}
-              disabled={isBusy}
-              className="btn-secondary flex-1"
-            >
-              {isBusy ? 'Önizleniyor...' : 'Önizle'}
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={isBusy}
-              className="btn-primary flex-1"
-            >
-              {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
-            </button>
-          </div>
+        <div className="px-6 py-4 flex gap-3 shrink-0 border-t border-background-border">
+          <button onClick={onClose} className="btn-secondary flex-1">
+            İptal
+          </button>
+          <button
+            onClick={handlePreview}
+            disabled={isBusy}
+            className="btn-secondary flex-1"
+          >
+            {isBusy ? 'Önizleniyor...' : 'Önizle'}
+          </button>
+          <button
+            onClick={handleSave}
+            disabled={isBusy}
+            className="btn-primary flex-1"
+          >
+            {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+          </button>
         </div>
       </div>
       <PdfPreviewModal

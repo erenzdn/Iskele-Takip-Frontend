@@ -1,23 +1,40 @@
-import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent } from 'react';
+﻿import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent } from 'react';
 import { MagnifyingGlassIcon, PackageIcon } from '@phosphor-icons/react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
-import { Inventory, MaterialCategory } from '../models';
+import { Inventory, MaterialCategory, isInventoryArchived } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
+import { getInventoryDeleteErrorMessage, getInventoryRestoreErrorResult } from '../utils/apiError';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { toast } from '../hooks/useToast';
 import EmptyState from '../components/EmptyState';
 import ExcelManager from '../components/ExcelManager';
 import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
+import ConfirmModal from '../components/modals/ConfirmModal';
 import { useAuthStore } from '../store/authStore';
+import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
+import { useTableColumnPreferencesStore } from '../store/tableColumnPreferencesStore';
+import {
+  INVENTORY_TABLE_COLUMNS,
+  getVisibleColumnWidths,
+  type InventoryColumnKey,
+} from '../constants/tableColumns';
 import { useContextMenu, useContextMenuHandlers, type ContextMenuActionHandlers, type ScaffoldRowTarget } from '../context-menu';
 import { useHeaderActions } from '../layouts/HeaderActionsContext';
+
+type StockStatusFilter = 'all' | 'onRent' | 'available';
+
+function parseStockStatus(value: string | null): StockStatusFilter {
+  if (value === 'onRent' || value === 'available') return value;
+  return 'all';
+}
 
 export default function InventoryPage() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((state) => state.user);
   const permissions = user?.permissions ?? [];
   const canUpdate = permissions.includes('inventory_update');
@@ -39,15 +56,43 @@ export default function InventoryPage() {
   const debouncedSearch = useDebouncedValue(searchText, 300);
   const [minAvailable, setMinAvailable] = useState<number | ''>('');
   const [maxAvailable, setMaxAvailable] = useState<number | ''>('');
+  const [stockStatus, setStockStatus] = useState<StockStatusFilter>(() =>
+    parseStockStatus(searchParams.get('stockStatus'))
+  );
   const [selectedLanguage, setSelectedLanguage] = useState<'tr' | 'en'>('tr');
   const [listLoading, setListLoading] = useState(false);
+  const inventoryColumnVisibility = useTableColumnPreferencesStore((s) => s.inventory);
+  const showArchived = useArchivePreferencesStore((s) => s.showArchivedInventory);
   const [categoriesReady, setCategoriesReady] = useState(false);
   const [subCategoryOptions, setSubCategoryOptions] = useState<string[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
+  const inventoryColumnWidths = useMemo(() => {
+    const base = getVisibleColumnWidths(INVENTORY_TABLE_COLUMNS, inventoryColumnVisibility);
+    const reservedPct =
+      (selectionMode ? 4 : 0) + (showArchived && canDelete ? 8 : 0);
+    if (reservedPct <= 0) return base;
+    const scale = (100 - reservedPct) / 100;
+    const scaled: Partial<Record<InventoryColumnKey, number>> = {};
+    for (const [key, pct] of Object.entries(base) as [InventoryColumnKey, number][]) {
+      scaled[key] = pct * scale;
+    }
+    return scaled;
+  }, [inventoryColumnVisibility, selectionMode, showArchived, canDelete]);
+  const isInventoryColVisible = (key: InventoryColumnKey) => inventoryColumnVisibility[key];
+  const inventoryColWidthStyle = (key: InventoryColumnKey) => {
+    const pct = inventoryColumnWidths[key];
+    return pct != null ? { width: `${pct}%` } : undefined;
+  };
+  const [restoreTarget, setRestoreTarget] = useState<{ itemId: number; itemName: string } | null>(null);
+  const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreConflictMessage, setRestoreConflictMessage] = useState<string | null>(null);
   const { openContextMenu } = useContextMenu();
   const { setActions } = useHeaderActions();
   const consumedOpenItemIdRef = useRef<number | null>(null);
+  const fetchingOpenItemByIdRef = useRef<number | null>(null);
+  const hadFirstListLoadRef = useRef(false);
   const returnOnCloseRef = useRef<boolean>(false);
   const returnToRef = useRef<{ path: string; state?: any } | null>(null);
 
@@ -81,8 +126,12 @@ export default function InventoryPage() {
         const invData = await inventoryService.getAllAsync({
           categoryId: selectedCategory?.CategoryId,
           search: debouncedSearch.trim() || undefined,
+          includeArchived: showArchived || undefined,
         });
-        if (!cancelled) setAllInventory(invData);
+        if (!cancelled) {
+          setAllInventory(invData);
+          hadFirstListLoadRef.current = true;
+        }
       } catch (error) {
         console.error('Load inventory error:', error);
         if (!cancelled) setAllInventory([]);
@@ -93,26 +142,31 @@ export default function InventoryPage() {
     return () => {
       cancelled = true;
     };
-  }, [categoriesReady, selectedCategory, debouncedSearch]);
+  }, [categoriesReady, selectedCategory, debouncedSearch, showArchived]);
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh = false) => {
     try {
       setListLoading(true);
       const [invData, catData] = await Promise.all([
-        inventoryService.getAllAsync({
-          categoryId: selectedCategory?.CategoryId,
-          search: debouncedSearch.trim() || undefined,
-        }),
+        inventoryService.getAllAsync(
+          {
+            categoryId: selectedCategory?.CategoryId,
+            search: debouncedSearch.trim() || undefined,
+            includeArchived: showArchived || undefined,
+          },
+          { forceRefresh }
+        ),
         inventoryService.getAllCategoriesAsync(),
       ]);
       setAllInventory(invData);
       setCategories(catData);
+      hadFirstListLoadRef.current = true;
     } catch (error) {
       console.error('Load inventory error:', error);
     } finally {
       setListLoading(false);
     }
-  }, [debouncedSearch, selectedCategory?.CategoryId]);
+  }, [debouncedSearch, selectedCategory?.CategoryId, showArchived]);
 
   const toggleSelection = useCallback((itemId: number) => {
     setSelectionMode(true);
@@ -125,6 +179,26 @@ export default function InventoryPage() {
     setSelectionMode(false);
     setSelectedItemIds([]);
   }, []);
+
+  useEffect(() => {
+    setStockStatus(parseStockStatus(searchParams.get('stockStatus')));
+  }, [searchParams]);
+
+  const updateStockStatus = useCallback(
+    (next: StockStatusFilter) => {
+      setStockStatus(next);
+      setSearchParams(
+        (prev) => {
+          const params = new URLSearchParams(prev);
+          if (next === 'all') params.delete('stockStatus');
+          else params.set('stockStatus', next);
+          return params;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
 
   const filteredInventory = useMemo(() => {
     return allInventory.filter((item) => {
@@ -139,9 +213,14 @@ export default function InventoryPage() {
 
       const matchesLanguage = selectedLanguage === 'tr' || (selectedLanguage === 'en' && Boolean(item.ItemNameEn));
 
-      return matchesSubCategory && matchesMin && matchesMax && matchesLanguage;
+      const matchesStockStatus =
+        stockStatus === 'all' ||
+        (stockStatus === 'onRent' && (item.OnRent ?? 0) > 0) ||
+        (stockStatus === 'available' && availableStock > 0);
+
+      return matchesSubCategory && matchesMin && matchesMax && matchesLanguage && matchesStockStatus;
     });
-  }, [allInventory, selectedSubCategories, minAvailable, maxAvailable, selectedLanguage]);
+  }, [allInventory, selectedSubCategories, minAvailable, maxAvailable, selectedLanguage, stockStatus]);
 
   const selectAllFiltered = useCallback(() => {
     setSelectionMode(true);
@@ -183,6 +262,7 @@ export default function InventoryPage() {
     const idNum = Number(openItemId);
     if (!Number.isFinite(idNum) || idNum <= 0) return;
     if (consumedOpenItemIdRef.current === idNum) return;
+
     const found = allInventory.find((i) => i.ItemId === idNum);
     if (found) {
       consumedOpenItemIdRef.current = idNum;
@@ -190,10 +270,33 @@ export default function InventoryPage() {
       const rt = st?.returnTo;
       returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
       handleOpenItemDetail(found);
-      // State'i temizle: modal kapanınca liste yenilenince tekrar açılmasın.
       navigate(location.pathname + location.search, { replace: true, state: null });
+      return;
     }
-  }, [allInventory, handleOpenItemDetail, location.pathname, location.search, location.state, navigate]);
+
+    if (listLoading || !hadFirstListLoadRef.current) return;
+    if (fetchingOpenItemByIdRef.current === idNum) return;
+
+    fetchingOpenItemByIdRef.current = idNum;
+    void inventoryService
+      .getByIdAsync(idNum)
+      .then((item) => {
+        fetchingOpenItemByIdRef.current = null;
+        if (consumedOpenItemIdRef.current === idNum) return;
+        consumedOpenItemIdRef.current = idNum;
+        returnOnCloseRef.current = Boolean(st?.returnOnClose);
+        const rt = st?.returnTo;
+        returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
+        handleOpenItemDetail(item);
+        navigate(location.pathname + location.search, { replace: true, state: null });
+      })
+      .catch(() => {
+        fetchingOpenItemByIdRef.current = null;
+        consumedOpenItemIdRef.current = idNum;
+        toast.warning('Ürün bulunamadı.');
+        navigate(location.pathname + location.search, { replace: true, state: null });
+      });
+  }, [allInventory, listLoading, handleOpenItemDetail, location.pathname, location.search, location.state, navigate]);
 
   const openInventoryContextMenu = (event: MouseEvent<HTMLTableRowElement>, item: Inventory) => {
     event.preventDefault();
@@ -214,6 +317,10 @@ export default function InventoryPage() {
           OnRent: item.OnRent,
           UnitPrice: item.UnitPrice,
           MonthlyListPrice: item.MonthlyListPrice,
+          DeletedAt: item.DeletedAt,
+          deletedAt: item.deletedAt,
+          IsArchived: item.IsArchived,
+          isArchived: item.isArchived,
         },
       },
     });
@@ -234,13 +341,13 @@ export default function InventoryPage() {
       }
       return;
     }
-    loadData();
+    loadData(true);
   };
 
   const handleCategoryModalClose = () => {
     setIsCategoryModalOpen(false);
     setEditingCategory(null);
-    loadData();
+    loadData(true);
   };
 
   const printInventoryItemPdf = (target: ScaffoldRowTarget) => {
@@ -333,27 +440,74 @@ export default function InventoryPage() {
 
   const applyBulkDelete = useCallback(async () => {
     if (selectedItemIds.length === 0) {
-      toast.warning('Toplu silme icin once satir secin.');
+      toast.warning('Toplu işlem için önce satır seçin.');
+      return;
+    }
+
+    const selectedItems = allInventory.filter((item) => selectedItemIds.includes(item.ItemId));
+    const activeItems = selectedItems.filter((item) => !isInventoryArchived(item));
+    if (activeItems.length === 0) {
+      toast.warning('Seçili kayıtlar zaten pasif durumda.');
+      return;
+    }
+    const onRentItems = activeItems.filter((item) => item.OnRent > 0);
+    if (onRentItems.length > 0) {
+      toast.warning('Kirada olan ürün pasife alınamaz. Önce iade işlemini tamamlayın.');
       return;
     }
 
     const confirmDelete = window.confirm(
-      `${selectedItemIds.length} adet seçili malzemeyi silmek istediğinize emin misiniz? Bu işlem geri alınamaz.`
+      `${activeItems.length} adet seçili ürünü listeden kaldırmak (pasife almak) istediğinize emin misiniz? Pasif ürünler yeni teklif ve sözleşmelerde seçilemez; geçmiş kayıtlar korunur.`
     );
     if (!confirmDelete) return;
 
     try {
-      await Promise.all(selectedItemIds.map((id) => inventoryService.deleteAsync(id)));
-      toast.success(`${selectedItemIds.length} kayit silindi.`);
+      await Promise.all(activeItems.map((item) => inventoryService.deleteAsync(item.ItemId)));
+      toast.success('Ürün listeden kaldırıldı.');
       clearSelection();
-      await loadData();
+      await loadData(true);
     } catch (error) {
-      console.error('Toplu silme hatası:', error);
-      toast.error('Bazı malzemeler silinemedi (aktif sözleşmelerde kullanılıyor olabilir).');
+      console.error('Toplu pasife alma hatası:', error);
+      toast.error(getInventoryDeleteErrorMessage(error));
       clearSelection();
-      await loadData();
+      await loadData(true);
     }
-  }, [clearSelection, loadData, selectedItemIds]);
+  }, [allInventory, clearSelection, loadData, selectedItemIds]);
+
+  const openRestoreConfirm = useCallback((item: Inventory) => {
+    if (!canDelete) return;
+    setRestoreTarget({ itemId: item.ItemId, itemName: item.ItemName });
+    setShowRestoreConfirm(true);
+  }, [canDelete]);
+
+  const handleRestoreError = useCallback((error: unknown) => {
+    const result = getInventoryRestoreErrorResult(error);
+    if (result.severity === 'warning') {
+      toast.warning(result.message);
+    } else {
+      toast.error(result.message);
+    }
+    if (result.showConflictModal) {
+      setRestoreConflictMessage(result.message);
+    }
+  }, []);
+
+  const handleRestoreConfirm = useCallback(async () => {
+    if (!restoreTarget?.itemId || isRestoring) return;
+    try {
+      setIsRestoring(true);
+      const data = await inventoryService.restoreAsync(restoreTarget.itemId);
+      toast.success(data.message || 'Ürün aktif listeye geri getirildi.');
+      setShowRestoreConfirm(false);
+      setRestoreTarget(null);
+      await loadData(true);
+    } catch (error) {
+      console.error('Restore inventory error:', error);
+      handleRestoreError(error);
+    } finally {
+      setIsRestoring(false);
+    }
+  }, [handleRestoreError, isRestoring, loadData, restoreTarget?.itemId]);
 
   useContextMenuHandlers(
     'scaffoldRow',
@@ -364,7 +518,11 @@ export default function InventoryPage() {
           const row = target as ScaffoldRowTarget;
           const item = allInventory.find((inventoryItem) => inventoryItem.ItemId === row.entityId);
           if (!item) {
-            toast.warning('Kayit bulunamadi.');
+            toast.warning('Kayıt bulunamadı.');
+            return;
+          }
+          if (isInventoryArchived(item)) {
+            handleOpenItemDetail(item, { startInEditMode: false });
             return;
           }
           handleOpenItemDetail(item, { startInEditMode: false });
@@ -374,7 +532,11 @@ export default function InventoryPage() {
           const row = target as ScaffoldRowTarget;
           const item = allInventory.find((inventoryItem) => inventoryItem.ItemId === row.entityId);
           if (!item) {
-            toast.warning('Kayit bulunamadi.');
+            toast.warning('Kayıt bulunamadı.');
+            return;
+          }
+          if (isInventoryArchived(item)) {
+            toast.warning('Pasif ürün düzenlenemez.');
             return;
           }
           handleOpenItemDetail(item, { startInEditMode: true });
@@ -385,9 +547,28 @@ export default function InventoryPage() {
         },
         'scaffold.delete': async (target) => {
           if (!canDelete) return;
-          await inventoryService.deleteAsync(target.entityId);
-          toast.success('Kayit silindi.');
-          await loadData();
+          const row = target as ScaffoldRowTarget;
+          if (row.rawData.OnRent > 0) {
+            toast.warning('Kirada olan ürün pasife alınamaz. Önce iade işlemini tamamlayın.');
+            return;
+          }
+          try {
+            await inventoryService.deleteAsync(target.entityId);
+            toast.success('Ürün listeden kaldırıldı.');
+            await loadData(true);
+          } catch (error) {
+            toast.error(getInventoryDeleteErrorMessage(error));
+          }
+        },
+        'scaffold.restore': (target) => {
+          if (!canDelete) return;
+          const row = target as ScaffoldRowTarget;
+          const item = allInventory.find((inventoryItem) => inventoryItem.ItemId === row.entityId);
+          if (!item) {
+            toast.warning('Kayıt bulunamadı.');
+            return;
+          }
+          openRestoreConfirm(item);
         },
         'scaffold.selection.toggle': (target) => {
           const row = target as ScaffoldRowTarget;
@@ -417,7 +598,7 @@ export default function InventoryPage() {
           await updateInventoryStatus(target as ScaffoldRowTarget, 'maintenance');
         },
       }),
-      [allInventory, canDelete, canUpdate, filteredInventory]
+      [allInventory, canDelete, canUpdate, filteredInventory, openRestoreConfirm]
     )
   );
 
@@ -495,7 +676,7 @@ export default function InventoryPage() {
             ) : null}
             {canDelete ? (
               <button onClick={() => void applyBulkDelete()} className="btn-secondary py-2 px-3 text-sm">
-                Toplu Sil
+                Toplu Listeden Kaldır
               </button>
             ) : null}
           </>
@@ -508,10 +689,10 @@ export default function InventoryPage() {
             Tümünü Seç
           </button>
         )}
-        <button onClick={loadData} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => void loadData(true)} className="btn-secondary py-2 px-3 text-sm">
           Yenile
         </button>
-        <ExcelManager type="inventory" onImportSuccess={() => void loadData()} />
+        <ExcelManager type="inventory" onImportSuccess={() => void loadData(true)} />
         <button onClick={handleAddCategory} className="btn-secondary py-2 px-3 text-sm">
           + Kategori Ekle
         </button>
@@ -546,45 +727,43 @@ export default function InventoryPage() {
 
   if (loading) {
     return (
-      <div className="p-8 flex items-center justify-center">
+      <div className="flex items-center justify-center py-16">
         <div className="text-text-secondary">Yükleniyor...</div>
       </div>
     );
   }
 
   return (
-    <div className="p-8">
-      <div className="mb-3 rounded border border-background-border bg-background-panel p-3">
-        <div className="mb-2 flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-text-secondary">Arama ve Filtreler</span>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => {
-                setSearchText('');
-                setSelectedCategory(null);
-                setSelectedSubCategories(Array.from({ length: 6 }, () => ''));
-                setMinAvailable('');
-                setMaxAvailable('');
-                setSelectedLanguage('tr');
-              }}
-              className="btn-secondary py-1.5 px-3 text-xs"
-            >
-              Filtreleri Sıfırla
-            </button>
-            <button
-              type="button"
-              onClick={() => handleEditCategory(selectedCategory)}
-              className="btn-secondary py-1.5 px-3 text-xs"
-              title={selectedCategory ? 'Kategoriyi düzenle' : 'Önce bir kategori seçin'}
-            >
-              Kategori Yönet
-            </button>
-          </div>
+    <div>
+      <div className="mb-2 rounded border border-background-border bg-background-panel p-2">
+        <div className="mb-1.5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            onClick={() => {
+              setSearchText('');
+              setSelectedCategory(null);
+              setSelectedSubCategories(Array.from({ length: 6 }, () => ''));
+              setMinAvailable('');
+              setMaxAvailable('');
+              setSelectedLanguage('tr');
+              updateStockStatus('all');
+            }}
+            className="btn-secondary py-1.5 px-3 text-xs"
+          >
+            Filtreleri Sıfırla
+          </button>
+          <button
+            type="button"
+            onClick={() => handleEditCategory(selectedCategory)}
+            className="btn-secondary py-1.5 px-3 text-xs"
+            title={selectedCategory ? 'Kategoriyi düzenle' : 'Önce bir kategori seçin'}
+          >
+            Kategori Yönet
+          </button>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-2">
-          <div className="relative lg:col-span-4">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-1.5">
+          <div className="relative lg:col-span-3">
             <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
               <MagnifyingGlassIcon size={14} weight="regular" color="currentColor" aria-hidden />
             </span>
@@ -617,12 +796,25 @@ export default function InventoryPage() {
 
           <div className="lg:col-span-2">
             <select
+              value={stockStatus}
+              onChange={(e) => updateStockStatus(parseStockStatus(e.target.value))}
+              className="input py-2 px-3 text-sm w-full"
+              title="Stok durumu"
+            >
+              <option value="all">Tüm stok durumları</option>
+              <option value="onRent">Kirada</option>
+              <option value="available">Müsait</option>
+            </select>
+          </div>
+
+          <div className="lg:col-span-1">
+            <select
               value={selectedLanguage}
               onChange={(e) => setSelectedLanguage(e.target.value as 'tr' | 'en')}
               className="input py-2 px-3 text-sm w-full"
             >
-              <option value="tr">Türkçe</option>
-              <option value="en">English</option>
+              <option value="tr">TR</option>
+              <option value="en">EN</option>
             </select>
           </div>
 
@@ -649,7 +841,7 @@ export default function InventoryPage() {
           </div>
         </div>
 
-        <div className="mt-2 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-2">
+        <div className="mt-1.5 grid grid-cols-1 md:grid-cols-2 xl:grid-cols-6 gap-1.5">
           {selectedSubCategories.map((value, index) => (
             <select
               key={`sub-category-${index}`}
@@ -673,27 +865,33 @@ export default function InventoryPage() {
       </div>
 
       {listLoading && allInventory.length === 0 ? (
-        <div className="p-8 flex items-center justify-center text-text-secondary text-sm">Liste yükleniyor…</div>
+        <div className="py-8 flex items-center justify-center text-text-secondary text-sm">Liste yükleniyor…</div>
       ) : filteredInventory.length === 0 ? (
         <EmptyState
           icon={<PackageIcon size={48} weight="duotone" />}
           title={
             allInventory.length === 0
               ? 'Henüz envanter kalemi bulunmuyor'
-              : 'Filtrelere uygun kayıt yok'
+              : stockStatus === 'onRent'
+                ? 'Kirada ürün yok'
+                : stockStatus === 'available'
+                  ? 'Müsait ürün yok'
+                  : 'Filtrelere uygun kayıt yok'
           }
           description={
             allInventory.length === 0
               ? 'Önce kategori, sonra malzeme ekleyin'
-              : 'Arama, harf veya alt kategori filtrelerini gevşetmeyi deneyin'
+              : stockStatus === 'onRent'
+                ? 'Şu an kirada görünen malzeme bulunmuyor. Filtreyi değiştirmeyi deneyin.'
+                : 'Arama, stok durumu veya alt kategori filtrelerini gevşetmeyi deneyin'
           }
         />
       ) : (
         <div
           className={`border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col ${listLoading ? 'opacity-80' : ''}`}
         >
-          <div className="overflow-auto max-h-[calc(100vh-150px)] min-h-[320px]">
-            <table className="w-full text-xs border-collapse">
+          <div className="overflow-y-auto overflow-x-hidden max-h-[calc(100vh-180px)] min-h-[320px]">
+            <table className="w-full table-fixed text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   {selectionMode ? (
@@ -716,21 +914,96 @@ export default function InventoryPage() {
                       />
                     </th>
                   ) : null}
-                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Kodu</th>
-                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ürün Adı</th>
-                  <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Ağırlık</th>
-                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover w-16">Ana Birim</th>
-                  <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Aylık Liste (₺)</th>
-                  <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (₺)</th>
-                  <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim ($)</th>
-                  <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Birim (€)</th>
-
-                  <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
-                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Bilgisi</th>
+                  {isInventoryColVisible('itemCode') ? (
+                    <th
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('itemCode')}
+                    >
+                      Ürün Kodu
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('itemName') ? (
+                    <th
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('itemName')}
+                    >
+                      Ürün Adı
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('weight') ? (
+                    <th
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('weight')}
+                    >
+                      Ağırlık
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('unit') ? (
+                    <th
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('unit')}
+                    >
+                      Ana Birim
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('monthlyListPrice') ? (
+                    <th
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('monthlyListPrice')}
+                    >
+                      Aylık Liste (₺)
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('unitPriceTry') ? (
+                    <th
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('unitPriceTry')}
+                    >
+                      Birim (₺)
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('unitPriceUsd') ? (
+                    <th
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('unitPriceUsd')}
+                    >
+                      Birim ($)
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('unitPriceEur') ? (
+                    <th
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('unitPriceEur')}
+                    >
+                      Birim (€)
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('status') ? (
+                    <th
+                      className="text-center py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      style={inventoryColWidthStyle('status')}
+                    >
+                      Durum
+                    </th>
+                  ) : null}
+                  {showArchived && canDelete ? (
+                    <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover w-24">
+                      İşlem
+                    </th>
+                  ) : null}
+                  {isInventoryColVisible('audit') ? (
+                    <th
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary bg-background-hover truncate"
+                      style={inventoryColWidthStyle('audit')}
+                    >
+                      Kayıt Bilgisi
+                    </th>
+                  ) : null}
                 </tr>
               </thead>
               <tbody>
                 {filteredInventory.map((item, index) => {
+                  const archived = isInventoryArchived(item);
                   const availableStock = item.TotalStock - item.OnRent;
                   const stockPercentage = item.TotalStock > 0 ? (availableStock / item.TotalStock) * 100 : 0;
                   let statusBadge: React.ReactNode;
@@ -744,10 +1017,15 @@ export default function InventoryPage() {
                   } else {
                     statusBadge = <span className={`${badgeClass} bg-green-600 text-white`}>Yeterli</span>;
                   }
+                  const displayName =
+                    selectedLanguage === 'tr' ? item.ItemName : item.ItemNameEn || item.ItemName;
+                  const auditText = `${item.CreatedByUserFullName || item.CreatedByUserName || '-'} • ${formatShortDateTime(item.CreatedAt)}`;
                   return (
                     <tr
                       key={item.ItemId}
-                      className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${selectedItemIds.includes(item.ItemId) ? 'bg-primary/10' : index % 2 === 0 ? 'bg-background-panel' : 'bg-background-secondary/35'}`}
+                      className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${
+                        archived ? 'opacity-60 bg-background-secondary/50' : ''
+                      } ${selectedItemIds.includes(item.ItemId) ? 'bg-primary/10' : !archived && index % 2 === 0 ? 'bg-background-panel' : !archived ? 'bg-background-secondary/35' : ''}`}
                       onClick={() => handleOpenItemDetail(item)}
                       onContextMenu={(event) => openInventoryContextMenu(event, item)}
                     >
@@ -762,41 +1040,100 @@ export default function InventoryPage() {
                           />
                         </td>
                       ) : null}
-                      <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
-                        {item.ItemCode ? (
-                          <span className="font-mono font-medium text-accent bg-accent/10 px-1 py-0.5 rounded">{item.ItemCode}</span>
-                        ) : (
-                          <span className="text-text-secondary">-</span>
-                        )}
-                      </td>
-                      <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
-                        <div className="font-medium text-text-primary leading-tight">
-                          {selectedLanguage === 'tr' ? item.ItemName : (item.ItemNameEn || item.ItemName)}
-                        </div>
-                      </td>
-                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums whitespace-nowrap">
-                        {item.Weight != null ? `${item.Weight} kg` : '-'}
-                      </td>
-                      <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
-                        {item.UnitName ?? '-'}
-                      </td>
-                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-success tabular-nums">
-                        {item.MonthlyListPrice != null ? formatTry(item.MonthlyListPrice) : '-'}
-                      </td>
-                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums">
-                        {item.UnitPrice != null ? formatTry(item.UnitPrice) : item.PurchasePrice != null ? formatTry(item.PurchasePrice) : '-'}
-                      </td>
-                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums">
-                        {item.UnitPriceUsd != null ? formatUsd(item.UnitPriceUsd) : '-'}
-                      </td>
-                      <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums">
-                        {item.UnitPriceEur != null ? formatEur(item.UnitPriceEur) : '-'}
-                      </td>
-
-                      <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">{statusBadge}</td>
-                      <td className="py-0 px-1.5 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">
-                        {item.CreatedByUserFullName || item.CreatedByUserName || '-'} • {formatShortDateTime(item.CreatedAt)}
-                      </td>
+                      {isInventoryColVisible('itemCode') ? (
+                        <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0 overflow-hidden">
+                          {item.ItemCode ? (
+                            <span className="font-mono font-medium text-accent bg-accent/10 px-1 py-0.5 rounded truncate inline-block max-w-full" title={item.ItemCode}>
+                              {item.ItemCode}
+                            </span>
+                          ) : (
+                            <span className="text-text-secondary">-</span>
+                          )}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('itemName') ? (
+                        <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0 overflow-hidden">
+                          <div className="font-medium text-text-primary leading-tight flex items-center gap-1 min-w-0">
+                            <span className="truncate" title={displayName}>
+                              {displayName}
+                            </span>
+                            {archived ? (
+                              <span className="shrink-0 inline-block px-1.5 py-0.5 rounded text-[10px] font-semibold bg-amber-900/40 text-amber-100 border border-amber-700/50">
+                                Pasif
+                              </span>
+                            ) : null}
+                          </div>
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('weight') ? (
+                        <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 tabular-nums truncate">
+                          {item.Weight != null ? `${item.Weight} kg` : '-'}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('unit') ? (
+                        <td className="py-0 px-1.5 align-middle border-r border-background-border/60 last:border-r-0 truncate" title={item.UnitName ?? undefined}>
+                          {item.UnitName ?? '-'}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('monthlyListPrice') ? (
+                        <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-success tabular-nums truncate">
+                          {item.MonthlyListPrice != null ? formatTry(item.MonthlyListPrice) : '-'}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('unitPriceTry') ? (
+                        <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums truncate">
+                          {item.UnitPrice != null
+                            ? formatTry(item.UnitPrice)
+                            : item.PurchasePrice != null
+                              ? formatTry(item.PurchasePrice)
+                              : '-'}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('unitPriceUsd') ? (
+                        <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums truncate">
+                          {item.UnitPriceUsd != null ? formatUsd(item.UnitPriceUsd) : '-'}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('unitPriceEur') ? (
+                        <td className="py-0 px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-info tabular-nums truncate">
+                          {item.UnitPriceEur != null ? formatEur(item.UnitPriceEur) : '-'}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('status') ? (
+                        <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0 overflow-hidden">
+                          {statusBadge}
+                        </td>
+                      ) : null}
+                      {showArchived && canDelete ? (
+                        <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">
+                          {archived ? (
+                            <button
+                              type="button"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                openRestoreConfirm(item);
+                              }}
+                              disabled={isRestoring && restoreTarget?.itemId === item.ItemId}
+                              className="btn-primary py-0.5 px-2 text-[11px] disabled:opacity-50"
+                              aria-label={`Geri getir: ${item.ItemName}`}
+                            >
+                              {isRestoring && restoreTarget?.itemId === item.ItemId
+                                ? 'İşleniyor...'
+                                : 'Geri Getir'}
+                            </button>
+                          ) : (
+                            <span className="text-text-secondary/50">—</span>
+                          )}
+                        </td>
+                      ) : null}
+                      {isInventoryColVisible('audit') ? (
+                        <td
+                          className="py-0 px-1.5 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0 truncate"
+                          title={auditText}
+                        >
+                          {auditText}
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}
@@ -831,6 +1168,35 @@ export default function InventoryPage() {
           onClose={handleCategoryModalClose}
         />
       )}
+
+      <ConfirmModal
+        open={showRestoreConfirm}
+        title="Ürünü aktif listeye geri getir"
+        message={
+          restoreTarget
+            ? `"${restoreTarget.itemName}" ürününü aktif listeye geri getirmek istediğinize emin misiniz? Ürün tekrar teklif ve sözleşmelerde seçilebilir hale gelir.`
+            : ''
+        }
+        confirmLabel="Geri Getir"
+        cancelLabel="İptal"
+        loading={isRestoring}
+        onConfirm={() => void handleRestoreConfirm()}
+        onCancel={() => {
+          if (isRestoring) return;
+          setShowRestoreConfirm(false);
+          setRestoreTarget(null);
+        }}
+      />
+
+      <ConfirmModal
+        open={Boolean(restoreConflictMessage)}
+        title="Ürün geri getirilemedi"
+        message={restoreConflictMessage ?? ''}
+        confirmLabel="Tamam"
+        singleAction
+        onConfirm={() => setRestoreConflictMessage(null)}
+        onCancel={() => setRestoreConflictMessage(null)}
+      />
     </div>
   );
 }

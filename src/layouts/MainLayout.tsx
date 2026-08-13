@@ -242,7 +242,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
       '/': 'Genel durum ve hızlı özet metrikler',
       '/customers': 'Müşteri kayıtları, iletişim ve ilişki yönetimi',
       '/inventory': 'Ürün kartları, stok durumu ve fiyat bilgileri',
-      '/warehouses': 'Depo listesi ve stok dağılımı yönetimi',
+      '/warehouses': 'Depo listesi, depo bazlı stok ve hareket yönetimi',
       '/contracts/rental': 'Kiralama teklifleri, sözleşmeler ve kapalı kayıtlar',
       '/contracts/sale': 'Satış teklifleri, sözleşmeler ve kapalı kayıtlar',
       '/offer-management': 'Kategori, şablon ve paket işlemlerini tek merkezden yönetin',
@@ -452,30 +452,29 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
       {/* Main Content */}
       <main className="flex-1 overflow-hidden bg-background-main">
-        <header className="h-16 border-b border-background-border bg-background-main/95 backdrop-blur px-6 flex items-center justify-between gap-4">
-          <div>
-            <div className="mb-1 flex items-center gap-2 text-[11px] uppercase tracking-wider text-text-secondary">
+        <header className="h-14 border-b border-background-border bg-background-main/95 backdrop-blur px-4 flex items-center justify-between gap-3">
+          <div className="min-w-0" title={pageDescription}>
+            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-secondary leading-none mb-0.5">
               {breadcrumb.map((item, index) => (
-                <span key={`${item.path}-${index}`} className="flex items-center gap-2">
-                  {index > 0 && <span>/</span>}
+                <span key={`${item.path}-${index}`} className="flex items-center gap-1.5 truncate">
+                  {index > 0 && <span className="opacity-50">/</span>}
                   <span className={index === breadcrumb.length - 1 ? 'text-text-primary' : ''}>{item.label}</span>
                 </span>
               ))}
             </div>
-            <h2 className="text-lg font-semibold leading-tight">{pageTitle}</h2>
-            <p className="text-xs text-text-secondary">{pageDescription}</p>
+            <h2 className="text-base font-semibold leading-tight truncate">{pageTitle}</h2>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 shrink-0">
             <UpdateHeaderIndicator />
             {headerActions ? <div className="flex items-center gap-2">{headerActions}</div> : null}
-            <div className="text-right">
-              <div className="text-sm font-medium text-text-primary truncate max-w-[240px]">{displayName}</div>
-              <div className="text-xs text-text-secondary truncate max-w-[240px]">{user?.roleName || 'Kullanıcı'}</div>
+            <div className="text-right hidden sm:block">
+              <div className="text-sm font-medium text-text-primary truncate max-w-[200px]">{displayName}</div>
+              <div className="text-xs text-text-secondary truncate max-w-[200px]">{user?.roleName || 'Kullanıcı'}</div>
             </div>
           </div>
         </header>
 
-        <div className="h-[calc(100vh-4rem)] overflow-auto p-6">
+        <div className="h-[calc(100vh-3.5rem)] overflow-auto px-4 py-3">
           <HeaderActionsContext.Provider value={{ setActions: handleSetHeaderActions }}>
             {children}
           </HeaderActionsContext.Provider>

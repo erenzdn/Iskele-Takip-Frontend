@@ -292,4 +292,41 @@
   clear: both !important;
 }
 
+/* A4 şablon editörü – sayfa kılavuz çizgileri ve sayfa aralığı */
+.template-editor-workspace {
+  background-color: var(--color-bg-elevated);
+}
+
+.template-editor-paper {
+  width: 21cm;
+  max-width: calc(100vw - 2rem);
+  min-height: 29.7cm;
+  padding: 1.5cm;
+  box-sizing: border-box;
+  background: var(--color-bg-panel);
+  box-shadow:
+    0 10px 15px -3px rgba(0, 0, 0, 0.12),
+    0 4px 6px -4px rgba(0, 0, 0, 0.12);
+  border: 1px solid var(--color-background-border, var(--color-bg-border));
+  flex-shrink: 0;
+  align-self: flex-start;
+}
+
+.template-editor-paper .ProseMirror {
+  min-height: calc(29.7cm - 3cm);
+  background-image: repeating-linear-gradient(
+    to bottom,
+    transparent 0,
+    transparent calc(26.7cm - 2px),
+    rgba(59, 130, 246, 0.22) calc(26.7cm - 2px),
+    rgba(59, 130, 246, 0.22) calc(26.7cm - 1px),
+    rgba(0, 0, 0, 0.1) calc(26.7cm - 1px),
+    rgba(0, 0, 0, 0.1) 26.7cm,
+    transparent 26.7cm,
+    transparent calc(26.7cm + 18px)
+  );
+  background-size: 100% calc(26.7cm + 18px);
+  background-repeat: repeat-y;
+  padding-bottom: 18px;
+}
 

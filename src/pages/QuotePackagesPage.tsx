@@ -3,7 +3,7 @@ import { packageService } from '../services/packageService';
 import { quoteService } from '../services/quoteService';
 import { inventoryService } from '../services/inventoryService';
 import { QuotePackage, QuotePackageDetail, Inventory, Quote } from '../models';
-import { getApiErrorMessage } from '../utils/apiError';
+import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 
 type CreateMode = 'sourceQuote' | 'manual';
@@ -108,7 +108,7 @@ export default function QuotePackagesPage() {
       await loadData();
       toast.success('Paket oluşturuldu.');
     } catch (error) {
-      toast.error(getApiErrorMessage(error));
+      toast.error(getUserFacingApiErrorMessage(error, 'package-save'));
     } finally {
       setSaving(false);
     }
@@ -130,10 +130,9 @@ export default function QuotePackagesPage() {
   };
 
   return (
-    <div className="p-8 space-y-4">
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-text-primary">Teklif Paketleri</h1>
-        <button type="button" className="btn-secondary" onClick={loadData} disabled={loading}>
+    <div className="space-y-3">
+      <div className="flex items-center justify-end">
+        <button type="button" className="btn-secondary py-1.5 px-3 text-sm" onClick={loadData} disabled={loading}>
           Yenile
         </button>
       </div>

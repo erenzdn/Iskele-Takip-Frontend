@@ -5,9 +5,11 @@ import {
   ContractQuoteType,
   ContractReturn,
   ContractPriceCalculation,
+  ContractStatusFilter,
   ReturnItemResponse,
   SettleNonReturnRequest,
 } from '../models';
+import { CreateSiteRequest } from './siteService';
 
 export interface CreateContractDetailRequest {
   ItemId: number;
@@ -30,7 +32,8 @@ export interface CreateContractRequest {
   ContractCode?: string;
   CustomerId: number;
   CustomerAuthorizedContactId: number;
-  SiteId?: number; // Şantiye ID (opsiyonel)
+  SiteId?: number;
+  newSite?: CreateSiteRequest;
   StartDate: string; // ISO 8601
   PlannedEndDate: string; // ISO 8601
   InitialTotalPrice: number;
@@ -49,6 +52,7 @@ export interface UpdateContractRequest {
   ContractCode?: string;
   CustomerAuthorizedContactId?: number;
   SiteId?: number;
+  newSite?: CreateSiteRequest;
   Iskonto?: number;
   VatRate?: number;
   Currency?: 'TRY' | 'EUR';
@@ -60,13 +64,28 @@ export interface UpdateContractRequest {
   Language?: 'TR' | 'EN';
 }
 
+export interface UpdateContractResponse {
+  warnings?: string[];
+  CreatedSiteId?: number;
+}
+
 export interface CreateContractResponse {
   ContractId: number;
+  warnings?: string[];
+  CreatedSiteId?: number;
 }
 
 export interface RevertToQuoteResponse {
   message: string;
   QuoteId: number | null;
+}
+
+export interface CancelContractResponse {
+  message: string;
+  ContractId: number;
+  CancelledAt: string;
+  QuoteId: number | null;
+  QuoteReleased: boolean;
 }
 
 export type AddContractDetailInventoryRequest = {
@@ -156,9 +175,23 @@ function parseContractPriceCalculation(raw: unknown): ContractPriceCalculation {
 }
 
 export interface ContractListQuery {
-  status?: 'active' | 'completed';
+  status?: ContractStatusFilter;
   type?: ContractQuoteType;
   search?: string;
+  includeArchived?: boolean;
+}
+
+export interface ArchiveContractResponse {
+  message: string;
+  ContractId: number;
+  ArchivedAt: string;
+  ArchivedByUserId: number;
+  ArchiveReason: string | null;
+}
+
+export interface UnarchiveContractResponse {
+  message: string;
+  ContractId: number;
 }
 
 export const contractService = {
@@ -176,6 +209,7 @@ export const contractService = {
     if (query.type) sp.set('type', query.type);
     const s = query.search?.trim();
     if (s) sp.set('search', s);
+    if (query.includeArchived) sp.set('includeArchived', 'true');
     const qs = sp.toString();
     return apiClient.get<Contract[]>(qs ? `/contracts?${qs}` : '/contracts');
   },
@@ -192,8 +226,8 @@ export const contractService = {
     return apiClient.post<CreateContractResponse>('/contracts', data);
   },
 
-  async updateAsync(id: number, data: UpdateContractRequest): Promise<void> {
-    return apiClient.patch<void>(`/contracts/${id}`, data as Record<string, unknown>);
+  async updateAsync(id: number, data: UpdateContractRequest): Promise<UpdateContractResponse> {
+    return apiClient.patch<UpdateContractResponse>(`/contracts/${id}`, data as Record<string, unknown>);
   },
 
   async addDetailsAsync(id: number, body: AddContractDetailsRequestBody): Promise<AddContractDetailsResponse> {
@@ -205,6 +239,22 @@ export const contractService = {
 
   async deleteAsync(id: number): Promise<void> {
     return apiClient.delete<void>(`/contracts/${id}`);
+  },
+
+  /** Tamamlanmış veya iptal edilmiş sözleşmeyi arşivler. İzin: contracts_archive */
+  async archiveAsync(id: number, reason?: string): Promise<ArchiveContractResponse> {
+    const trimmed = reason?.trim();
+    const body = trimmed && trimmed.length >= 3 ? { reason: trimmed } : {};
+    return apiClient.post<ArchiveContractResponse>(`/contracts/${id}/archive`, body);
+  },
+
+  /** Arşivlenmiş sözleşmeyi geri getirir. İzin: contracts_archive */
+  async unarchiveAsync(id: number): Promise<UnarchiveContractResponse> {
+    return apiClient.post<UnarchiveContractResponse>(`/contracts/${id}/unarchive`, {});
+  },
+
+  async cancelAsync(id: number, reason: string): Promise<CancelContractResponse> {
+    return apiClient.post<CancelContractResponse>(`/contracts/${id}/cancel`, { reason });
   },
 
   async revertToQuoteAsync(id: number): Promise<RevertToQuoteResponse> {

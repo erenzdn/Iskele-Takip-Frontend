@@ -8,6 +8,7 @@ import type { InventoryItemMovementsResponse, InventoryItemMovementContractRow, 
 import { formatMoney, formatShortDateTime } from '../utils/formatters';
 import { toast } from '../hooks/useToast';
 import { getApiErrorMessage } from '../utils/apiError';
+import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 
 type FiltersState = {
   warehouseId: number | '';
@@ -36,6 +37,7 @@ export default function ItemMovementsPage() {
   const navigate = useNavigate();
   const { itemId } = useParams();
   const parsedItemId = Number(itemId);
+  const showArchivedWarehouses = useArchivePreferencesStore((s) => s.showArchivedWarehouses);
 
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [filters, setFilters] = useState<FiltersState>({
@@ -54,14 +56,16 @@ export default function ItemMovementsPage() {
 
   const loadWarehouses = useCallback(async () => {
     try {
-      const rows = await warehouseService.getAllAsync();
+      const rows = await warehouseService.getAllAsync({
+        includeArchived: showArchivedWarehouses || undefined,
+      });
       const sorted = (rows || []).slice().sort((a, b) => (a.WarehouseName || '').localeCompare(b.WarehouseName || '', 'tr-TR'));
       setWarehouses(sorted);
     } catch (e) {
       console.error('Load warehouses error:', e);
       setWarehouses([]);
     }
-  }, []);
+  }, [showArchivedWarehouses]);
 
   const loadMovements = useCallback(async (opts?: { showToastOnError?: boolean }) => {
     if (!Number.isFinite(parsedItemId) || parsedItemId <= 0) {
@@ -161,30 +165,29 @@ export default function ItemMovementsPage() {
   };
 
   return (
-    <div className="p-8">
-      <div className="mb-3 flex items-center justify-between gap-2 flex-wrap">
-        <div>
-          <div className="text-xs text-text-secondary">Ürün Hareket Dökümü</div>
-          <div className="text-xl font-semibold text-text-primary">
+    <div>
+      <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold text-text-primary truncate">
             {itemHeader.name}{' '}
-            <span className="text-text-secondary font-mono text-base">({itemHeader.code})</span>
+            <span className="text-text-secondary font-mono text-xs">({itemHeader.code})</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button onClick={() => navigate('/inventory')} className="btn-secondary py-2 px-3 text-sm">
+        <div className="flex items-center gap-2 shrink-0">
+          <button onClick={() => navigate('/inventory')} className="btn-secondary py-1.5 px-3 text-sm">
             Envantere Dön
           </button>
           <button
             onClick={() => void loadMovements({ showToastOnError: true })}
-            className="btn-secondary py-2 px-3 text-sm inline-flex items-center gap-2"
+            className="btn-secondary py-1.5 px-3 text-sm inline-flex items-center gap-1.5"
           >
             <ArrowsClockwiseIcon size={16} weight="bold" /> Yenile
           </button>
         </div>
       </div>
 
-      <div className="mb-3 rounded border border-background-border bg-background-panel p-3">
-        <div className="mb-2 flex items-center justify-between gap-2 flex-wrap">
+      <div className="mb-2 rounded border border-background-border bg-background-panel p-2">
+        <div className="mb-1.5 flex items-center justify-between gap-2 flex-wrap">
           <span className="text-xs font-medium text-text-secondary">Filtreler</span>
           <button
             type="button"
@@ -299,7 +302,7 @@ export default function ItemMovementsPage() {
         <>
           {/* Desktop / Tablet: Table */}
           <div className="hidden md:block border border-background-border rounded-panel overflow-hidden bg-background-panel">
-            <div className="overflow-auto max-h-[calc(100vh-320px)] min-h-[320px]">
+            <div className="overflow-auto max-h-[calc(100vh-240px)] min-h-[320px]">
               <table className="w-full text-xs border-collapse text-text-primary">
                 <thead className="sticky top-0 z-10 border-b border-background-border">
                   <tr>

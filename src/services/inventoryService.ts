@@ -59,6 +59,12 @@ export interface CreateInventoryResponse {
   ItemId: number;
 }
 
+export interface RestoreInventoryResponse {
+  message: string;
+  ItemId: number;
+  DeletedAt: null;
+}
+
 export interface ExchangeRateResponse {
   RateId: number;
   UsdRate: number;
@@ -78,8 +84,8 @@ export interface UpdateExchangeRatesRequest {
 export interface PricingPresetResponse {
   PresetId: number;
   RentalRateTry: number;
-  RentalRateUsd: number;
-  RentalRateEur: number;
+  RentalRateUsd: number | null;
+  RentalRateEur: number | null;
   IsActive: boolean;
   Notes: string | null;
   CreatedAt: string;
@@ -88,8 +94,8 @@ export interface PricingPresetResponse {
 
 export interface UpdatePricingPresetRequest {
   RentalRateTry: number;
-  RentalRateUsd: number;
-  RentalRateEur: number;
+  RentalRateUsd?: number | null;
+  RentalRateEur?: number | null;
   Notes?: string;
 }
 
@@ -120,6 +126,37 @@ export interface PricePreviewResponse {
   overrides: Record<string, boolean>;
 }
 
+export interface InventoryListQuery {
+  categoryId?: number;
+  search?: string;
+  includeArchived?: boolean;
+}
+
+interface InventoryQueryOptions {
+  forceRefresh?: boolean;
+  staleTimeMs?: number;
+}
+
+interface InventoryCacheEntry {
+  data: Inventory[];
+  fetchedAt: number;
+}
+
+const DEFAULT_INVENTORY_STALE_TIME_MS = 60_000;
+const inventoryListCache = new Map<string, InventoryCacheEntry>();
+const inFlightInventoryLists = new Map<string, Promise<Inventory[]>>();
+
+function buildInventoryListKey(params?: InventoryListQuery): string {
+  const cat = params?.categoryId ?? '';
+  const search = (params?.search ?? '').trim().toLocaleLowerCase('tr-TR');
+  const archived = params?.includeArchived ? '1' : '0';
+  return `${cat}|${search}|${archived}`;
+}
+
+export function clearInventoryListCache(): void {
+  inventoryListCache.clear();
+}
+
 export const inventoryService = {
   // Categories
   async getAllCategoriesAsync(): Promise<MaterialCategory[]> {
@@ -147,12 +184,46 @@ export const inventoryService = {
   },
 
   // Inventory Items
-  async getAllAsync(params?: { categoryId?: number; search?: string }): Promise<Inventory[]> {
+  async getAllAsync(
+    params?: InventoryListQuery,
+    options?: InventoryQueryOptions
+  ): Promise<Inventory[]> {
+    const key = buildInventoryListKey(params);
+    const staleTimeMs = options?.staleTimeMs ?? DEFAULT_INVENTORY_STALE_TIME_MS;
+    const forceRefresh = options?.forceRefresh ?? false;
+    const now = Date.now();
+
+    if (!forceRefresh) {
+      const cached = inventoryListCache.get(key);
+      if (cached && now - cached.fetchedAt < staleTimeMs) {
+        return cached.data;
+      }
+      const pending = inFlightInventoryLists.get(key);
+      if (pending) {
+        return pending;
+      }
+    }
+
     const sp = new URLSearchParams();
     if (params?.categoryId != null) sp.set('categoryId', String(params.categoryId));
     if (params?.search != null && params.search.trim() !== '') sp.set('search', params.search.trim());
+    if (params?.includeArchived) sp.set('includeArchived', 'true');
     const qs = sp.toString();
-    return apiClient.get<Inventory[]>(qs ? `/inventory?${qs}` : '/inventory');
+    const endpoint = qs ? `/inventory?${qs}` : '/inventory';
+
+    const request = apiClient.get<Inventory[]>(endpoint).then((data) => {
+      const rows = data ?? [];
+      inventoryListCache.set(key, {
+        data: rows,
+        fetchedAt: Date.now(),
+      });
+      return rows;
+    }).finally(() => {
+      inFlightInventoryLists.delete(key);
+    });
+
+    inFlightInventoryLists.set(key, request);
+    return request;
   },
 
   async getByIdAsync(id: number): Promise<Inventory> {
@@ -164,15 +235,26 @@ export const inventoryService = {
   },
 
   async createAsync(data: CreateInventoryRequest): Promise<CreateInventoryResponse> {
-    return apiClient.post<CreateInventoryResponse>('/inventory', data);
+    const created = await apiClient.post<CreateInventoryResponse>('/inventory', data);
+    clearInventoryListCache();
+    return created;
   },
 
   async updateAsync(id: number, data: UpdateInventoryRequest): Promise<void> {
-    return apiClient.patch<void>(`/inventory/${id}`, data);
+    await apiClient.patch<void>(`/inventory/${id}`, data);
+    clearInventoryListCache();
   },
 
   async deleteAsync(id: number): Promise<void> {
-    return apiClient.delete<void>(`/inventory/${id}`);
+    await apiClient.delete<void>(`/inventory/${id}`);
+    clearInventoryListCache();
+  },
+
+  /** Pasif / arşivlenmiş ürünü aktif listeye geri getirir. İzin: inventory_delete */
+  async restoreAsync(id: number): Promise<RestoreInventoryResponse> {
+    const data = await apiClient.post<RestoreInventoryResponse>(`/inventory/${id}/restore`, {});
+    clearInventoryListCache();
+    return data;
   },
 
   async getPriceTiersAsync(itemId: number) {
@@ -184,7 +266,14 @@ export const inventoryService = {
   },
 
   async getWarehousesByItemAsync(itemId: number): Promise<WarehouseStock[]> {
-    return apiClient.get<WarehouseStock[]>(`/inventory/${itemId}/warehouses`);
+    const raw = await apiClient.get<
+      WarehouseStock[] | { warehouseStock?: WarehouseStock[]; WarehouseStock?: WarehouseStock[] }
+    >(`/inventory/${itemId}/warehouses`);
+    if (Array.isArray(raw)) return raw;
+    if (raw && typeof raw === 'object') {
+      return raw.warehouseStock ?? raw.WarehouseStock ?? [];
+    }
+    return [];
   },
 
   async getAuditLogsByItemAsync(itemId: number): Promise<AuditLog[]> {

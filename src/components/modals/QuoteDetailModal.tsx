@@ -1,7 +1,7 @@
-import { useState, useEffect, useMemo, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { CheckIcon, ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
+import { ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -15,15 +15,18 @@ import {
   ConstructionSite,
   QuoteStatus,
   Warehouse,
+  isQuoteConverted,
 } from '../../models';
 import { quoteService, WarehouseAssignment } from '../../services/quoteService';
 import { contractService } from '../../services/contractService';
 import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
-import { getApiErrorMessage, getApiFieldErrors, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
+import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
+import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
+import StockErrorPanel from '../StockErrorPanel';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
@@ -34,13 +37,28 @@ import QuoteTemplateEditorModal from './QuoteTemplateEditorModal';
 import PdfPreviewModal from './PdfPreviewModal';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
+import SiteSelectField from '../SiteSelectField';
+import CustomerDetailModal from './CustomerDetailModal';
+import SiteCreateModal from './SiteCreateModal';
 import ContractDetailModal from './ContractDetailModal';
+import {
+  applyCreatedSiteId,
+  buildSiteRequestFields,
+  EMPTY_NEW_SITE_FORM,
+  isSaveBlockedByNewSite,
+  isSiteRelatedApiMessage,
+  NEW_SITE_SELECT_VALUE,
+  NewSiteFormState,
+  validateSiteSelection,
+} from '../../utils/siteSelection';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
   isNew: boolean;
   onClose: () => void;
   onDataChanged?: () => void | Promise<void>;
+  /** Dönüşüm sonrası yeni sözleşmeye yönlendirme (parent listesini yeniler) */
+  onConverted?: (contractId: number) => void | Promise<void>;
   /** Yeni teklif: menüden gelen varsayılan tip */
   defaultTypeForNew?: ContractQuoteType;
   /** true ise yeni teklifte tip seçilemez (ayrı menü sayfaları) */
@@ -89,6 +107,7 @@ export default function QuoteDetailModal({
   isNew,
   onClose,
   onDataChanged,
+  onConverted,
   defaultTypeForNew,
   lockNewQuoteType,
   onQuoteCloned,
@@ -108,6 +127,8 @@ export default function QuoteDetailModal({
   const [sites, setSites] = useState<ConstructionSite[]>([]);
   const [selectedSiteId, setSelectedSiteId] = useState<number | ''>('');
   const [sitesLoading, setSitesLoading] = useState(false);
+  const [isNewSiteMode, setIsNewSiteMode] = useState(false);
+  const [newSiteForm, setNewSiteForm] = useState<NewSiteFormState>(EMPTY_NEW_SITE_FORM);
   const [startDate, setStartDate] = useState('');
   const [plannedEndDate, setPlannedEndDate] = useState('');
   /** RENTAL: kiralama süresi (gün), min 1 */
@@ -125,6 +146,8 @@ export default function QuoteDetailModal({
   const [newContactEmail, setNewContactEmail] = useState('');
   const [newContactTitle, setNewContactTitle] = useState('');
   const [isCreatingContact, setIsCreatingContact] = useState(false);
+  const [showCreateCustomerModal, setShowCreateCustomerModal] = useState(false);
+  const [showCreateSiteModal, setShowCreateSiteModal] = useState(false);
 
   // Sözleşmeye dönüştürme — late binding: yalnızca varsayılan depo veya ürün bazlı atama (global mod kaldırıldı)
   const [showConvertModal, setShowConvertModal] = useState(false);
@@ -140,7 +163,19 @@ export default function QuoteDetailModal({
   const [perItemAssignments, setPerItemAssignments] = useState<
     Record<number, { WarehouseId: number; Quantity: number }[]>
   >({});
+  /** Dönüşüm modalında ürün bazlı depo stokları */
+  const [convertItemStocks, setConvertItemStocks] = useState<
+    Record<number, { WarehouseId: number; Quantity: number; WarehouseName?: string }[]>
+  >({});
+  const [convertStocksLoading, setConvertStocksLoading] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [showDeleteReasonModal, setShowDeleteReasonModal] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleteReasonError, setDeleteReasonError] = useState<string | null>(null);
+  const [showRejectReasonModal, setShowRejectReasonModal] = useState(false);
+  const [showRejectConfirm, setShowRejectConfirm] = useState(false);
+  const [rejectionReason, setRejectionReason] = useState('');
+  const [rejectionReasonError, setRejectionReasonError] = useState<string | null>(null);
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
   const [lastAddedItemIds, setLastAddedItemIds] = useState<number[]>([]);
   const [iskonto, setIskonto] = useState<number>(0);
@@ -184,6 +219,7 @@ export default function QuoteDetailModal({
   const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 6 } | null>(null);
   const quoteGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   const activeQuote = fullQuote ?? quote;
+  const converted = Boolean(activeQuote && isQuoteConverted(activeQuote));
 
   const openConvertedContract = async () => {
     if (!activeQuote?.ConvertedContractId) return;
@@ -208,10 +244,74 @@ export default function QuoteDetailModal({
     return `${contact.Name}${titlePart}${phonePart}`;
   };
 
+  const resetSiteSelection = () => {
+    setSelectedSiteId('');
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+  };
+
+  const resetNewSiteMode = () => {
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+  };
+
+  const handleSiteSelect = (value: number | '' | typeof NEW_SITE_SELECT_VALUE) => {
+    if (value === NEW_SITE_SELECT_VALUE) {
+      setIsNewSiteMode(true);
+      setSelectedSiteId('');
+      return;
+    }
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+    setSelectedSiteId(value);
+  };
+
   const handleCustomerChange = (value: number | '') => {
     setSelectedCustomerId(value);
     setSelectedAuthorizedContactId('');
     setAuthorizedContactError(null);
+    resetSiteSelection();
+  };
+
+  const handleRequestNewSite = () => {
+    if (!selectedCustomerId) {
+      toast.warning('Önce müşteri seçin.');
+      return;
+    }
+    setShowCreateSiteModal(true);
+  };
+
+  const handleSiteCreated = async (site: ConstructionSite) => {
+    if (!selectedCustomerId) return;
+    try {
+      const refreshed = await siteService.getByCustomerAsync(Number(selectedCustomerId), { forceRefresh: true });
+      setSites(refreshed);
+    } catch {
+      setSites((prev) => (prev.some((s) => s.SiteId === site.SiteId) ? prev : [...prev, site]));
+    }
+    setIsNewSiteMode(false);
+    setNewSiteForm(EMPTY_NEW_SITE_FORM);
+    setSelectedSiteId(site.SiteId);
+  };
+
+  const handleCustomerSaved = async (result: { customerId: number; isNew: boolean }) => {
+    try {
+      const [custData, created] = await Promise.all([
+        customerService.getAllAsync(undefined, { forceRefresh: true }),
+        result.isNew ? customerService.getByIdAsync(result.customerId).catch(() => null) : Promise.resolve(null),
+      ]);
+      const merged = created && !custData.some((c) => c.CustomerId === created.CustomerId)
+        ? [created, ...custData]
+        : created
+          ? custData.map((c) => (c.CustomerId === created.CustomerId ? created : c))
+          : custData;
+      setCustomers(merged);
+    } catch (error) {
+      console.error('Reload customers error:', error);
+    }
+    if (result.isNew) {
+      handleCustomerChange(result.customerId);
+    }
   };
 
   const handleCreateContact = async () => {
@@ -301,6 +401,23 @@ export default function QuoteDetailModal({
     };
   }, [quote?.QuoteId, isNew]);
 
+  const refreshQuoteDetail = useCallback(async () => {
+    if (!quote?.QuoteId || isNew) return;
+    try {
+      const detail = await quoteService.getByIdAsync(quote.QuoteId);
+      setFullQuote(detail);
+    } catch (error) {
+      console.error('Refresh quote error:', error);
+    }
+    await onDataChanged?.();
+  }, [quote?.QuoteId, isNew, onDataChanged]);
+
+  useEffect(() => {
+    if (converted) {
+      setIsReadOnly(true);
+    }
+  }, [converted]);
+
   useEffect(() => {
     if (isNew) {
       return;
@@ -359,6 +476,7 @@ export default function QuoteDetailModal({
         }
       }
       setStatus(source.Status);
+      setRejectionReason(String((source as Quote).RejectionReason ?? '').trim());
       setSubject(String((source as any).Subject ?? (source as any).subject ?? '').trim());
       setNotes(source.Notes || '');
       setIskonto(Number.isFinite(parsedIskonto) ? parsedIskonto : 0);
@@ -442,7 +560,7 @@ export default function QuoteDetailModal({
                   ? Number(it.OverrideMonthlyPrice)
                   : null;
               if (candidate != null) {
-                const { masked } = normalizeMaskedDecimalTR(String(candidate).replace('.', ','), {
+                const { masked } = normalizeMaskedDecimalTR(String(candidate), {
                   maxIntDigits: 9,
                   maxFracDigits: 2,
                 });
@@ -516,19 +634,30 @@ export default function QuoteDetailModal({
 
   const limitDigits = (digits: string, max: number): string => digits.slice(0, max);
 
+  const coerceDecimalDotToComma = (raw: string): string => {
+    const s = String(raw ?? '').trim();
+    if (!s || s.includes(',')) return s;
+    const compact = s.replace(/\s+/g, '');
+    const dotCount = (compact.match(/\./g) ?? []).length;
+    if (dotCount === 0) return s;
+    // Birden fazla nokta veya binlik deseni: noktalar binlik ayırıcıdır.
+    if (dotCount > 1 || /^\d{1,3}(\.\d{3})+$/.test(compact)) return s;
+    // Tek nokta: ondalık (örn. 12.5, 1234.56, 12.)
+    return compact.replace('.', ',');
+  };
+
   const normalizeMaskedDecimalTR = (
     raw: string,
     opts?: { maxIntDigits?: number; maxFracDigits?: number }
   ): { masked: string; numeric: number | undefined | null } => {
     const maxIntDigits = opts?.maxIntDigits ?? 9;
     const maxFracDigits = opts?.maxFracDigits ?? 2;
-    const s = String(raw ?? '').trim();
+    const s = coerceDecimalDotToComma(String(raw ?? '').trim());
     if (!s) return { masked: '', numeric: undefined };
 
     // TR gösterimde '.' binlik, ',' ondalık olsun.
-    // ÖNEMLİ: Biz zaten yazarken '.' eklediğimiz için '.'ı ondalık kabul edersek
-    // 3+ haneli sayılarda yanlış split olur (9 hane yazılamaz). Bu yüzden ondalık sadece ','.
     const decimalSep = s.includes(',') ? ',' : null;
+    const hasTrailingDecimalSep = /,$/.test(s.replace(/\s+/g, ''));
 
     let intPart = '';
     let fracPart = '';
@@ -545,7 +674,11 @@ export default function QuoteDetailModal({
     const fracDigits = limitDigits(fracPart.replace(/\D/g, ''), maxFracDigits);
 
     const maskedInt = formatThousandsTR(intDigits);
-    const masked = fracDigits ? `${maskedInt},${fracDigits}` : maskedInt;
+    const masked = fracDigits
+      ? `${maskedInt},${fracDigits}`
+      : hasTrailingDecimalSep && maskedInt
+        ? `${maskedInt},`
+        : maskedInt;
 
     const numeric = parsePriceInput(masked);
     return { masked, numeric };
@@ -610,28 +743,24 @@ export default function QuoteDetailModal({
   useEffect(() => {
     if (selectedCustomerId) {
       loadSites(Number(selectedCustomerId));
-      setSelectedSiteId('');
     } else {
       setSites([]);
-      setSelectedSiteId('');
+      resetSiteSelection();
     }
   }, [selectedCustomerId]);
 
   useEffect(() => {
-    if (quoteType === 'SALE' && selectedSiteId) {
-      setSelectedSiteId('');
-    }
     // SALE seçilince PlannedEndDate backend tarafından yok sayılıyor (null).
     // Kullanıcı "kaydedilmedi mi?" yanılgısı yaşamaması için state'i temizle.
     if (quoteType === 'SALE') {
       setPlannedEndDate('');
     }
-  }, [quoteType, selectedSiteId]);
+  }, [quoteType]);
 
-  const loadSites = async (customerId: number) => {
+  const loadSites = async (customerId: number, forceRefresh = false) => {
     try {
       setSitesLoading(true);
-      const data = await siteService.getByCustomerAsync(customerId);
+      const data = await siteService.getByCustomerAsync(customerId, { forceRefresh });
       setSites(data);
     } catch (error) {
       console.error('Load sites error:', error);
@@ -731,7 +860,7 @@ export default function QuoteDetailModal({
       const [custData, invData, whData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(),
-        warehouseService.getAllAsync(),
+        warehouseService.getActiveAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
@@ -987,6 +1116,9 @@ export default function QuoteDetailModal({
   };
 
   const currentUser = useAuthStore((s) => s.user);
+  const canUpdateQuote = Boolean(currentUser?.permissions?.includes('quotes_update'));
+  const canDeleteQuote = Boolean(currentUser?.permissions?.includes('quotes_delete'));
+  const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
 
   const handleSave = async () => {
 
@@ -1042,8 +1174,15 @@ export default function QuoteDetailModal({
       return;
     }
 
-    if (quoteType === 'RENTAL' && sites.length > 0 && !selectedSiteId) {
-      toast.warning('Bu müşterinin şantiyeleri bulunuyor. Lütfen bir şantiye seçin.');
+    const siteValidationError = validateSiteSelection({
+      sites,
+      isNewSiteMode,
+      selectedSiteId,
+      newSiteName: newSiteForm.SiteName,
+      siteRequired: quoteType === 'RENTAL' && sites.length > 0,
+    });
+    if (siteValidationError) {
+      toast.warning(siteValidationError);
       return;
     }
 
@@ -1103,9 +1242,8 @@ export default function QuoteDetailModal({
         }
       }
 
-      if (quoteType === 'RENTAL' && selectedSiteId) {
-        requestBody.SiteId = Number(selectedSiteId);
-      }
+      const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+      Object.assign(requestBody, siteFields);
       if (normalizeText(quoteCode)) {
         requestBody.QuoteCode = normalizeText(quoteCode);
       }
@@ -1113,6 +1251,15 @@ export default function QuoteDetailModal({
       if (isNew) {
         requestBody.Type = quoteType;
         const result = await quoteService.createAsync(requestBody as any);
+        if (result.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: result.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
         toast.success(`Teklif başarıyla oluşturuldu! (ID: ${result.QuoteId})`);
         await onDataChanged?.();
         onClose();
@@ -1145,13 +1292,40 @@ export default function QuoteDetailModal({
             updateBody.RentalDurationDays = Math.max(1, Math.floor(Number(rentalDurationDays)) || 1);
           }
         }
-        if (quoteType === 'RENTAL' && selectedSiteId) {
-          updateBody.SiteId = Number(selectedSiteId);
+        const originalSiteId = (quote as { SiteId?: number | null }).SiteId ?? null;
+        const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+        if (isNewSiteMode) {
+          if (siteFields.newSite) {
+            updateBody.newSite = siteFields.newSite;
+          }
+        } else {
+          const nextSiteId = selectedSiteId ? Number(selectedSiteId) : null;
+          if (originalSiteId !== nextSiteId) {
+            if (nextSiteId != null) updateBody.SiteId = nextSiteId;
+          }
         }
         if (normalizeText(quoteCode)) {
           updateBody.QuoteCode = normalizeText(quoteCode);
         }
-        await quoteService.updateAsync(quote.QuoteId, updateBody as any);
+        if (status === QuoteStatus.Rejected) {
+          const reason = rejectionReason.trim();
+          if (reason.length < 3) {
+            setRejectionReasonError('Red gerekçesi en az 3 karakter olmalıdır.');
+            setIsBusy(false);
+            return;
+          }
+          updateBody.rejectionReason = reason;
+        }
+        const updateResult = await quoteService.updateAsync(quote.QuoteId, updateBody as any);
+        if (updateResult.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: updateResult.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
         toast.success('Teklif başarıyla güncellendi!');
         await onDataChanged?.();
         onClose();
@@ -1186,7 +1360,13 @@ export default function QuoteDetailModal({
             : 'Seçilen merkez yetkili bu müşteriye ait değil.'
         );
       }
-      toast.error(userMessageForCustomerRelatedApiError(error, rawMessage || 'Kaydetme hatası'));
+      toast.error(
+        isSiteRelatedApiMessage(rawMessage)
+          ? rawMessage
+          : isArchivedInventoryApiError(error)
+            ? getUserFacingApiErrorMessage(error, 'quote-save')
+            : userMessageForCustomerRelatedApiError(error, rawMessage || 'Kaydetme hatası')
+      );
     } finally {
       setIsBusy(false);
     }
@@ -1194,10 +1374,28 @@ export default function QuoteDetailModal({
 
   const handleDeleteClick = () => {
     if (!activeQuote) return;
-    if (activeQuote.ConvertedContractId) {
-      toast.warning('Sözleşmeye dönüştürülmüş teklifler silinemez.');
+    if (converted) {
+      toast.info('Teklifi silmek için önce bağlı sözleşmeyi iptal etmeniz gerekir. Sözleşme ekranı açılıyor…');
+      void openConvertedContract();
       return;
     }
+    if (!canDeleteQuote) {
+      toast.error('Teklif silmek için yetkiniz bulunmuyor.');
+      return;
+    }
+    setDeleteReason('');
+    setDeleteReasonError(null);
+    setShowDeleteReasonModal(true);
+  };
+
+  const handleDeleteReasonContinue = () => {
+    const trimmed = deleteReason.trim();
+    if (trimmed.length > 0 && trimmed.length < 3) {
+      setDeleteReasonError('Gerekçe en az 3 karakter olmalıdır.');
+      return;
+    }
+    setDeleteReasonError(null);
+    setShowDeleteReasonModal(false);
     setShowDeleteConfirm(true);
   };
 
@@ -1205,21 +1403,30 @@ export default function QuoteDetailModal({
     if (!activeQuote) return;
     try {
       setIsBusy(true);
-      await quoteService.deleteAsync(activeQuote.QuoteId);
+      const trimmed = deleteReason.trim();
+      await quoteService.deleteAsync(
+        activeQuote.QuoteId,
+        trimmed.length >= 3 ? { reason: trimmed } : undefined
+      );
       setShowDeleteConfirm(false);
+      setDeleteReason('');
       await onDataChanged?.();
       onClose();
     } catch (error) {
       console.error('Delete quote error:', error);
       setShowDeleteConfirm(false);
-      toast.error(getApiErrorMessage(error));
+      if (isConvertedQuoteApiError(error)) {
+        toast.error(getApiErrorMessage(error));
+      } else {
+        toast.error(getUserFacingApiErrorMessage(error, 'quote-delete'));
+      }
     } finally {
       setIsBusy(false);
     }
   };
 
   const handleAccept = async () => {
-    if (!activeQuote || activeQuote.ConvertedContractId) return;
+    if (!activeQuote || converted) return;
     try {
       setIsBusy(true);
       await quoteService.acceptQuoteAsync(activeQuote.QuoteId);
@@ -1235,31 +1442,133 @@ export default function QuoteDetailModal({
     }
   };
 
-  const handleReject = async () => {
-    if (!activeQuote || activeQuote.ConvertedContractId) return;
+  const handleRejectClick = () => {
+    if (!activeQuote || converted) return;
+    if (!canUpdateQuote) {
+      toast.error('Bu işlem için yetkiniz yok.');
+      return;
+    }
+    setRejectionReason('');
+    setRejectionReasonError(null);
+    setShowRejectReasonModal(true);
+  };
+
+  const handleRejectReasonContinue = () => {
+    const reason = rejectionReason.trim();
+    if (reason.length < 3) {
+      setRejectionReasonError('Red gerekçesi en az 3 karakter olmalıdır.');
+      return;
+    }
+    setRejectionReasonError(null);
+    setShowRejectReasonModal(false);
+    setShowRejectConfirm(true);
+  };
+
+  const handleRejectConfirm = async () => {
+    if (!activeQuote || converted) return;
+    const reason = rejectionReason.trim();
+    if (reason.length < 3) return;
     try {
       setIsBusy(true);
-      await quoteService.rejectQuoteAsync(activeQuote.QuoteId);
+      await quoteService.rejectQuoteAsync(activeQuote.QuoteId, reason);
       setStatus(QuoteStatus.Rejected);
+      setShowRejectConfirm(false);
       await onDataChanged?.();
       toast.success('Teklif reddedildi.');
       onClose();
     } catch (error) {
       console.error('Reject quote error:', error);
-      toast.error(getApiErrorMessage(error));
+      setShowRejectConfirm(false);
+      toast.error(getUserFacingApiErrorMessage(error, 'quote-reject'));
     } finally {
       setIsBusy(false);
     }
   };
 
+  const getConvertStockForWarehouse = (itemId: number, warehouseId: number): number | null => {
+    const stocks = convertItemStocks[itemId];
+    if (!stocks) return null;
+    const entry = stocks.find((s) => s.WarehouseId === warehouseId);
+    return entry?.Quantity ?? 0;
+  };
+
+  const formatWarehouseOptionLabel = (wh: Warehouse, itemId?: number) => {
+    if (!itemId) return wh.WarehouseName;
+    const qty = getConvertStockForWarehouse(itemId, wh.WarehouseId);
+    if (qty == null) return wh.WarehouseName;
+    return `${wh.WarehouseName} (${qty} adet)`;
+  };
+
+  useEffect(() => {
+    if (!showConvertModal) return;
+    const invItems = quoteItems.filter((i) => i.kind === 'inventory');
+    if (invItems.length === 0) return;
+
+    let cancelled = false;
+    setConvertStocksLoading(true);
+    void (async () => {
+      const next: Record<number, { WarehouseId: number; Quantity: number; WarehouseName?: string }[]> = {};
+      await Promise.all(
+        invItems.map(async (item) => {
+          try {
+            const stocks = await inventoryService.getWarehousesByItemAsync(item.ItemId);
+            if (cancelled) return;
+            next[item.ItemId] = stocks.map((s) => ({
+              WarehouseId: s.WarehouseId,
+              Quantity: s.Quantity,
+              WarehouseName:
+                warehouses.find((w) => w.WarehouseId === s.WarehouseId)?.WarehouseName,
+            }));
+          } catch {
+            if (!cancelled) next[item.ItemId] = [];
+          }
+        })
+      );
+      if (!cancelled) {
+        setConvertItemStocks(next);
+        setConvertStocksLoading(false);
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [showConvertModal, quoteItems, warehouses]);
+
+  const handleReduceConvertQuantity = (available: number) => {
+    const itemName = extractFirstQuotedName(convertModalError ?? '');
+    if (!itemName || convertMode !== 'perItem') return;
+
+    const item = quoteItems.find(
+      (i) =>
+        i.kind === 'inventory' &&
+        (i.ItemName === itemName ||
+          formatInventoryLineBilingualLabel(i.ItemName, i.ItemNameEn, i.Item).includes(itemName))
+    );
+    if (!item || item.kind !== 'inventory') return;
+
+    const itemId = item.ItemId;
+    setPerItemAssignments((prev) => {
+      const assignments = [...(prev[itemId] ?? [])];
+      if (assignments.length === 0) return prev;
+      assignments[0] = {
+        ...assignments[0],
+        Quantity: Math.max(1, Math.min(assignments[0].Quantity, available)),
+      };
+      return { ...prev, [itemId]: assignments };
+    });
+    setConvertModalError(null);
+  };
+
   const openConvertModal = () => {
-    if (!activeQuote || status !== QuoteStatus.Accepted || activeQuote.ConvertedContractId) return;
+    if (!activeQuote || status !== QuoteStatus.Accepted || converted) return;
     setConvertModalError(null);
     setConvertMode('defaultWarehouse');
     setDefaultWarehouseIdForConvert(warehouses[0]?.WarehouseId ?? '');
     setShowConvertModal(true);
     setPerItemAssignments({});
-    setDecrementStock(null);
+    setConvertItemStocks({});
+    setDecrementStock(quoteType === 'RENTAL' ? true : null);
     if (resolveContractQuoteType(activeQuote) === 'RENTAL') {
       const qs = activeQuote.StartDate != null && String(activeQuote.StartDate).trim()
         ? String(activeQuote.StartDate).split('T')[0]
@@ -1318,14 +1627,16 @@ export default function QuoteDetailModal({
       return;
     }
 
-    if (activeQuote.ConvertedContractId) {
-      toast.warning('Bu teklif zaten sözleşmeye dönüştürülmüş.');
+    if (converted) {
+      toast.warning('Bu teklif aktif bir sözleşmeye bağlı. Önce sözleşmeyi iptal edin veya (satış ise) teklife geri alın.');
       return;
     }
-    if (decrementStock == null) {
-      setConvertModalError('Lutfen stok dusum secimini yapin.');
+    if (quoteType === 'SALE' && decrementStock == null) {
+      setConvertModalError('Lütfen stok düşüm seçimini yapın.');
       return;
     }
+
+    const effectiveDecrementStock = quoteType === 'RENTAL' ? true : decrementStock === true;
 
     const hasInventoryInQuote = quoteItems.some((i) => i.kind === 'inventory');
 
@@ -1393,7 +1704,7 @@ export default function QuoteDetailModal({
       setIsBusy(true);
       const result = await quoteService.convertToContractAsync(activeQuote.QuoteId, {
         ...options,
-        decrementStock,
+        decrementStock: effectiveDecrementStock,
         ...(quoteType === 'RENTAL'
           ? {
               StartDate: new Date(convertContractStartDate).toISOString(),
@@ -1403,22 +1714,36 @@ export default function QuoteDetailModal({
       });
       setConvertModalError(null);
       setShowConvertModal(false);
-      if (!decrementStock && result.warnings && result.warnings.length > 0) {
-        toast.info(result.warnings.join('\n'));
+      if (result.warnings && result.warnings.length > 0) {
+        toast.warning(result.warnings.join('\n'));
+      }
+      toast.success('Teklif sözleşmeye dönüştürüldü.');
+      if (onConverted) {
+        await onConverted(result.ContractId);
+        return;
       }
       const updatedQuote = await quoteService.getByIdAsync(activeQuote.QuoteId);
       setFullQuote(updatedQuote);
       await onDataChanged?.();
-      toast.success(`Teklif başarıyla sözleşmeye dönüştürüldü!\nSözleşme ID: ${result.ContractId}`);
+      try {
+        const c = await contractService.getByIdAsync(result.ContractId);
+        setConvertedContract(c);
+        setIsContractModalOpen(true);
+      } catch (openError) {
+        console.error('Open contract after convert error:', openError);
+      }
     } catch (error: unknown) {
       console.error('Convert quote error:', error);
       const msg = getApiErrorMessage(error);
-      setConvertModalError(
-        userMessageForCustomerRelatedApiError(
-          error,
-          msg || 'Dönüştürme başarısız. Depolarda yeterli stok olduğundan emin olun veya farklı depo seçin.'
-        )
-      );
+      const displayMsg = isStockErrorMessage(msg)
+        ? msg || getUserFacingApiErrorMessage(error, 'quote-convert')
+        : isArchivedInventoryApiError(error)
+          ? getUserFacingApiErrorMessage(error, 'quote-convert')
+          : userMessageForCustomerRelatedApiError(
+              error,
+              msg || 'Dönüştürme başarısız. Depolarda yeterli stok olduğundan emin olun veya farklı depo seçin.'
+            );
+      setConvertModalError(displayMsg);
     } finally {
       setIsBusy(false);
     }
@@ -1535,8 +1860,15 @@ export default function QuoteDetailModal({
         return;
       }
     }
-    if (quoteType === 'RENTAL' && sites.length > 0 && !selectedSiteId) {
-      toast.warning('Bu müşterinin şantiyeleri bulunuyor. Lütfen bir şantiye seçin.');
+    const siteValidationError = validateSiteSelection({
+      sites,
+      isNewSiteMode,
+      selectedSiteId,
+      newSiteName: newSiteForm.SiteName,
+      siteRequired: quoteType === 'RENTAL' && sites.length > 0,
+    });
+    if (siteValidationError) {
+      toast.warning(siteValidationError);
       return;
     }
     try {
@@ -1610,7 +1942,7 @@ export default function QuoteDetailModal({
       toast.info(message);
     } catch (error) {
       console.error('Apply package to quote form error:', error);
-      toast.error(getApiErrorMessage(error));
+      toast.error(getUserFacingApiErrorMessage(error, 'package-save'));
     } finally {
       setIsBusy(false);
     }
@@ -1649,7 +1981,7 @@ export default function QuoteDetailModal({
       toast.success('Paket başarıyla oluşturuldu.');
     } catch (error) {
       console.error('Create package error:', error);
-      toast.error(getApiErrorMessage(error));
+      toast.error(getUserFacingApiErrorMessage(error, 'package-save'));
     } finally {
       setIsCreatingPackage(false);
     }
@@ -1694,40 +2026,53 @@ export default function QuoteDetailModal({
   };
 
   const getStatusBadge = () => {
+    if (converted) {
+      return (
+        <span className="badge bg-indigo-800 text-indigo-100 text-[11px] px-2 py-0.5">
+          Sözleşmeye dönüştü
+        </span>
+      );
+    }
     switch (status) {
       case QuoteStatus.Pending:
-        return <span className="badge bg-yellow-700 text-yellow-100 text-lg px-4 py-1">Beklemede</span>;
+        return <span className="badge bg-yellow-700 text-yellow-100 text-[11px] px-2 py-0.5">Beklemede</span>;
       case QuoteStatus.Accepted:
-        return <span className="badge bg-green-700 text-green-100 text-lg px-4 py-1">Kabul Edildi</span>;
+        return <span className="badge bg-green-700 text-green-100 text-[11px] px-2 py-0.5">Kabul Edildi</span>;
       case QuoteStatus.Rejected:
-        return <span className="badge bg-red-700 text-red-100 text-lg px-4 py-1">Reddedildi</span>;
+        return <span className="badge bg-red-700 text-red-100 text-[11px] px-2 py-0.5">Reddedildi</span>;
       default:
         return null;
     }
   };
 
+  const compactBtn = '!py-1.5 !px-3 text-xs';
+  const fieldLabel = 'block text-[11px] font-medium text-text-secondary mb-0.5';
+
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background-main">
-      <header className="shrink-0 flex items-center justify-between px-4 py-3 bg-background-panel border-b border-background-border shadow-sm">
-        <div className="flex items-center gap-3">
-          <h1 className="text-xl font-semibold text-text-primary tracking-tight">
+    <div className="fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden">
+      <header className="shrink-0 flex items-center justify-between px-3 py-2 bg-background-panel border-b border-background-border">
+        <div className="flex items-center gap-2 min-w-0">
+          <h1 className="text-base font-semibold text-text-primary tracking-tight truncate">
             {isNew ? 'Yeni Teklif' : 'Teklif Detayı'}
           </h1>
-          <span className="text-sm font-medium text-text-secondary">
-            {quoteType === 'SALE' ? 'Satış Teklifi' : 'Kiralama Teklifi'}
+          <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
+            {quoteType === 'SALE' ? 'Satış' : 'Kiralama'}
           </span>
           {!isNew && getStatusBadge()}
           {isClonedDraft && (
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-200"
+              className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-200"
               title="Bu teklif başka bir tekliften kopyalandı. Kaydedip kullanıcıya paylaşmadan önce gerekli alanları (teklif kodu, tarihler, fiyatlar) gözden geçirin."
             >
               <CopySimpleIcon size={12} weight="bold" aria-hidden />
               Taslak (kopya)
             </span>
           )}
+          <span className="hidden md:inline text-[11px] text-text-secondary truncate">
+            {currentUser?.fullName || currentUser?.username || ''}
+          </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 shrink-0">
           {!isNew && activeQuote?.QuoteId && (
             <button
               type="button"
@@ -1735,84 +2080,84 @@ export default function QuoteDetailModal({
               disabled={isBusy || isCloning}
               title="Bu teklifi yeni bir taslak teklif olarak kopyala"
               aria-label="Teklifi Kopyala"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-background-border px-3 py-1.5 text-sm font-medium text-text-primary hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-background-border px-2.5 py-1 text-xs font-medium text-text-primary hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
-              <CopySimpleIcon size={16} weight="regular" aria-hidden />
-              {isCloning ? 'Kopyalanıyor...' : 'Teklifi Kopyala'}
+              <CopySimpleIcon size={14} weight="regular" aria-hidden />
+              {isCloning ? 'Kopyalanıyor...' : 'Kopyala'}
             </button>
           )}
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+            className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
           >
-            <XIcon size={22} weight="regular" />
+            <XIcon size={20} weight="regular" />
           </button>
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto">
-        <div className="w-full p-3 md:p-4 space-y-4">
-          {/* Üst kısım: yatay bilgi alanları (kompakt) */}
-          <section className="rounded-xl border border-background-border bg-background-panel p-3 shadow-sm">
-            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 pb-1.5 border-b border-background-border">
-              Genel Bilgiler
-            </h3>
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Teklif Kodu (Opsiyonel)</label>
-                <input
-                  type="text"
-                  value={quoteCode}
-                  onChange={(e) => setQuoteCode(e.target.value)}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                  placeholder="Örn: TK-2026-001"
-                  maxLength={50}
-                />
-              </div>
+      {converted && (
+        <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 bg-indigo-950/40 border-b border-indigo-700/50 text-xs text-indigo-100">
+          <span className="font-semibold">Sözleşmeye dönüştürülmüş</span>
+          <span className="text-indigo-100/80">
+            İşlemler sözleşmede yürür. Salt okunur kayıt.
+            {activeQuote?.ConvertedAt ? ` · ${formatShortDateTime(activeQuote.ConvertedAt)}` : ''}
+          </span>
+          {!canCancelContract && (
+            <span className="text-amber-200">Sözleşme iptal yetkisi yok.</span>
+          )}
+          <button
+            type="button"
+            onClick={openConvertedContract}
+            disabled={isBusy || isOpeningConvertedContract}
+            className={`btn-primary ml-auto ${compactBtn}`}
+          >
+            {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+          </button>
+        </div>
+      )}
 
-              <div className="space-y-0.5">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="block text-xs font-medium text-text-primary">Konu</label>
-                  <span className={`text-[11px] ${subject.length > 255 ? 'text-red-300' : 'text-text-secondary'}`}>
-                    {Math.min(subject.length, 255)}/255
-                  </span>
-                </div>
-                <input
-                  type="text"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value.slice(0, 255))}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                  placeholder="Teklif konusu giriniz"
-                  maxLength={255}
-                />
-              </div>
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary" htmlFor="quote-customer-search">
-                  Müşteri Seçimi *
+      <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
+          {/* Üst: müşteri → ayarlar (sayfa kaydırması yok) */}
+          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2">
+            <div className={`grid gap-x-2.5 gap-y-1.5 ${selectedCustomerId ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
+              <div className="min-w-0">
+                <label className={fieldLabel} htmlFor="quote-customer-search">
+                  Müşteri *
                 </label>
-                <CustomerSearchField
-                  key={`${quote?.QuoteId ?? 'new'}-${isNew}`}
-                  id="quote-customer-search"
-                  customers={customers}
-                  value={selectedCustomerId}
-                  onChange={handleCustomerChange}
-                  disabled={isReadOnly}
-                />
+                <div className="flex items-center gap-1 min-w-0">
+                  <div className="flex-1 min-w-0">
+                    <CustomerSearchField
+                      key={`${quote?.QuoteId ?? 'new'}-${isNew}-${selectedCustomerId || 'none'}`}
+                      id="quote-customer-search"
+                      customers={customers}
+                      value={selectedCustomerId}
+                      onChange={handleCustomerChange}
+                      disabled={isReadOnly}
+                    />
+                  </div>
+                  {!isReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => setShowCreateCustomerModal(true)}
+                      className="btn-secondary !py-1 !px-1.5 flex-shrink-0"
+                      title="Yeni müşteri ekle"
+                    >
+                      <Plus size={16} weight="bold" />
+                    </button>
+                  )}
+                </div>
               </div>
 
               {selectedCustomerId && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
+                <div className="min-w-0 overflow-hidden">
+                  <label className={fieldLabel}>
                     Merkez Yetkili *
                   </label>
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1 min-w-0">
                     {authorizedContactsLoading ? (
-                      <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
+                      <div className="input w-full min-w-0 text-text-secondary text-sm py-1.5">Yükleniyor...</div>
                     ) : authorizedContacts.length > 0 ? (
                       <select
                         value={selectedAuthorizedContactId}
@@ -1821,7 +2166,7 @@ export default function QuoteDetailModal({
                           setAuthorizedContactError(null);
                         }}
                         disabled={isReadOnly}
-                        className="input flex-1 text-sm py-1.5"
+                        className="input min-w-0 flex-1 text-sm py-1.5"
                       >
                         <option value="">Yetkili seçin</option>
                         {authorizedContacts.map((contact) => (
@@ -1834,7 +2179,7 @@ export default function QuoteDetailModal({
                         ))}
                       </select>
                     ) : (
-                      <div className="input flex-1 text-red-300 bg-background-secondary text-sm py-2">
+                      <div className="input min-w-0 flex-1 text-red-300 bg-background-secondary text-sm py-1.5 truncate">
                         Bu müşteri için yetkili tanımlı değil
                       </div>
                     )}
@@ -1842,7 +2187,7 @@ export default function QuoteDetailModal({
                       <button
                         type="button"
                         onClick={() => setShowCreateContactModal(true)}
-                        className="btn-secondary p-1.5 flex-shrink-0"
+                        className="btn-secondary !py-1 !px-1.5 flex-shrink-0"
                         title="Merkez Yetkilisi Ekle"
                       >
                         <Plus size={16} weight="bold" />
@@ -1850,173 +2195,61 @@ export default function QuoteDetailModal({
                     )}
                   </div>
                   {authorizedContactError && (
-                    <p className="text-xs text-red-300">{authorizedContactError}</p>
+                    <p className="text-xs text-red-300 truncate">{authorizedContactError}</p>
                   )}
                 </div>
               )}
 
-              {selectedCustomerId && quoteType === 'RENTAL' && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
-                    Şantiye Seçimi {sites.length > 0 ? '*' : '(Opsiyonel)'}
-                  </label>
-                  {sitesLoading ? (
-                    <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
-                  ) : sites.length > 0 ? (
-                    <select
-                      value={selectedSiteId}
-                      onChange={(e) => setSelectedSiteId(Number(e.target.value) || '')}
-                      disabled={isReadOnly}
-                      className="input w-full"
-                      required={quoteType === 'RENTAL' && sites.length > 0}
-                    >
-                      <option value="">Şantiye seçin</option>
-                      {sites.map((site) => (
-                        <option key={site.SiteId} value={site.SiteId}>
-                          {site.SiteName}
-                          {site.SiteAddress && ` - ${site.SiteAddress}`}
-                          {site.ResponsiblePerson && ` (Sorumlu: ${site.ResponsiblePerson})`}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <div className="input w-full text-text-secondary bg-background-secondary text-sm py-2">
-                      Bu müşterinin şantiyesi bulunmuyor
-                    </div>
-                  )}
-                </div>
-              )}
-
-              {quoteType === 'RENTAL' && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
-                    Kiralama süresi (gün) *
-                  </label>
-                  <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={rentalDurationDays}
-                    onChange={(e) => {
-                      const v = Math.floor(Number(e.target.value));
-                      setRentalDurationDays(Number.isFinite(v) && v >= 1 ? v : 1);
-                    }}
+              {selectedCustomerId && (
+                <div className="min-w-0 overflow-hidden">
+                  <SiteSelectField
+                    sites={sites}
+                    sitesLoading={sitesLoading}
+                    selectedSiteId={selectedSiteId}
+                    onSelectSite={handleSiteSelect}
+                    onRequestNewSite={handleRequestNewSite}
+                    required={quoteType === 'RENTAL' && sites.length > 0}
                     disabled={isReadOnly}
-                    className="input w-full text-sm py-1.5 max-w-[140px]"
+                    label="Şantiye"
                   />
-                  <p className="text-[11px] text-text-secondary leading-snug">
-                    Fiyatlandırma sunucuda en az 30 günlük hesaplanır (ör. 10 gün girseniz bile ücret tabanı 30 gündür).
-                    PDF/önizlemede tarih yoksa şablonda &quot;Belirlenecek&quot; görünebilir.
-                  </p>
                 </div>
               )}
+            </div>
 
-
-
-              {quoteType === 'RENTAL' && !isNew && (
-                <div className="text-[11px] text-text-secondary space-y-0.5 rounded border border-background-border/60 p-2">
-                  <div>
-                    <span className="font-medium text-text-primary">Kayıtlı süre:</span>{' '}
-                    {(activeQuote as Quote)?.RentalDurationDays != null &&
-                    Number((activeQuote as Quote).RentalDurationDays) >= 1
-                      ? `${Number((activeQuote as Quote).RentalDurationDays)} gün`
-                      : '—'}
-                  </div>
-                  <div>
-                    <span className="font-medium text-text-primary">Planlanan bitiş (API):</span>{' '}
-                    {(activeQuote as Quote)?.PlannedEndDate != null &&
-                    String((activeQuote as Quote).PlannedEndDate).trim()
-                      ? new Date(String((activeQuote as Quote).PlannedEndDate)).toLocaleDateString('tr-TR')
-                      : 'Sözleşmede belirlenecek'}
-                  </div>
+            <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5">
+              <div className="min-w-[180px] flex-[1.3]">
+                <div className="flex items-center justify-between gap-1">
+                  <label className={fieldLabel}>Konu</label>
+                  <span className={`text-[10px] ${subject.length > 255 ? 'text-red-300' : 'text-text-secondary'}`}>
+                    {Math.min(subject.length, 255)}/255
+                  </span>
                 </div>
-              )}
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Teklif Sahibi</label>
-                <div className="input w-full bg-background-secondary text-text-secondary py-1.5 px-2 text-xs rounded-lg border border-background-border">
-                  {currentUser?.fullName || currentUser?.username || '—'}
-                </div>
-              </div>
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">İskonto (%)</label>
                 <input
-                  type="number"
-                  value={Number(iskonto) || 0}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
-                  }}
+                  type="text"
+                  value={subject}
+                  onChange={(e) => setSubject(e.target.value.slice(0, 255))}
                   disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={0.01}
-                  className="input w-20 text-sm py-1.5"
-                  placeholder="0"
-                  title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz"
+                  className="input w-full text-sm py-1.5"
+                  placeholder="Teklif konusu"
+                  maxLength={255}
                 />
               </div>
 
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">KDV (%)</label>
+              <div className="min-w-[120px] w-[150px]">
+                <label className={fieldLabel}>Teklif Kodu</label>
                 <input
-                  type="number"
-                  value={vatRate}
-                  onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                  type="text"
+                  value={quoteCode}
+                  onChange={(e) => setQuoteCode(e.target.value)}
                   disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={1}
-                  className="input w-20 text-sm py-1.5"
-                  placeholder="20"
+                  className="input w-full text-sm py-1.5"
+                  placeholder="Örn: TK-2026-001"
+                  maxLength={50}
                 />
               </div>
 
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Para Birimi</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                >
-                  <option value="TRY">TRY (TL)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="USD">USD ($)</option>
-                </select>
-              </div>
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Dil</label>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                >
-                  <option value="TR">Türkçe</option>
-                  <option value="EN">English</option>
-                </select>
-              </div>
-
-              {!isNew && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">Durum</label>
-                  <select
-                    value={status}
-                    onChange={(e) => setStatus(e.target.value as QuoteStatus)}
-                    disabled={isReadOnly}
-                    className="input w-full text-sm py-1.5"
-                  >
-                    <option value={QuoteStatus.Accepted}>Kabul Edildi</option>
-                    <option value={QuoteStatus.Rejected}>Reddedildi</option>
-                  </select>
-                </div>
-              )}
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Teklif Tipi</label>
+              <div className="min-w-[120px] w-[140px]">
+                <label className={fieldLabel}>Teklif Tipi</label>
                 {isNew ? (
                   lockNewQuoteType ? (
                     <div className="input w-full bg-background-secondary text-text-secondary text-sm py-1.5 px-2 rounded-lg border border-background-border">
@@ -2039,20 +2272,109 @@ export default function QuoteDetailModal({
                 )}
               </div>
 
-              <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
-                <label className="block text-xs font-medium text-text-primary">Notlar</label>
-                <textarea
-                  value={notes}
-                  onChange={(e) => setNotes(e.target.value)}
+              {quoteType === 'RENTAL' && (
+                <div className="min-w-[110px] w-[130px]">
+                  <label className={fieldLabel}>Süre (gün) *</label>
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={rentalDurationDays}
+                    onChange={(e) => {
+                      const v = Math.floor(Number(e.target.value));
+                      setRentalDurationDays(Number.isFinite(v) && v >= 1 ? v : 1);
+                    }}
+                    disabled={isReadOnly}
+                    className="input w-full text-sm py-1.5"
+                    title="Fiyatlandırma en az 30 gün üzerinden hesaplanır. PDF'de tarih yoksa 'Belirlenecek' görünebilir."
+                  />
+                </div>
+              )}
+
+              <div className="min-w-[72px] w-[88px]">
+                <label className={fieldLabel} title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz">İskonto %</label>
+                <input
+                  type="number"
+                  value={Number(iskonto) || 0}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
+                  }}
                   disabled={isReadOnly}
-                  className="input w-full h-14 resize-none text-sm"
-                  placeholder="Teklif ile ilgili notlar..."
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="0"
+                  title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz"
                 />
               </div>
 
-              <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
-                <label className="block text-xs font-medium text-text-primary">Teklif Şablonu (Opsiyonel)</label>
-                <div className="flex gap-2">
+              <div className="min-w-[72px] w-[88px]">
+                <label className={fieldLabel}>KDV %</label>
+                <input
+                  type="number"
+                  value={vatRate}
+                  onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                  disabled={isReadOnly}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="20"
+                />
+              </div>
+
+              <div className="min-w-[110px] w-[130px]">
+                <label className={fieldLabel}>Para Birimi</label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TRY">TRY (TL)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="USD">USD ($)</option>
+                </select>
+              </div>
+
+              <div className="min-w-[100px] w-[120px]">
+                <label className={fieldLabel}>Dil</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TR">Türkçe</option>
+                  <option value="EN">English</option>
+                </select>
+              </div>
+
+              {!isNew && (
+                <div className="min-w-[130px] w-[150px]">
+                  <label className={fieldLabel}>Durum</label>
+                  <select
+                    value={status}
+                    onChange={(e) => {
+                      setStatus(e.target.value as QuoteStatus);
+                      if (e.target.value !== QuoteStatus.Rejected) {
+                        setRejectionReasonError(null);
+                      }
+                    }}
+                    disabled={isReadOnly || converted}
+                    className="input w-full text-sm py-1.5"
+                  >
+                    <option value={QuoteStatus.Accepted}>Kabul Edildi</option>
+                    <option value={QuoteStatus.Rejected}>Reddedildi</option>
+                  </select>
+                </div>
+              )}
+
+              <div className="min-w-[220px] flex-[1.3]">
+                <label className={fieldLabel}>Şablon</label>
+                <div className="flex gap-1">
                   <select
                     value={selectedTemplateId}
                     onChange={(e) => setSelectedTemplateId(Number(e.target.value) || '')}
@@ -2085,9 +2407,9 @@ export default function QuoteDetailModal({
                         }
                       }}
                       disabled={loadingTemplate}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
-                      {loadingTemplate ? 'Yükleniyor...' : 'Düzenle'}
+                      {loadingTemplate ? '...' : 'Düzenle'}
                     </button>
                   )}
                   {!isReadOnly && (
@@ -2098,7 +2420,7 @@ export default function QuoteDetailModal({
                         setIsNewTemplate(true);
                         setIsTemplateEditorOpen(true);
                       }}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
                       Yeni
                     </button>
@@ -2106,20 +2428,20 @@ export default function QuoteDetailModal({
                 </div>
               </div>
               {isNew && !isReadOnly && (
-                <div className="space-y-0.5 md:col-span-2 lg:col-span-3">
-                  <label className="block text-xs font-medium text-text-primary">Hazır Paket (Opsiyonel)</label>
+                <div className="min-w-[220px] flex-[1.3]">
+                  <label className={fieldLabel}>Hazır Paket</label>
                   {packagesLoadError && (
-                    <div className="text-xs text-red-300 mb-1">
+                    <div className="text-[10px] text-red-300">
                       Paketler yüklenemedi: {packagesLoadError}
                     </div>
                   )}
-                  <div className="flex gap-2">
+                  <div className="flex gap-1">
                     <select
                       value={selectedPackageId}
                       onChange={(e) => setSelectedPackageId(e.target.value)}
                       className="input w-full text-sm py-1.5"
                     >
-                      <option value="">Paketten oluşturmak için paket seçin</option>
+                      <option value="">Paket seçin</option>
                       {packages.map((p) => (
                         <option key={p.PackageId} value={p.PackageId}>
                           {p.PackageName || `Paket #${p.PackageId}`}
@@ -2130,48 +2452,82 @@ export default function QuoteDetailModal({
                       type="button"
                       onClick={handleCreateFromPackage}
                       disabled={isBusy || !selectedPackageId}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
-                      Paketten Oluştur
+                      Uygula
                     </button>
                     <button
                       type="button"
                       onClick={() => setShowCreatePackageModal(true)}
                       disabled={isBusy}
-                      className="btn-secondary text-sm shrink-0"
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
                       Yeni
                     </button>
                   </div>
                 </div>
               )}
-            </div>
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-background-border pt-2">
-              <div className="flex flex-wrap items-center gap-4 text-xs text-text-secondary">
-                {quoteType === 'RENTAL' && (
-                  <span>
-                    <span className="font-medium text-text-primary">Planlanan Süre:</span> {plannedDays} gün
-                    <span className="ml-2 text-text-secondary/90">(Faturalama: min 30 → {billedDays} gün)</span>
-                  </span>
-                )}
-                {quoteType === 'SALE' && (
-                  <span className="text-text-secondary/90">Satış teklifinde fiyatlar birim satış fiyatıdır; süre çarpanı uygulanmaz.</span>
-                )}
-                <span>
-                  <span className="font-medium text-text-primary">Durum:</span>{' '}
-                  {status === QuoteStatus.Pending && 'Beklemede'}
-                  {status === QuoteStatus.Accepted && 'Kabul Edildi'}
-                  {status === QuoteStatus.Rejected && 'Reddedildi'}
-                </span>
+              <div className="min-w-[200px] flex-[1.4]">
+                <label className={fieldLabel}>Notlar</label>
+                <input
+                  type="text"
+                  value={notes}
+                  onChange={(e) => setNotes(e.target.value)}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="Teklif notu..."
+                />
               </div>
 
-              <div className="flex flex-wrap gap-2">
+              {!isNew && status === QuoteStatus.Rejected && (
+                <div className="w-full min-w-0">
+                  <label className={fieldLabel}>
+                    Red Gerekçesi {isReadOnly ? '' : '*'}
+                  </label>
+                  {isReadOnly ? (
+                    <div className="input w-full bg-background-secondary text-text-primary text-sm py-1.5 px-2 rounded-lg border border-background-border">
+                      {rejectionReason.trim() || activeQuote?.RejectionReason?.trim() || '—'}
+                    </div>
+                  ) : (
+                    <>
+                      <input
+                        type="text"
+                        value={rejectionReason}
+                        onChange={(e) => {
+                          setRejectionReason(e.target.value);
+                          setRejectionReasonError(null);
+                        }}
+                        className="input w-full text-sm py-1.5"
+                        placeholder="Red gerekçesini yazın (en az 3 karakter)"
+                      />
+                      {rejectionReasonError && (
+                        <p className="text-xs text-red-300">{rejectionReasonError}</p>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Orta: kalemler — yalnızca tablo kayar */}
+          <section className="rounded-lg border border-background-border bg-background-panel flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 border-b border-background-border">
+              <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                Teklif Kalemleri
+                {quoteItems.length > 0 && (
+                  <span className="ml-1.5 font-normal normal-case tracking-normal text-text-secondary/80">
+                    ({quoteItems.length})
+                  </span>
+                )}
+              </h3>
+              <div className="flex flex-wrap items-center gap-1.5">
                 {!isReadOnly && (
                   <button
                     type="button"
                     onClick={() => setShowProductPickerModal(true)}
-                    className="btn-secondary"
+                    className={`btn-secondary ${compactBtn}`}
                   >
                     Ürün Ekle
                   </button>
@@ -2180,9 +2536,9 @@ export default function QuoteDetailModal({
                   <button
                     type="button"
                     onClick={() => setShowManualLineModal(true)}
-                    className="btn-secondary"
+                    className={`btn-secondary ${compactBtn}`}
                   >
-                    Manuel Kalem Ekle
+                    Manuel Kalem
                   </button>
                 )}
                 {!isReadOnly && selectedTemplateId && quoteItems.length > 0 && (
@@ -2217,166 +2573,51 @@ export default function QuoteDetailModal({
                       }
                     }}
                     disabled={isAddingMaterialTable}
-                    className="btn-secondary text-sm"
+                    className={`btn-secondary ${compactBtn}`}
+                    title="Seçili şablona malzeme tablosu yer tutucusu ekler"
                   >
-                    <ClipboardIcon size={16} weight="regular" className="inline mr-1" aria-hidden />
-                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Tabloyu Şablona Ekle'}
+                    <ClipboardIcon size={14} weight="regular" className="inline mr-1" aria-hidden />
+                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Şablona Tablo'}
                   </button>
                 )}
                 {!isNew && activeQuote && selectedTemplateId && (
                   <>
-                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className="btn-primary text-sm">
+                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className={`btn-primary ${compactBtn}`}>
                       {isBusy ? 'Yükleniyor...' : 'Önizle'}
                     </button>
-                    <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className="btn-secondary text-sm">
-                      PDF İndir
+                    <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>
+                      PDF
                     </button>
-                    <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className="btn-secondary text-sm">
-                      Word İndir
-                    </button>
-                  </>
-                )}
-                {!isNew && isReadOnly && (
-                  <>
-                    {activeQuote?.ConvertedContractId && (
-                      <button
-                        type="button"
-                        onClick={openConvertedContract}
-                        disabled={isBusy || isOpeningConvertedContract}
-                        className="btn-primary"
-                      >
-                        {isOpeningConvertedContract
-                          ? 'Sözleşme Açılıyor...'
-                          : `Sözleşmeyi Aç (#${activeQuote.ConvertedContractId})`}
-                      </button>
-                    )}
-                    {!activeQuote?.ConvertedContractId && (
-                      <button
-                        onClick={() => setIsReadOnly(false)}
-                        className="btn-primary"
-                      >
-                        Düzenle
-                      </button>
-                    )}
-                    {status === QuoteStatus.Pending && !activeQuote?.ConvertedContractId && (
-                      <>
-                        <button onClick={handleAccept} disabled={isBusy} className="btn-success">
-                          Kabul Et
-                        </button>
-                        <button onClick={handleReject} disabled={isBusy} className="btn-danger">
-                          Reddet
-                        </button>
-                      </>
-                    )}
-                    {status === QuoteStatus.Accepted && !activeQuote?.ConvertedContractId && (
-                      <button onClick={handleReject} disabled={isBusy} className="btn-danger">
-                        Reddet
-                      </button>
-                    )}
-                    {status === QuoteStatus.Rejected && !activeQuote?.ConvertedContractId && (
-                      <button onClick={handleAccept} disabled={isBusy} className="btn-success">
-                        Kabul Et
-                      </button>
-                    )}
-                    {status === QuoteStatus.Accepted && !activeQuote?.ConvertedContractId && (
-                      <button
-                        onClick={openConvertModal}
-                        disabled={isBusy}
-                        className="btn-success"
-                      >
-                        Sözleşmeye Dönüştür
-                      </button>
-                    )}
-                  </>
-                )}
-                {!isReadOnly && (
-                  <>
-                    {!isNew && activeQuote && !activeQuote.ConvertedContractId && (
-                      <button
-                        onClick={handleDeleteClick}
-                        disabled={isBusy}
-                        className="btn-danger"
-                      >
-                        Sil
-                      </button>
-                    )}
-                    <button onClick={onClose} className="btn-secondary">
-                      İptal
-                    </button>
-                    <button
-                      onClick={handleSave}
-                      disabled={isBusy}
-                      className="btn-primary"
-                    >
-                      {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                    <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>
+                      Word
                     </button>
                   </>
-                )}
-                {isReadOnly && (
-                  <button onClick={onClose} className="btn-secondary">
-                    Kapat
-                  </button>
                 )}
               </div>
             </div>
-          </section>
-
-          {/* Sözleşmeye dönüştürüldü bilgisi */}
-          {activeQuote?.ConvertedContractId && (
-            <section className="rounded-xl border border-background-border bg-green-900/30 p-4 shadow-sm">
-              <div className="flex items-center gap-2">
-                <span className="text-green-300 shrink-0">
-                  <CheckIcon size={20} weight="bold" aria-hidden />
-                </span>
-                <span>
-                  Bu teklif sözleşmeye dönüştürüldü (Sözleşme #{activeQuote.ConvertedContractId})
-                </span>
-              </div>
-              <div className="mt-2 text-sm text-green-200">
-                Dönüştürülme Tarihi:{' '}
-                {formatShortDateTime(activeQuote.ConvertedAt)}
-              </div>
-              <div className="mt-3">
-                <button
-                  type="button"
-                  onClick={openConvertedContract}
-                  disabled={isBusy || isOpeningConvertedContract}
-                  className="btn-secondary text-sm"
-                >
-                  {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeyi Aç'}
-                </button>
-              </div>
-            </section>
-          )}
-
-          {/* Orta kısım: ürün tablosu */}
-          <section className="rounded-xl border border-background-border bg-background-panel shadow-sm flex-1 min-h-[260px] flex flex-col overflow-hidden">
-            <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider px-4 pt-4 pb-2 border-b border-background-border shrink-0">
-              Teklif Kalemleri
-            </h3>
-            <div className="border-0 rounded-b-xl overflow-auto flex-1 min-h-0">
+            <div className="overflow-auto flex-1 min-h-0">
               <table className="w-full text-sm border-collapse text-text-primary">
                 <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
                   <tr>
-                    <th className="text-left px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                    <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       Ürün Kodu
                     </th>
-                    <th className="text-left px-3 py-2 font-semibold text-text-secondary">
+                    <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">
                       Ürün Adı
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary w-24">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-24 text-xs">
                       Miktar
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       {quoteType === 'SALE' ? 'Birim Fiyat' : 'Aylık Fiyat'}
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary w-20">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-20 text-xs">
                       İskonto (%)
                     </th>
-                    <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       Toplam
                     </th>
-                    <th className="text-center px-2 py-2 font-semibold text-text-secondary w-20">
+                    <th className="text-center px-2 py-1.5 font-semibold text-text-secondary w-16 text-xs">
                       İşlem
                     </th>
                   </tr>
@@ -2388,8 +2629,7 @@ export default function QuoteDetailModal({
                         colSpan={7}
                         className="px-3 py-6 text-center text-sm text-text-secondary"
                       >
-                        Henüz ürün eklenmedi. Üst kısımdan "Ürün Ekle" butonu ile ürün
-                        seçebilirsiniz.
+                        Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
                       </td>
                     </tr>
                   ) : (
@@ -2418,7 +2658,7 @@ export default function QuoteDetailModal({
                             justAdded ? 'bg-green-500/20' : ''
                           } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
                         >
-                          <td className="px-3 py-2 text-text-secondary">
+                          <td className="px-3 py-1 text-text-secondary">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
                                 <span className="inline-flex items-center gap-1.5 flex-wrap">
@@ -2463,7 +2703,7 @@ export default function QuoteDetailModal({
                                         )
                                       );
                                     }}
-                                    className="btn-secondary text-xs whitespace-nowrap"
+                                    className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
                                     disabled={isBusy}
                                     title="Varsayılana dön"
                                   >
@@ -2475,7 +2715,7 @@ export default function QuoteDetailModal({
                               '—'
                             )}
                           </td>
-                          <td className="px-3 py-2 font-medium">
+                          <td className="px-3 py-1 font-medium">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
                                 language === 'EN' ? (
@@ -2532,7 +2772,7 @@ export default function QuoteDetailModal({
                                         )
                                       );
                                     }}
-                                    className="btn-secondary text-xs whitespace-nowrap"
+                                    className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
                                     disabled={isBusy}
                                     title="Varsayılana dön"
                                   >
@@ -2544,7 +2784,7 @@ export default function QuoteDetailModal({
                               item.Description
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right">
+                          <td className="px-3 py-1 text-right">
                             {isReadOnly ? (
                               item.Quantity
                             ) : (
@@ -2598,7 +2838,7 @@ export default function QuoteDetailModal({
                               />
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right text-text-secondary">
+                          <td className="px-3 py-1 text-right text-text-secondary">
                             {item.kind === 'manual' ? (
                               quoteType === 'SALE' ? (
                                 formatCurrency(item.UnitPriceSnapshot)
@@ -2725,7 +2965,7 @@ export default function QuoteDetailModal({
                               />
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right">
+                          <td className="px-3 py-1 text-right">
                             {isReadOnly ? (
                               Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto) || 0
                             ) : (
@@ -2758,10 +2998,10 @@ export default function QuoteDetailModal({
                               />
                             )}
                           </td>
-                          <td className="px-3 py-2 text-right font-medium text-green-500">
+                          <td className="px-3 py-1 text-right font-medium text-green-500">
                             {formatCurrency(lineTotal)}
                           </td>
-                          <td className="px-2 py-2 text-center">
+                          <td className="px-2 py-1 text-center">
                             {!isReadOnly && (
                               <button
                                 type="button"
@@ -2793,60 +3033,251 @@ export default function QuoteDetailModal({
             </div>
           </section>
 
-          {/* Alt kısım: finansal özet */}
-          <section className="rounded-xl border border-background-border bg-background-panel p-4 shadow-sm shrink-0">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 text-sm">
+          {/* Alt: toplam + kaydet — her zaman görünür */}
+          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
               <div>
-                <div className="text-text-secondary mb-1">Ara Toplam</div>
-                <div className="font-semibold text-text-primary">
-                  {formatCurrency(subtotal)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
+                <span className="font-semibold text-text-primary">{formatCurrency(subtotal)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">
-                  Toplam İskonto
-                </div>
-                <div className="font-semibold text-red-300">
-                  -{formatCurrency(discountAmount)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
+                <span className="font-semibold text-red-300">-{formatCurrency(discountAmount)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">İskontolu Toplam</div>
-                <div className="font-semibold text-text-primary">
-                  {formatCurrency(discountedTotal)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
+                <span className="font-semibold text-text-primary">{formatCurrency(discountedTotal)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">
-                  KDV Toplam ({vatRate || 0}%)
-                </div>
-                <div className="font-semibold text-yellow-300">
-                  {formatCurrency(vatAmount)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
+                <span className="font-semibold text-yellow-300">{formatCurrency(vatAmount)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">Genel Toplam</div>
-                <div className="text-2xl font-bold text-green-400">
-                  {formatCurrency(grandTotal)}
-                </div>
+                <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
+                <span className="text-lg font-bold text-green-400">{formatCurrency(grandTotal)}</span>
               </div>
+              {quoteType === 'RENTAL' && (
+                <span className="text-[11px] text-text-secondary">
+                  {plannedDays} gün · fatura min 30 → {billedDays} gün
+                </span>
+              )}
+              {quoteType === 'SALE' && (
+                <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
+              )}
             </div>
-            {quoteType === 'RENTAL' && (
-              <div className="mt-2 text-xs text-text-secondary">
-                ({billedDays} gün üzerinden hesaplanmıştır)
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              {!isNew && isReadOnly && (
+                <>
+                  {converted && (
+                    <button
+                      type="button"
+                      onClick={openConvertedContract}
+                      disabled={isBusy || isOpeningConvertedContract}
+                      className={`btn-primary ${compactBtn}`}
+                    >
+                      {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+                    </button>
+                  )}
+                  {!converted && canUpdateQuote && (
+                    <button
+                      type="button"
+                      onClick={() => setIsReadOnly(false)}
+                      className={`btn-primary ${compactBtn}`}
+                    >
+                      Düzenle
+                    </button>
+                  )}
+                  {status === QuoteStatus.Pending && !converted && canUpdateQuote && (
+                    <>
+                      <button type="button" onClick={handleAccept} disabled={isBusy} className={`btn-success ${compactBtn}`}>
+                        Kabul Et
+                      </button>
+                      <button type="button" onClick={handleRejectClick} disabled={isBusy} className={`btn-danger ${compactBtn}`}>
+                        Reddet
+                      </button>
+                    </>
+                  )}
+                  {status === QuoteStatus.Accepted && !converted && canUpdateQuote && (
+                    <button type="button" onClick={handleRejectClick} disabled={isBusy} className={`btn-danger ${compactBtn}`}>
+                      Reddet
+                    </button>
+                  )}
+                  {status === QuoteStatus.Rejected && !converted && canUpdateQuote && (
+                    <button type="button" onClick={handleAccept} disabled={isBusy} className={`btn-success ${compactBtn}`}>
+                      Kabul Et
+                    </button>
+                  )}
+                  {status === QuoteStatus.Accepted && !converted && (
+                    <button
+                      type="button"
+                      onClick={openConvertModal}
+                      disabled={isBusy}
+                      className={`btn-success ${compactBtn}`}
+                    >
+                      Sözleşmeye Dönüştür
+                    </button>
+                  )}
+                </>
+              )}
+              {!isReadOnly && (
+                <>
+                  {!isNew && activeQuote && !converted && canDeleteQuote && (
+                    <button
+                      type="button"
+                      onClick={handleDeleteClick}
+                      disabled={isBusy}
+                      className={`btn-danger ${compactBtn}`}
+                    >
+                      Sil
+                    </button>
+                  )}
+                  <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
+                    className={`btn-primary ${compactBtn}`}
+                  >
+                    {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                  </button>
+                </>
+              )}
+              {isReadOnly && (
+                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  Kapat
+                </button>
+              )}
+            </div>
+          </section>
+      </div>
+      {showDeleteReasonModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">Silme Gerekçesi (Opsiyonel)</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              İsterseniz silme gerekçesi ekleyebilirsiniz.
+            </p>
+            <textarea
+              value={deleteReason}
+              onChange={(e) => {
+                setDeleteReason(e.target.value);
+                setDeleteReasonError(null);
+              }}
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Yanlış kayıt"
+            />
+            {deleteReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {deleteReasonError}
               </div>
             )}
-          </section>
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowDeleteReasonModal(false);
+                  setDeleteReason('');
+                  setDeleteReasonError(null);
+                }}
+                disabled={isBusy}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={handleDeleteReasonContinue}
+                disabled={isBusy}
+                className="btn-primary flex-1"
+              >
+                Devam
+              </button>
+            </div>
+          </div>
         </div>
-      </div>
+      )}
+
       <ConfirmModal
         open={showDeleteConfirm}
-        title="Onaylıyor musunuz?"
-        message="Bu teklifi silmek istediğinizden emin misiniz?"
+        title="Teklifi sil"
+        message={
+          deleteReason.trim()
+            ? `Bu teklifi silmek istediğinizden emin misiniz?\n\nGerekçe: ${deleteReason.trim()}`
+            : 'Bu teklifi silmek istediğinizden emin misiniz?'
+        }
         variant="danger"
         loading={isBusy}
         onConfirm={handleDeleteConfirm}
-        onCancel={() => setShowDeleteConfirm(false)}
+        onCancel={() => {
+          setShowDeleteConfirm(false);
+          setDeleteReason('');
+          setDeleteReasonError(null);
+        }}
+      />
+
+      {showRejectReasonModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">Red Gerekçesi</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Teklifi reddetmek için gerekçe belirtin.
+            </p>
+            <textarea
+              value={rejectionReason}
+              onChange={(e) => {
+                setRejectionReason(e.target.value);
+                setRejectionReasonError(null);
+              }}
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Fiyat uygun değil"
+            />
+            {rejectionReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {rejectionReasonError}
+              </div>
+            )}
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowRejectReasonModal(false);
+                  setRejectionReason('');
+                  setRejectionReasonError(null);
+                }}
+                disabled={isBusy}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={handleRejectReasonContinue}
+                disabled={isBusy}
+                className="btn-primary flex-1"
+              >
+                Devam
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <ConfirmModal
+        open={showRejectConfirm}
+        title="Teklifi reddet"
+        message={`Aşağıdaki teklifi reddedeceksiniz.\n\nTeklif: #${activeQuote?.QuoteId ?? '-'}\nRed Gerekçesi: ${rejectionReason.trim()}`}
+        confirmLabel="Reddet"
+        cancelLabel="Vazgeç"
+        variant="danger"
+        loading={isBusy}
+        onConfirm={() => void handleRejectConfirm()}
+        onCancel={() => {
+          setShowRejectConfirm(false);
+          setRejectionReason('');
+          setRejectionReasonError(null);
+        }}
       />
 
       <ConfirmModal
@@ -2876,12 +3307,16 @@ export default function QuoteDetailModal({
             </p>
 
             {convertModalError && (
-              <div
-                role="alert"
-                className="mb-4 rounded-lg border border-red-600/60 bg-red-950/45 p-3 text-sm text-red-100 whitespace-pre-wrap"
-              >
-                {convertModalError}
-              </div>
+              <StockErrorPanel
+                message={convertModalError}
+                onRetry={handleConvertToContract}
+                onReduceQuantity={convertMode === 'perItem' ? handleReduceConvertQuantity : undefined}
+                onDismiss={() => setConvertModalError(null)}
+              />
+            )}
+
+            {convertStocksLoading && (
+              <p className="text-xs text-text-secondary mb-3">Depo stok bilgileri yükleniyor...</p>
             )}
 
             {quoteType === 'RENTAL' && (
@@ -2914,31 +3349,49 @@ export default function QuoteDetailModal({
               </div>
             )}
 
-            <div className="space-y-3 mb-4">
-              <div className="rounded-lg border border-background-border p-3 space-y-2">
-                <div className="text-sm font-medium text-text-primary">Stok dusumu</div>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="decrementStock"
-                    checked={decrementStock === true}
-                    onChange={() => setDecrementStock(true)}
-                    className="rounded-full"
-                  />
-                  <span className="text-sm">Stok dusulsun</span>
-                </label>
-                <label className="flex items-center gap-2 cursor-pointer">
-                  <input
-                    type="radio"
-                    name="decrementStock"
-                    checked={decrementStock === false}
-                    onChange={() => setDecrementStock(false)}
-                    className="rounded-full"
-                  />
-                  <span className="text-sm">Stok dusulmesin</span>
-                </label>
+            {quoteType === 'SALE' && (
+              <div className="space-y-3 mb-4">
+                <div className="rounded-lg border border-background-border p-3 space-y-2">
+                  <div className="text-sm font-medium text-text-primary">Stok düşümü *</div>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="decrementStock"
+                      checked={decrementStock === true}
+                      onChange={() => {
+                        setDecrementStock(true);
+                        setConvertModalError(null);
+                      }}
+                      className="rounded-full"
+                      disabled={isBusy}
+                    />
+                    <span className="text-sm">Stok düşülsün</span>
+                  </label>
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="decrementStock"
+                      checked={decrementStock === false}
+                      onChange={() => {
+                        setDecrementStock(false);
+                        setConvertModalError(null);
+                      }}
+                      className="rounded-full"
+                      disabled={isBusy}
+                    />
+                    <span className="text-sm">Stok düşülmesin</span>
+                  </label>
+                </div>
               </div>
+            )}
 
+            {quoteType === 'RENTAL' && (
+              <p className="text-xs text-text-secondary mb-4">
+                Kiralama dönüşümünde stok seçilen depodan otomatik düşülür.
+              </p>
+            )}
+
+            <div className="space-y-3 mb-4">
               <label className="flex items-center gap-2 cursor-pointer">
                 <input
                   type="radio"
@@ -2949,15 +3402,20 @@ export default function QuoteDetailModal({
                     setConvertMode('defaultWarehouse');
                   }}
                   className="rounded-full"
+                  disabled={isBusy}
                 />
                 <span className="text-sm">Tüm kalemler tek depodan çıksın (varsayılan depo)</span>
               </label>
               {convertMode === 'defaultWarehouse' && (
-                <div className="ml-6">
+                <div className="ml-6 space-y-2">
                   <select
                     value={defaultWarehouseIdForConvert}
-                    onChange={(e) => setDefaultWarehouseIdForConvert(Number(e.target.value) || '')}
+                    onChange={(e) => {
+                      setDefaultWarehouseIdForConvert(Number(e.target.value) || '');
+                      setConvertModalError(null);
+                    }}
                     className="input w-full max-w-xs"
+                    disabled={isBusy}
                   >
                     <option value="">Depo seçin</option>
                     {warehouses.map((wh) => (
@@ -2966,6 +3424,31 @@ export default function QuoteDetailModal({
                       </option>
                     ))}
                   </select>
+                  {defaultWarehouseIdForConvert &&
+                    quoteItems
+                      .filter((i) => i.kind === 'inventory')
+                      .map((item) => {
+                        const stock = getConvertStockForWarehouse(
+                          item.ItemId,
+                          Number(defaultWarehouseIdForConvert)
+                        );
+                        if (stock == null) return null;
+                        const label = formatInventoryLineBilingualLabel(
+                          item.ItemName,
+                          item.ItemNameEn,
+                          item.Item
+                        );
+                        const insufficient = item.Quantity > stock;
+                        return (
+                          <p
+                            key={item.ItemId}
+                            className={`text-xs ${insufficient ? 'text-amber-400' : 'text-text-secondary'}`}
+                          >
+                            {label}: seçili depoda {stock} adet
+                            {insufficient ? ` — talep ${item.Quantity} adet (yetersiz)` : ''}
+                          </p>
+                        );
+                      })}
                 </div>
               )}
               {quoteItems.some((i) => i.kind === 'inventory') && (
@@ -2979,6 +3462,7 @@ export default function QuoteDetailModal({
                       setConvertMode('perItem');
                     }}
                     className="rounded-full"
+                    disabled={isBusy}
                   />
                   <span className="text-sm">Ürün bazlı depo ataması yap</span>
                 </label>
@@ -2991,6 +3475,7 @@ export default function QuoteDetailModal({
                   const assignments = perItemAssignments[item.ItemId] ?? [];
                   const total = getAssignmentTotalForItem(item.ItemId);
                   const isValid = total === item.Quantity;
+                  const itemStocks = convertItemStocks[item.ItemId] ?? [];
 
                   return (
                     <div key={item.ItemId} className="card p-4">
@@ -3005,51 +3490,87 @@ export default function QuoteDetailModal({
                           </span>
                         )}
                       </div>
+                      {itemStocks.length > 0 && (
+                        <details className="text-xs text-text-secondary mb-2">
+                          <summary className="cursor-pointer text-primary-400 hover:underline">
+                            Stok dağılımı
+                          </summary>
+                          <span className="ml-1">
+                            {itemStocks
+                              .map((s) => {
+                                const wh = warehouses.find((w) => w.WarehouseId === s.WarehouseId);
+                                return `${wh?.WarehouseName ?? s.WarehouseId}: ${s.Quantity} adet`;
+                              })
+                              .join(' · ')}
+                          </span>
+                        </details>
+                      )}
                       <div className="space-y-2">
-                        {assignments.map((a, idx) => (
-                          <div key={idx} className="flex gap-2 items-center">
-                            <select
-                              value={a.WarehouseId}
-                              onChange={(e) =>
-                                updateWarehouseAssignment(
-                                  item.ItemId,
-                                  idx,
-                                  'WarehouseId',
-                                  Number(e.target.value)
-                                )
-                              }
-                              className="input flex-1"
-                            >
-                              {warehouses.map((wh) => (
-                                <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                                  {wh.WarehouseName}
-                                </option>
-                              ))}
-                            </select>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              pattern="[0-9]*"
-                              value={a.Quantity === 0 ? '' : a.Quantity}
-                              onChange={(e) => {
-                                const raw = e.target.value.replace(/[^0-9]/g, '');
-                                const num = raw === '' ? 0 : Math.max(0, parseInt(raw, 10));
-                                updateWarehouseAssignment(item.ItemId, idx, 'Quantity', num);
-                              }}
-                              className="input w-24"
-                              placeholder="Adet"
-                            />
-                            <button
-                              onClick={() => removeWarehouseAssignment(item.ItemId, idx)}
-                              className="text-error hover:text-red-700 text-xl px-1 inline-flex items-center justify-center"
-                            >
-                              <XIcon size={18} weight="regular" aria-hidden />
-                            </button>
+                        {assignments.map((a, idx) => {
+                          const rowStock = getConvertStockForWarehouse(item.ItemId, a.WarehouseId);
+                          const rowInsufficient =
+                            rowStock != null && a.Quantity > 0 && a.Quantity > rowStock;
+                          return (
+                          <div key={idx} className="space-y-1">
+                            <div className="flex gap-2 items-center">
+                              <select
+                                value={a.WarehouseId}
+                                onChange={(e) => {
+                                  updateWarehouseAssignment(
+                                    item.ItemId,
+                                    idx,
+                                    'WarehouseId',
+                                    Number(e.target.value)
+                                  );
+                                  setConvertModalError(null);
+                                }}
+                                className="input flex-1"
+                                disabled={isBusy}
+                              >
+                                {warehouses.map((wh) => (
+                                  <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                                    {formatWarehouseOptionLabel(wh, item.ItemId)}
+                                  </option>
+                                ))}
+                              </select>
+                              <input
+                                type="text"
+                                inputMode="numeric"
+                                pattern="[0-9]*"
+                                value={a.Quantity === 0 ? '' : a.Quantity}
+                                onChange={(e) => {
+                                  const raw = e.target.value.replace(/[^0-9]/g, '');
+                                  const num = raw === '' ? 0 : Math.max(0, parseInt(raw, 10));
+                                  updateWarehouseAssignment(item.ItemId, idx, 'Quantity', num);
+                                  setConvertModalError(null);
+                                }}
+                                className="input w-24"
+                                placeholder="Adet"
+                                disabled={isBusy}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => removeWarehouseAssignment(item.ItemId, idx)}
+                                className="text-error hover:text-red-700 text-xl px-1 inline-flex items-center justify-center"
+                                disabled={isBusy}
+                              >
+                                <XIcon size={18} weight="regular" aria-hidden />
+                              </button>
+                            </div>
+                            {rowStock != null && (
+                              <p className={`text-[11px] pl-0.5 ${rowInsufficient ? 'text-amber-400' : 'text-text-secondary'}`}>
+                                Bu depoda müsait: {rowStock} adet
+                                {rowInsufficient ? ' — miktar depo stokunu aşıyor' : ''}
+                              </p>
+                            )}
                           </div>
-                        ))}
+                          );
+                        })}
                         <button
+                          type="button"
                           onClick={() => addWarehouseAssignment(item.ItemId)}
                           className="btn-secondary text-sm px-3 py-1"
+                          disabled={isBusy}
                         >
                           + Depo ekle
                         </button>
@@ -3076,7 +3597,7 @@ export default function QuoteDetailModal({
                 onClick={handleConvertToContract}
                 disabled={
                   isBusy ||
-                  decrementStock == null ||
+                  (quoteType === 'SALE' && decrementStock == null) ||
                   (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) ||
                   (convertMode === 'perItem' &&
                     quoteItems
@@ -3206,6 +3727,25 @@ export default function QuoteDetailModal({
           </div>,
           document.body
         )}
+      {showCreateCustomerModal &&
+        createPortal(
+          <CustomerDetailModal
+            customer={null}
+            isNew
+            overlayClassName="z-[80]"
+            onSaved={handleCustomerSaved}
+            onClose={() => setShowCreateCustomerModal(false)}
+          />,
+          document.body
+        )}
+      {showCreateSiteModal && selectedCustomerId && (
+        <SiteCreateModal
+          customerId={Number(selectedCustomerId)}
+          customerName={customers.find((c) => c.CustomerId === Number(selectedCustomerId))?.Name}
+          onCreated={handleSiteCreated}
+          onClose={() => setShowCreateSiteModal(false)}
+        />
+      )}
       {isTemplateEditorOpen &&
         createPortal(
           <QuoteTemplateEditorModal
@@ -3237,10 +3777,12 @@ export default function QuoteDetailModal({
           key={`converted-contract-${convertedContract?.ContractId ?? 'x'}`}
           contract={convertedContract}
           isNew={false}
+          stackAboveParent
+          onDataChanged={refreshQuoteDetail}
           onClose={async () => {
             setIsContractModalOpen(false);
             setConvertedContract(null);
-            await onDataChanged?.();
+            await refreshQuoteDetail();
           }}
         />
       )}

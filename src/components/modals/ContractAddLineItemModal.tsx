@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { XIcon } from '@phosphor-icons/react';
-import type { ContractQuoteType, Inventory, Warehouse } from '../../models';
+import type { ContractQuoteType, Inventory, Warehouse, WarehouseStock } from '../../models';
 import { contractService, type AddContractDetailsRequestBody } from '../../services/contractService';
-import { getApiErrorMessage } from '../../utils/apiError';
+import { inventoryService } from '../../services/inventoryService';
+import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, validateNumber, validateRequired } from '../../utils/validation';
+import { isStockErrorMessage } from '../../utils/parseStockError';
+import StockErrorPanel from '../StockErrorPanel';
 
 type LineItemKind = 'inventory' | 'manual';
 
@@ -23,6 +26,11 @@ function todayDateInputValue(): string {
   return new Date().toISOString().split('T')[0];
 }
 
+function parsePositiveInt(raw: string): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
 export default function ContractAddLineItemModal({
   open,
   contractId,
@@ -37,6 +45,9 @@ export default function ContractAddLineItemModal({
 
   const [kind, setKind] = useState<LineItemKind>('inventory');
   const [isBusy, setIsBusy] = useState(false);
+  const [stockError, setStockError] = useState<string | null>(null);
+  const [itemWarehouseStocks, setItemWarehouseStocks] = useState<WarehouseStock[]>([]);
+  const [stocksLoading, setStocksLoading] = useState(false);
 
   // Inventory fields
   const [selectedItemId, setSelectedItemId] = useState<number | ''>('');
@@ -73,13 +84,54 @@ export default function ContractAddLineItemModal({
     setManualDescription('');
     setManualQuantityStr('1');
     setManualDailyPriceStr('');
+    setStockError(null);
+    setItemWarehouseStocks([]);
   }, [open]);
+
+  useEffect(() => {
+    if (!open || kind !== 'inventory' || !selectedItemId) {
+      setItemWarehouseStocks([]);
+      return;
+    }
+    let cancelled = false;
+    setStocksLoading(true);
+    inventoryService
+      .getWarehousesByItemAsync(Number(selectedItemId))
+      .then((stocks) => {
+        if (!cancelled) setItemWarehouseStocks(stocks);
+      })
+      .catch(() => {
+        if (!cancelled) setItemWarehouseStocks([]);
+      })
+      .finally(() => {
+        if (!cancelled) setStocksLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [open, kind, selectedItemId]);
+
+  const selectedWarehouseStock = useMemo(() => {
+    if (!selectedWarehouseId) return null;
+    const whId = Number(selectedWarehouseId);
+    return itemWarehouseStocks.find((s) => s.WarehouseId === whId)?.Quantity ?? null;
+  }, [itemWarehouseStocks, selectedWarehouseId]);
+
+  const requestedQty = parsePositiveInt(kind === 'inventory' ? quantityStr : manualQuantityStr);
+
+  const stockInlineWarning =
+    kind === 'inventory' &&
+    selectedWarehouseId &&
+    selectedWarehouseStock != null &&
+    requestedQty > selectedWarehouseStock
+      ? `Seçili depoda yalnızca ${selectedWarehouseStock} adet müsait; talep ${requestedQty} adet.`
+      : null;
 
   if (!open) return null;
 
-  const parsePositiveInt = (raw: string): number => {
-    const n = Math.floor(Number(raw));
-    return Number.isFinite(n) && n > 0 ? n : 0;
+  const handleReduceQuantity = (available: number) => {
+    setQuantityStr(String(Math.max(1, available)));
+    setStockError(null);
   };
 
   const handleAdd = async () => {
@@ -144,6 +196,7 @@ export default function ContractAddLineItemModal({
 
     try {
       setIsBusy(true);
+      setStockError(null);
       const result = await contractService.addDetailsAsync(contractId, body);
       if (Array.isArray(result?.warnings) && result.warnings.length > 0) {
         toast.warning(result.warnings.join('\n'));
@@ -157,7 +210,12 @@ export default function ContractAddLineItemModal({
       onClose();
     } catch (error) {
       console.error('Add contract detail error:', error);
-      toast.error(getApiErrorMessage(error) || 'Kalem eklenemedi');
+      const msg = getApiErrorMessage(error) || 'Kalem eklenemedi';
+      if (isStockErrorMessage(msg)) {
+        setStockError(msg);
+      } else {
+        toast.error(getUserFacingApiErrorMessage(error, 'contract-add-line'));
+      }
     } finally {
       setIsBusy(false);
     }
@@ -180,6 +238,15 @@ export default function ContractAddLineItemModal({
         </header>
 
         <div className="p-5 space-y-4">
+          {stockError && (
+            <StockErrorPanel
+              message={stockError}
+              onRetry={handleAdd}
+              onReduceQuantity={kind === 'inventory' ? handleReduceQuantity : undefined}
+              onDismiss={() => setStockError(null)}
+            />
+          )}
+
           <div className="space-y-2">
             <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
               Kalem tipi
@@ -242,17 +309,51 @@ export default function ContractAddLineItemModal({
                 <label className="block text-xs font-medium text-text-primary mb-1">Depo *</label>
                 <select
                   value={selectedWarehouseId}
-                  onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || '')}
+                  onChange={(e) => {
+                    setSelectedWarehouseId(Number(e.target.value) || '');
+                    setStockError(null);
+                  }}
                   className="input w-full"
                   disabled={isBusy}
                 >
                   <option value="">Depo seçin</option>
-                  {warehouses.map((wh) => (
-                    <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                      {wh.WarehouseName}
-                    </option>
-                  ))}
+                  {warehouses.map((wh) => {
+                    const stock = itemWarehouseStocks.find((s) => s.WarehouseId === wh.WarehouseId);
+                    const stockLabel =
+                      selectedItemId && stock != null ? ` (${stock.Quantity} adet)` : '';
+                    return (
+                      <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                        {wh.WarehouseName}
+                        {stockLabel}
+                      </option>
+                    );
+                  })}
                 </select>
+                {selectedItemId && (
+                  <div className="text-[11px] text-text-secondary mt-1">
+                    {stocksLoading
+                      ? 'Stok bilgisi yükleniyor...'
+                      : selectedWarehouseStock != null
+                        ? `Seçili depoda müsait: ${selectedWarehouseStock} adet`
+                        : itemWarehouseStocks.length > 0
+                          ? (
+                            <details className="inline">
+                              <summary className="cursor-pointer text-primary-400 hover:underline">
+                                Stok dağılımı
+                              </summary>
+                              <span className="ml-1">
+                                {itemWarehouseStocks
+                                  .map((s) => {
+                                    const wh = warehouses.find((w) => w.WarehouseId === s.WarehouseId);
+                                    return `${wh?.WarehouseName ?? s.WarehouseId}: ${s.Quantity}`;
+                                  })
+                                  .join(' · ')}
+                              </span>
+                            </details>
+                          )
+                          : null}
+                  </div>
+                )}
               </div>
 
               <div>
@@ -261,10 +362,16 @@ export default function ContractAddLineItemModal({
                   type="number"
                   min={1}
                   value={quantityStr}
-                  onChange={(e) => setQuantityStr(e.target.value)}
+                  onChange={(e) => {
+                    setQuantityStr(e.target.value);
+                    setStockError(null);
+                  }}
                   className="input w-full"
                   disabled={isBusy}
                 />
+                {stockInlineWarning && (
+                  <p className="text-[11px] text-amber-400 mt-1">{stockInlineWarning}</p>
+                )}
               </div>
 
               {isRental && (
