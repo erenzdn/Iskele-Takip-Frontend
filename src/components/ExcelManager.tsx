@@ -15,7 +15,7 @@ import { toast } from '../hooks/useToast';
 import { formatInventoryRelatedApiText, getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
-import { resolveInventoryImportErrors } from '../utils/inventoryExcelImportUi';
+import { resolveExcelImportErrors } from '../utils/inventoryExcelImportUi';
 import ExcelImportPreviewModal, { type ExcelPreviewValidRow } from './ExcelImportPreviewModal';
 
 export type ExcelModuleType = 'inventory' | 'customers' | 'checks' | 'stockReceipts';
@@ -322,50 +322,11 @@ function prepareImportErrors(
   errors: ExcelImportErrorRow[],
   errorsByRow: ExcelImportRowErrors[]
 ): { errors: ExcelImportErrorRow[]; errorsByRow: ExcelImportRowErrors[] } {
-  if (type !== 'inventory') {
-    return { errors, errorsByRow: errorsByRow.length > 0 ? errorsByRow : groupImportErrorsByRowGeneric(errors) };
-  }
-  return resolveInventoryImportErrors(errors, errorsByRow);
-}
-
-function groupImportErrorsByRowGeneric(errors: ExcelImportErrorRow[]): ExcelImportRowErrors[] {
-  const byRow = new Map<number, ExcelImportRowErrors>();
-
-  for (const err of errors) {
-    if (!err.row) continue;
-    let rowErr = byRow.get(err.row);
-    if (!rowErr) {
-      rowErr = {
-        row: err.row,
-        sheet: err.sheet ?? '-',
-        errorCount: 0,
-        columns: [],
-        summary: '',
-        issues: [],
-      };
-      byRow.set(err.row, rowErr);
-    }
-
-    const displayMessage =
-      err.displayMessage?.trim() || `Satır ${err.row}, ${err.column}: ${err.error}`;
-
-    rowErr.issues.push({
-      column: err.column,
-      error: err.error,
-      category: err.category ?? null,
-      givenValue: err.givenValue ?? null,
-      displayMessage,
-    });
-  }
-
-  return Array.from(byRow.values())
-    .map((rowErr) => ({
-      ...rowErr,
-      errorCount: rowErr.issues.length,
-      columns: rowErr.issues.map((issue) => issue.column),
-      summary: rowErr.issues.map((issue) => `${issue.column}: ${issue.error}`).join('; '),
-    }))
-    .sort((a, b) => a.row - b.row);
+  // Backend displayMessage / summary birincil kaynak; frontend yalnızca eksikleri tamamlar.
+  return resolveExcelImportErrors(errors, errorsByRow, {
+    mapInventoryColumns: type === 'inventory',
+    softenTechnicalErrors: type === 'inventory',
+  });
 }
 
 function isExcelFile(file: File): boolean {
