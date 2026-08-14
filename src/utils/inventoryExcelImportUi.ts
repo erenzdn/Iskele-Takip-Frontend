@@ -45,7 +45,9 @@ const INVENTORY_DB_FIELD_TO_COLUMN: Record<string, string> = {
   MonthlyListPriceUsd: 'Liste Fiyatı (USD)',
   PurchasePrice: 'Satın Alma Fiyatı',
   TotalStock: 'Toplam Stok',
-  CategoryId: 'Kategori ID',
+  CategoryId: 'Kategori',
+  CategoryName: 'Kategori',
+  'Kategori ID': 'Kategori',
 };
 
 export function localizeInventoryImportColumn(column: string): string {

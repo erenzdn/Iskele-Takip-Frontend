@@ -806,7 +806,8 @@ export default function ExcelManager({
                     {INVENTORY_EXCEL_HELP.optionalLegend}
                   </div>
                   <p>{INVENTORY_EXCEL_HELP.stockNote}</p>
-                  <p className="text-text-secondary/80">{INVENTORY_EXCEL_HELP.notInTemplate}</p>
+                  <p>{INVENTORY_EXCEL_HELP.categoryNote}</p>
+                  <p>{INVENTORY_EXCEL_HELP.roundTripNote}</p>
                   <p className="text-warning/90">{INVENTORY_EXCEL_HELP.exportNote}</p>
                 </div>
               )}
