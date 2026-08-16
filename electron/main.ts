@@ -17,6 +17,109 @@ const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+type LiveExchangeRatesOk = {
+  ok: true;
+  usdSelling: number;
+  eurSelling: number;
+  date: string;
+  source: string;
+};
+
+type LiveExchangeRatesErr = {
+  ok: false;
+  error: string;
+};
+
+function parseTcmbNumber(block: string, tag: string): number | null {
+  const match = block.match(new RegExp(`<${tag}>([\\d.]+)</${tag}>`, 'i'));
+  const value = Number(match?.[1]);
+  return Number.isFinite(value) && value > 0 ? value : null;
+}
+
+function parseTcmbCurrency(xml: string, code: 'USD' | 'EUR'): number | null {
+  const block = xml.match(new RegExp(`<Currency[^>]*Kod="${code}"[\\s\\S]*?</Currency>`, 'i'))?.[0];
+  if (!block) return null;
+  const unit = parseTcmbNumber(block, 'Unit') ?? 1;
+  const selling = parseTcmbNumber(block, 'ForexSelling');
+  if (selling == null) return null;
+  return selling / unit;
+}
+
+async function fetchWithTimeout(url: string, timeoutMs = 12000): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      },
+    });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function fetchTcmbRates(): Promise<LiveExchangeRatesOk> {
+  const response = await fetchWithTimeout('https://www.tcmb.gov.tr/kurlar/today.xml');
+  if (!response.ok) {
+    throw new Error(`TCMB yanıt vermedi (${response.status})`);
+  }
+  const xml = await response.text();
+  const usdSelling = parseTcmbCurrency(xml, 'USD');
+  const eurSelling = parseTcmbCurrency(xml, 'EUR');
+  if (usdSelling == null || eurSelling == null) {
+    throw new Error('TCMB kurları okunamadı.');
+  }
+  const date = xml.match(/\bTarih="([^"]+)"/)?.[1] ?? '';
+  return {
+    ok: true,
+    usdSelling,
+    eurSelling,
+    date,
+    source: 'TCMB döviz satış',
+  };
+}
+
+async function fetchFallbackRates(): Promise<LiveExchangeRatesOk> {
+  const [usdRes, eurRes] = await Promise.all([
+    fetchWithTimeout('https://open.er-api.com/v6/latest/USD'),
+    fetchWithTimeout('https://open.er-api.com/v6/latest/EUR'),
+  ]);
+  if (!usdRes.ok || !eurRes.ok) {
+    throw new Error('Yedek kur kaynağı yanıt vermedi.');
+  }
+  const usdJson = (await usdRes.json()) as { result?: string; rates?: { TRY?: number }; time_last_update_utc?: string };
+  const eurJson = (await eurRes.json()) as { result?: string; rates?: { TRY?: number } };
+  const usdSelling = Number(usdJson?.rates?.TRY);
+  const eurSelling = Number(eurJson?.rates?.TRY);
+  if (!Number.isFinite(usdSelling) || usdSelling <= 0 || !Number.isFinite(eurSelling) || eurSelling <= 0) {
+    throw new Error('Yedek kur kaynağı okunamadı.');
+  }
+  return {
+    ok: true,
+    usdSelling,
+    eurSelling,
+    date: usdJson.time_last_update_utc ?? '',
+    source: 'Piyasa kuru',
+  };
+}
+
+async function fetchLiveExchangeRates(): Promise<LiveExchangeRatesOk | LiveExchangeRatesErr> {
+  try {
+    return await fetchTcmbRates();
+  } catch (primaryErr) {
+    log.warn('TCMB kuru alınamadı, yedek kaynağa geçiliyor:', primaryErr);
+    try {
+      return await fetchFallbackRates();
+    } catch (fallbackErr) {
+      const message = fallbackErr instanceof Error ? fallbackErr.message : 'Güncel kur alınamadı.';
+      return { ok: false, error: message };
+    }
+  }
+}
+
 function createWindow() {
   const mainWindow = new BrowserWindow({
     width: 1200,
@@ -36,7 +139,8 @@ function createWindow() {
   // Uygulama kapandığında otomatik olarak silinir, manuel temizlik gereksiz.
 
   if (isDev) {
-    mainWindow.loadURL('http://localhost:5175');
+    const devPort = process.env.VITE_DEV_PORT || '5175';
+    mainWindow.loadURL(`http://localhost:${devPort}`);
     mainWindow.webContents.openDevTools();
   } else {
     mainWindow.loadFile(path.join(__dirname, '../dist-web/index.html'));
@@ -56,7 +160,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; script-src 'self' 'unsafe-inline' 'unsafe-eval' http://localhost:* https://iskeletakip.mehmeterenozden.com; style-src 'self' 'unsafe-inline' http://localhost:*; connect-src 'self' blob: http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: http://localhost:* https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:;"
+            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval' http://localhost:* https://iskeletakip.mehmeterenozden.com; style-src 'self' 'unsafe-inline' http://localhost:*; connect-src 'self' blob: http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: http://localhost:* https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:; worker-src 'self' blob:;"
           ],
         },
       });
@@ -65,7 +169,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' https://iskeletakip.mehmeterenozden.com; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:;"
+            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' https://iskeletakip.mehmeterenozden.com; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:; worker-src 'self' blob:;"
           ],
         },
       });
@@ -182,6 +286,16 @@ app.whenReady().then(() => {
       }
     } else {
       event.returnValue = app.getVersion();
+    }
+  });
+
+  ipcMain.handle('get-live-exchange-rates', async () => {
+    try {
+      return await fetchLiveExchangeRates();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Güncel kur alınamadı.';
+      log.error('Güncel kur alınamadı:', err);
+      return { ok: false as const, error: message };
     }
   });
   // --- End Auto-updater Section ---

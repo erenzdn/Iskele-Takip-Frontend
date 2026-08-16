@@ -38,5 +38,6 @@ contextBridge.exposeInMainWorld('electron', {
     installUpdate: () => ipcRenderer.send('install-update'),
     checkForUpdates: () => ipcRenderer.send('check-for-updates'),
   },
+  getLiveExchangeRates: () => ipcRenderer.invoke('get-live-exchange-rates'),
 });
 

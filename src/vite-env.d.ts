@@ -7,8 +7,21 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+type LiveExchangeRatesResult =
+  | {
+      ok: true;
+      usdSelling: number;
+      eurSelling: number;
+      date: string;
+      source: string;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
 interface Window {
-  electron: {
+  electron?: {
     platform: string;
     appVersion: string;
     updates: {
@@ -22,5 +35,6 @@ interface Window {
       installUpdate: () => void;
       checkForUpdates: () => void;
     };
+    getLiveExchangeRates?: () => Promise<LiveExchangeRatesResult>;
   };
 }

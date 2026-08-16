@@ -3812,15 +3812,29 @@ export default function QuoteDetailModal({
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-primary mb-1">Varsayılan İskonto (%)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  className="input w-full"
-                  value={newPackageDiscount}
-                  onChange={(e) => setNewPackageDiscount(Number(e.target.value) || 0)}
-                />
+                <label htmlFor="new-package-discount" className="block text-xs font-medium text-text-primary mb-1">
+                  Varsayılan iskonto (%)
+                </label>
+                <div className="relative">
+                  <input
+                    id="new-package-discount"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.01}
+                    className="input w-full pr-8"
+                    placeholder="0"
+                    title="Bu paket bir teklife uygulandığında genel iskonto olarak yazılır"
+                    value={newPackageDiscount}
+                    onChange={(e) => setNewPackageDiscount(Number(e.target.value) || 0)}
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm text-text-secondary">
+                    %
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-text-secondary">
+                  Paketi sonraki tekliflere uygularken bu yüzde otomatik iskonto olarak gelir. İndirim yoksa 0 bırakın.
+                </p>
               </div>
               <p className="text-xs text-text-secondary">
                 Not: Sadece envanter ürünleri pakete eklenir, manuel kalemler eklenmez.

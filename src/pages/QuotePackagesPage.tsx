@@ -140,35 +140,69 @@ export default function QuotePackagesPage() {
       <section className="card p-4 space-y-3">
         <h2 className="text-sm font-semibold text-text-primary">Yeni Paket Oluştur</h2>
         <div className="grid md:grid-cols-2 gap-3">
-          <input
-            className="input"
-            placeholder="Paket adı"
-            value={packageName}
-            onChange={(e) => setPackageName(e.target.value)}
-          />
-          <input
-            className="input"
-            placeholder="Açıklama (opsiyonel)"
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-          />
-          <input
-            type="number"
-            min={0}
-            max={100}
-            className="input"
-            placeholder="Varsayılan iskonto (%)"
-            value={defaultDiscount}
-            onChange={(e) => setDefaultDiscount(Number(e.target.value) || 0)}
-          />
-          <select
-            className="input"
-            value={createMode}
-            onChange={(e) => setCreateMode(e.target.value as CreateMode)}
-          >
-            <option value="sourceQuote">Tekliften Oluştur</option>
-            <option value="manual">Manuel Ürün Listesi</option>
-          </select>
+          <div className="space-y-1">
+            <label htmlFor="package-name" className="block text-xs font-medium text-text-primary">
+              Paket adı
+            </label>
+            <input
+              id="package-name"
+              className="input"
+              placeholder="Örn: 500m² Standart Paket"
+              value={packageName}
+              onChange={(e) => setPackageName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="package-description" className="block text-xs font-medium text-text-primary">
+              Açıklama (opsiyonel)
+            </label>
+            <input
+              id="package-description"
+              className="input"
+              placeholder="Paket hakkında kısa not"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="package-discount" className="block text-xs font-medium text-text-primary">
+              Varsayılan iskonto (%)
+            </label>
+            <div className="relative">
+              <input
+                id="package-discount"
+                type="number"
+                min={0}
+                max={100}
+                step={0.01}
+                className="input pr-8"
+                placeholder="0"
+                title="Bu paket bir teklife uygulandığında genel iskonto olarak yazılır"
+                value={defaultDiscount}
+                onChange={(e) => setDefaultDiscount(Number(e.target.value) || 0)}
+              />
+              <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm text-text-secondary">
+                %
+              </span>
+            </div>
+            <p className="text-[11px] text-text-secondary">
+              Paketi teklife uygularken bu yüzde otomatik iskonto olarak gelir. İndirim yoksa 0 bırakın.
+            </p>
+          </div>
+          <div className="space-y-1">
+            <label htmlFor="package-create-mode" className="block text-xs font-medium text-text-primary">
+              Oluşturma şekli
+            </label>
+            <select
+              id="package-create-mode"
+              className="input"
+              value={createMode}
+              onChange={(e) => setCreateMode(e.target.value as CreateMode)}
+            >
+              <option value="sourceQuote">Tekliften Oluştur</option>
+              <option value="manual">Manuel Ürün Listesi</option>
+            </select>
+          </div>
         </div>
 
         {createMode === 'sourceQuote' ? (
@@ -204,6 +238,9 @@ export default function QuotePackagesPage() {
                   type="number"
                   min={1}
                   className="input"
+                  placeholder="Miktar"
+                  title="Miktar"
+                  aria-label="Miktar"
                   value={item.quantity}
                   onChange={(e) => updateManualItem(index, { quantity: Math.max(1, Number(e.target.value) || 1) })}
                 />

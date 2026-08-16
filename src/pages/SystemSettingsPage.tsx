@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, Navigate } from 'react-router-dom';
 import {
   ArchiveIcon,
@@ -374,6 +374,9 @@ export default function SystemSettingsPage() {
   const [eurRate, setEurRate] = useState<number | ''>('');
   const [exchangeNotes, setExchangeNotes] = useState('');
   const [activeRates, setActiveRates] = useState<ExchangeRateResponse | null>(null);
+  const [liveRates, setLiveRates] = useState<Extract<LiveExchangeRatesResult, { ok: true }> | null>(null);
+  const [liveRatesError, setLiveRatesError] = useState<string | null>(null);
+  const [liveRatesLoading, setLiveRatesLoading] = useState(false);
 
   const [rentalRateTry, setRentalRateTry] = useState<number | ''>('');
   const [rentalRateUsd, setRentalRateUsd] = useState<number | ''>('');
@@ -441,6 +444,36 @@ export default function SystemSettingsPage() {
       mounted = false;
     };
   }, []);
+
+  const loadLiveRates = useCallback(async () => {
+    const fetcher = window.electron?.getLiveExchangeRates;
+    if (!fetcher) {
+      setLiveRatesError('Güncel kur yalnızca masaüstü uygulamasında gösterilir.');
+      return;
+    }
+    try {
+      setLiveRatesLoading(true);
+      setLiveRatesError(null);
+      const result = await fetcher();
+      if (result.ok) {
+        setLiveRates(result);
+      } else {
+        setLiveRates(null);
+        setLiveRatesError(result.error || 'Güncel kur alınamadı.');
+      }
+    } catch (err) {
+      console.warn('Güncel kur alınamadı:', err);
+      setLiveRates(null);
+      setLiveRatesError('Güncel kur alınamadı.');
+    } finally {
+      setLiveRatesLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (activeTab !== 'finance') return;
+    void loadLiveRates();
+  }, [activeTab, loadLiveRates]);
 
   useEffect(() => {
     const fetchRatesAndPresets = async () => {
@@ -986,6 +1019,46 @@ export default function SystemSettingsPage() {
                   </button>
                 }
               >
+                <div className="mb-4 rounded-xl border border-background-border/70 bg-background-elevated/30 p-3.5">
+                  <div className="flex items-start justify-between gap-3 mb-2.5">
+                    <div>
+                      <div className="text-sm font-medium text-text-primary">Güncel kur</div>
+                      <p className="text-[11px] text-text-secondary mt-0.5">
+                        Salt görüntüleme. Uygulamadaki kayıtlı kurları değiştirmez.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => void loadLiveRates()}
+                      disabled={liveRatesLoading}
+                      className="btn-secondary py-1.5 px-2.5 text-xs flex items-center gap-1.5 shrink-0"
+                    >
+                      {liveRatesLoading ? (
+                        <CircleNotchIcon size={14} className="animate-spin" />
+                      ) : (
+                        <ArrowClockwiseIcon size={14} />
+                      )}
+                      Yenile
+                    </button>
+                  </div>
+                  {liveRatesError ? (
+                    <p className="text-xs text-red-300">{liveRatesError}</p>
+                  ) : liveRates ? (
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      <MetaChip label="USD satış" value={`$1 = ₺${liveRates.usdSelling.toFixed(4)}`} />
+                      <MetaChip label="EUR satış" value={`€1 = ₺${liveRates.eurSelling.toFixed(4)}`} />
+                      <MetaChip
+                        label={liveRates.source}
+                        value={liveRates.date || '—'}
+                      />
+                    </div>
+                  ) : (
+                    <p className="text-xs text-text-secondary">
+                      {liveRatesLoading ? 'Güncel kur yükleniyor...' : 'Güncel kur henüz alınmadı.'}
+                    </p>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
                   <div>
                     <label className="block text-xs font-medium text-text-secondary mb-1.5">USD Kuru ($)</label>
@@ -1024,9 +1097,9 @@ export default function SystemSettingsPage() {
 
                 {activeRates && (
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
-                    <MetaChip label="USD" value={`$1 = ₺${activeRates.UsdRate.toFixed(2)}`} />
-                    <MetaChip label="EUR" value={`€1 = ₺${activeRates.EurRate.toFixed(2)}`} />
-                    <MetaChip label="Son güncelleme" value={formatTrDateTime(activeRates.UpdatedAt)} />
+                    <MetaChip label="Kayıtlı USD" value={`$1 = ₺${activeRates.UsdRate.toFixed(2)}`} />
+                    <MetaChip label="Kayıtlı EUR" value={`€1 = ₺${activeRates.EurRate.toFixed(2)}`} />
+                    <MetaChip label="Son kayıt" value={formatTrDateTime(activeRates.UpdatedAt)} />
                   </div>
                 )}
               </SettingsSection>
