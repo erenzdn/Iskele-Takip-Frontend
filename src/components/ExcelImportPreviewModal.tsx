@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   ArrowClockwiseIcon,
@@ -9,6 +9,12 @@ import {
   XIcon,
 } from '@phosphor-icons/react';
 import type { ExcelErrorCategory, ExcelImportRowErrors, ExcelImportSummary } from './ExcelManager';
+import type { MaterialCategory } from '../models';
+import type {
+  CategoryResolutionDecision,
+  UnmatchedCategoryLookup,
+} from '../types/inventoryExcelImport';
+import UnmatchedCategoryResolutionPanel from './UnmatchedCategoryResolutionPanel';
 
 export interface ExcelPreviewValidRow {
   row: number;
@@ -30,9 +36,15 @@ interface ExcelImportPreviewModalProps {
   onCancel: () => void;
   onConfirmAll: () => void;
   onConfirmValidOnly: () => void;
+  unmatchedCategories?: UnmatchedCategoryLookup[];
+  categories?: MaterialCategory[];
+  canCreateCategories?: boolean;
+  skippedCategoryNames?: string[];
+  resolvingCategories?: boolean;
+  onResolveCategories?: (decisions: CategoryResolutionDecision[]) => void;
 }
 
-type PreviewTab = 'valid' | 'invalid';
+type PreviewTab = 'unmatched' | 'valid' | 'invalid';
 
 const CATEGORY_BADGE_LABELS: Record<ExcelErrorCategory, string> = {
   COERCION: 'Format',
@@ -83,16 +95,32 @@ export default function ExcelImportPreviewModal({
   onCancel,
   onConfirmAll,
   onConfirmValidOnly,
+  unmatchedCategories = [],
+  categories = [],
+  canCreateCategories = false,
+  skippedCategoryNames = [],
+  resolvingCategories = false,
+  onResolveCategories,
 }: ExcelImportPreviewModalProps) {
   const problemCount = errorsByRow.length;
   const hasProblems = problemCount > 0;
+  const hasUnmatchedCategories = unmatchedCategories.length > 0;
   const canImportAll = validRowCount > 0 && !hasProblems;
   const canImportValidOnly = canPartialImport && validRowCount > 0 && hasProblems;
   const nothingToImport = validRowCount === 0;
-  const [tab, setTab] = useState<PreviewTab>(hasProblems && validRowCount === 0 ? 'invalid' : 'valid');
+  const [tab, setTab] = useState<PreviewTab>(
+    hasUnmatchedCategories ? 'unmatched' : hasProblems && validRowCount === 0 ? 'invalid' : 'valid'
+  );
   const showUpsertBreakdown =
     typeof summary?.createCount === 'number' || typeof summary?.updateCount === 'number';
   const hasActionColumn = validRows.some((row) => row.action === 'create' || row.action === 'update');
+  const isBusy = busy || resolvingCategories;
+
+  useEffect(() => {
+    if (!hasUnmatchedCategories && tab === 'unmatched') {
+      setTab(validRowCount > 0 ? 'valid' : 'invalid');
+    }
+  }, [hasUnmatchedCategories, tab, validRowCount]);
 
   const previewColumns = useMemo(() => {
     const keys = new Set<string>();
@@ -124,7 +152,7 @@ export default function ExcelImportPreviewModal({
           <button
             type="button"
             onClick={onCancel}
-            disabled={busy}
+            disabled={isBusy}
             className="p-1 rounded-md text-text-secondary hover:text-text-primary hover:bg-background-hover"
             aria-label="Kapat"
           >
@@ -191,7 +219,20 @@ export default function ExcelImportPreviewModal({
           </div>
         )}
 
-        <div className="px-4 pt-3 shrink-0 flex items-center gap-2">
+        <div className="px-4 pt-3 shrink-0 flex items-center gap-2 flex-wrap">
+          {hasUnmatchedCategories && (
+            <button
+              type="button"
+              onClick={() => setTab('unmatched')}
+              className={`px-3 py-1.5 text-sm rounded-md border ${
+                tab === 'unmatched'
+                  ? 'border-accent/40 bg-accent/10 text-accent'
+                  : 'border-background-border text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              Eşleşmeyen kategoriler ({unmatchedCategories.length})
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setTab('valid')}
@@ -217,6 +258,17 @@ export default function ExcelImportPreviewModal({
         </div>
 
         <div className="overflow-auto flex-1 p-4 space-y-3">
+          {tab === 'unmatched' && onResolveCategories && (
+            <UnmatchedCategoryResolutionPanel
+              unmatchedCategories={unmatchedCategories}
+              categories={categories}
+              canCreateCategories={canCreateCategories}
+              skippedNames={skippedCategoryNames}
+              busy={isBusy}
+              onApply={onResolveCategories}
+            />
+          )}
+
           {tab === 'valid' &&
             (validRows.length === 0 ? (
               <p className="text-sm text-text-secondary py-8 text-center">Yüklenebilir satır yok.</p>
@@ -288,7 +340,13 @@ export default function ExcelImportPreviewModal({
             ))}
         </div>
 
-        {hasProblems && canImportValidOnly && (
+        {hasUnmatchedCategories && (
+          <div className="px-4 py-2 bg-accent/10 border-t border-background-border text-sm text-text-primary">
+            Eşleşmeyen kategorileri çözmeden bu satırlar yüklenmez. Önce oluşturun veya mevcut kategoriye eşleyin.
+          </div>
+        )}
+
+        {hasProblems && canImportValidOnly && !hasUnmatchedCategories && (
           <div className="px-4 py-2 bg-warning/10 border-t border-background-border text-sm text-text-primary">
             Sorunlu satırlar içe aktarılmaz. İsterseniz yalnızca geçerli {validRowCount} satırı yükleyebilirsiniz.
           </div>
@@ -301,18 +359,18 @@ export default function ExcelImportPreviewModal({
         )}
 
         <div className="p-4 border-t border-background-border flex flex-wrap justify-between items-center gap-3 shrink-0">
-          <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary py-2 px-4 text-sm">
+          <button type="button" onClick={onCancel} disabled={isBusy} className="btn-secondary py-2 px-4 text-sm">
             Vazgeç
           </button>
           <div className="flex flex-wrap items-center gap-2">
             {canImportValidOnly && (
               <button
                 type="button"
-                disabled={busy}
+                disabled={isBusy}
                 onClick={onConfirmValidOnly}
                 className="btn-secondary py-2 px-4 text-sm inline-flex items-center gap-2"
               >
-                {busy ? (
+                {isBusy ? (
                   <ArrowClockwiseIcon size={16} className="animate-spin shrink-0" />
                 ) : (
                   <CheckCircleIcon size={16} weight="bold" />
@@ -323,11 +381,11 @@ export default function ExcelImportPreviewModal({
             {canImportAll && (
               <button
                 type="button"
-                disabled={busy}
+                disabled={isBusy}
                 onClick={onConfirmAll}
                 className="btn-primary py-2 px-4 text-sm inline-flex items-center gap-2"
               >
-                {busy ? (
+                {isBusy ? (
                   <ArrowClockwiseIcon size={16} className="animate-spin shrink-0" />
                 ) : (
                   <UploadSimpleIcon size={16} weight="bold" />

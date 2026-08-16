@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ArrowClockwiseIcon, 
@@ -10,13 +10,26 @@ import {
   FileTextIcon
 } from '@phosphor-icons/react';
 import { apiClient } from '../services/apiClient';
+import { inventoryService } from '../services/inventoryService';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/useToast';
 import { formatInventoryRelatedApiText, getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
 import { resolveExcelImportErrors } from '../utils/inventoryExcelImportUi';
+import {
+  decisionsToMappings,
+  extractUnmatchedCategories,
+  mergeCategoryMappings,
+  normalizeCategoryKey,
+} from '../utils/unmatchedCategoryResolution';
 import ExcelImportPreviewModal, { type ExcelPreviewValidRow } from './ExcelImportPreviewModal';
+import type { MaterialCategory } from '../models';
+import type {
+  CategoryResolutionDecision,
+  InventoryCategoryMapping,
+  UnmatchedCategoryLookup,
+} from '../types/inventoryExcelImport';
 
 export type ExcelModuleType = 'inventory' | 'customers' | 'checks' | 'stockReceipts';
 
@@ -44,6 +57,7 @@ export interface ExcelImportErrorRow {
   category?: ExcelErrorCategory;
   givenValue?: string | null;
   displayMessage?: string;
+  code?: string;
 }
 
 export interface ExcelImportRowErrors {
@@ -58,6 +72,7 @@ export interface ExcelImportRowErrors {
     category: ExcelErrorCategory | null;
     givenValue: string | null;
     displayMessage: string;
+    code?: string;
   }>;
 }
 
@@ -81,6 +96,7 @@ interface ExcelImportResponse {
   errors?: ExcelImportErrorRow[];
   errorsByRow?: ExcelImportRowErrors[];
   validRows?: ExcelPreviewValidRow[];
+  unmatchedLookups?: { categories?: Array<{ value: string; rowCount: number; rows: number[]; reason: 'not_found' | 'ambiguous' }> };
   count?: number;
 }
 
@@ -118,6 +134,7 @@ function normalizeExcelErrorRow(raw: unknown): ExcelImportErrorRow | null {
       typeof displayMessageRaw === 'string' && displayMessageRaw.trim()
         ? displayMessageRaw
         : undefined,
+    code: typeof (row.code ?? row.Code) === 'string' ? String(row.code ?? row.Code) : undefined,
   };
 }
 
@@ -142,8 +159,8 @@ function normalizeExcelImportRowErrors(row: unknown): ExcelImportRowErrors | nul
         typeof displayMessageRaw === 'string' && displayMessageRaw.trim()
           ? displayMessageRaw
           : `Satır ${Number.isFinite(rowNumber) ? rowNumber : '?'}, ${column}: ${error}`;
-
-      return {
+      const codeRaw = i.code ?? i.Code;
+      const normalizedIssue: ExcelImportRowErrors['issues'][number] = {
         column,
         error,
         category,
@@ -155,6 +172,8 @@ function normalizeExcelImportRowErrors(row: unknown): ExcelImportRowErrors | nul
               : null,
         displayMessage,
       };
+      if (typeof codeRaw === 'string' && codeRaw.trim()) normalizedIssue.code = codeRaw;
+      return normalizedIssue;
     })
     .filter((issue): issue is ExcelImportRowErrors['issues'][number] => issue !== null);
 
@@ -245,8 +264,36 @@ function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null
     errorsByRow,
     validRows: normalizeExcelPreviewRows(obj.validRows ?? obj.ValidRows),
     preview: Boolean(obj.preview ?? obj.Preview),
+    unmatchedLookups: normalizeUnmatchedLookups(obj.unmatchedLookups ?? obj.UnmatchedLookups),
     count: typeof obj.count === 'number' ? obj.count : typeof obj.Count === 'number' ? obj.Count : undefined,
   };
+}
+
+function normalizeUnmatchedLookups(raw: unknown): ExcelImportResponse['unmatchedLookups'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const list = Array.isArray(obj.categories)
+    ? obj.categories
+    : Array.isArray(obj.Categories)
+      ? obj.Categories
+      : [];
+  const categories = list
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      const value = String(row.value ?? row.Value ?? '').trim();
+      if (!value) return null;
+      const rowsRaw = Array.isArray(row.rows) ? row.rows : Array.isArray(row.Rows) ? row.Rows : [];
+      const reasonRaw = String(row.reason ?? row.Reason ?? 'not_found');
+      return {
+        value,
+        rowCount: Number(row.rowCount ?? row.RowCount ?? rowsRaw.length) || 0,
+        rows: rowsRaw.map(Number).filter((n) => Number.isFinite(n)),
+        reason: reasonRaw === 'ambiguous' ? ('ambiguous' as const) : ('not_found' as const),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+  return { categories };
 }
 
 function normalizeExcelPreviewRows(raw: unknown): ExcelPreviewValidRow[] {
@@ -267,13 +314,15 @@ function normalizeExcelPreviewRows(raw: unknown): ExcelPreviewValidRow[] {
         }
       });
       const actionRaw = String(row.action ?? row.Action ?? '').toLowerCase();
-      const action = actionRaw === 'update' || actionRaw === 'create' ? actionRaw : undefined;
-      return {
+      const action: ExcelPreviewValidRow['action'] =
+        actionRaw === 'update' || actionRaw === 'create' ? actionRaw : undefined;
+      const previewRow: ExcelPreviewValidRow = {
         row: rowNumber,
         sheet: String(row.sheet ?? row.Sheet ?? ''),
         action,
         values,
       };
+      return previewRow;
     })
     .filter((row): row is ExcelPreviewValidRow => row !== null);
 }
@@ -360,6 +409,27 @@ export interface ExcelManagerProps {
   modalZClass?: string;
 }
 
+function appendInventoryExcelFields(
+  formData: FormData,
+  rates: {
+    usdRate: string;
+    eurRate: string;
+    rentalRateTry: string;
+    rentalRateUsd: string;
+    rentalRateEur: string;
+  },
+  mappings: InventoryCategoryMapping[]
+) {
+  if (rates.usdRate) formData.append('usdRate', rates.usdRate);
+  if (rates.eurRate) formData.append('eurRate', rates.eurRate);
+  if (rates.rentalRateTry) formData.append('rentalRateTry', rates.rentalRateTry);
+  if (rates.rentalRateUsd) formData.append('rentalRateUsd', rates.rentalRateUsd);
+  if (rates.rentalRateEur) formData.append('rentalRateEur', rates.rentalRateEur);
+  if (mappings.length > 0) {
+    formData.append('categoryMappings', JSON.stringify(mappings));
+  }
+}
+
 export default function ExcelManager({
   type,
   title,
@@ -372,6 +442,12 @@ export default function ExcelManager({
   const { view: viewPerm, create: createPerm } = PERMISSIONS[type];
   const canView = permissions.includes(viewPerm);
   const canImport = permissions.includes(createPerm);
+  const canCreateCategories = permissions.includes('categories_create');
+
+  const resetCategorySession = useCallback(() => {
+    setCategoryMappings([]);
+    setSkippedCategoryNames([]);
+  }, []);
 
   const [busy, setBusy] = useState<Busy>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -397,7 +473,12 @@ export default function ExcelManager({
     errorsByRow: ExcelImportRowErrors[];
     validRowCount: number;
     canPartialImport: boolean;
+    unmatchedLookups?: ExcelImportResponse['unmatchedLookups'];
   } | null>(null);
+  const [categoryMappings, setCategoryMappings] = useState<InventoryCategoryMapping[]>([]);
+  const [skippedCategoryNames, setSkippedCategoryNames] = useState<string[]>([]);
+  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
+  const [resolvingCategories, setResolvingCategories] = useState(false);
 
   // Otomatik hesaplama oranları state'leri
   const [usdRate, setUsdRate] = useState<string>('');
@@ -436,7 +517,7 @@ export default function ExcelManager({
   }, [canView, type]);
 
   const previewFile = useCallback(
-    async (file: File) => {
+    async (file: File, options?: { keepMappings?: boolean; mappings?: InventoryCategoryMapping[] }) => {
       if (!canImport) return;
       if (!isExcelFile(file)) {
         toast.warning('Yalnızca .xlsx veya .xls dosyası yükleyebilirsiniz.');
@@ -447,17 +528,30 @@ export default function ExcelManager({
         return;
       }
 
+      const mappings = options?.mappings ?? (options?.keepMappings ? categoryMappings : []);
+      if (!options?.keepMappings) {
+        resetCategorySession();
+      }
+
       setBusy('preview');
       setErrorModal(null);
       try {
         const formData = new FormData();
         formData.append('file', file);
         if (type === 'inventory') {
-          if (usdRate) formData.append('usdRate', usdRate);
-          if (eurRate) formData.append('eurRate', eurRate);
-          if (rentalRateTry) formData.append('rentalRateTry', rentalRateTry);
-          if (rentalRateUsd) formData.append('rentalRateUsd', rentalRateUsd);
-          if (rentalRateEur) formData.append('rentalRateEur', rentalRateEur);
+          appendInventoryExcelFields(
+            formData,
+            { usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur },
+            mappings
+          );
+          if (inventoryCategories.length === 0) {
+            try {
+              const cats = await inventoryService.getAllCategoriesAsync();
+              setInventoryCategories(cats);
+            } catch {
+              // Kategori listesi yüklenemezse eşleme paneli boş gelir; önizleme yine açılır.
+            }
+          }
         }
         const data = await apiClient.postFormData<ExcelImportResponse>(
           `/excel/preview/${type}`,
@@ -486,6 +580,7 @@ export default function ExcelManager({
           errorsByRow: prepared.errorsByRow,
           validRowCount: normalized.validRowCount ?? (normalized.validRows ?? []).length,
           canPartialImport: normalized.canPartialImport === true,
+          unmatchedLookups: normalized.unmatchedLookups,
         });
       } catch (e) {
         console.error('Excel preview error:', e);
@@ -495,7 +590,18 @@ export default function ExcelManager({
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
-    [canImport, type, usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur]
+    [
+      canImport,
+      type,
+      usdRate,
+      eurRate,
+      rentalRateTry,
+      rentalRateUsd,
+      rentalRateEur,
+      categoryMappings,
+      inventoryCategories.length,
+      resetCategorySession,
+    ]
   );
 
   const processFile = useCallback(
@@ -517,11 +623,11 @@ export default function ExcelManager({
         const formData = new FormData();
         formData.append('file', file);
         if (type === 'inventory') {
-          if (usdRate) formData.append('usdRate', usdRate);
-          if (eurRate) formData.append('eurRate', eurRate);
-          if (rentalRateTry) formData.append('rentalRateTry', rentalRateTry);
-          if (rentalRateUsd) formData.append('rentalRateUsd', rentalRateUsd);
-          if (rentalRateEur) formData.append('rentalRateEur', rentalRateEur);
+          appendInventoryExcelFields(
+            formData,
+            { usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur },
+            categoryMappings
+          );
         }
 
         // mode query parametresi eklendi
@@ -541,6 +647,7 @@ export default function ExcelManager({
           setErrorModal(null);
           setPreviewModal(null);
           setLastFile(null);
+          resetCategorySession();
           onImportSuccess?.();
           return;
         }
@@ -646,8 +753,64 @@ export default function ExcelManager({
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
-    [canImport, type, onImportSuccess, usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur]
+    [canImport, type, onImportSuccess, usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur, categoryMappings, resetCategorySession]
   );
+
+  const applyCategoryResolutions = useCallback(
+    async (decisions: CategoryResolutionDecision[]) => {
+      if (!previewModal || type !== 'inventory') return;
+      setResolvingCategories(true);
+      try {
+        let latestCategories = inventoryCategories;
+        if (latestCategories.length === 0) {
+          latestCategories = await inventoryService.getAllCategoriesAsync();
+        }
+
+        const createdMappings: InventoryCategoryMapping[] = [];
+        for (const decision of decisions) {
+          if (decision.action !== 'create') continue;
+          const name = (decision.createName || decision.excelName).trim();
+          if (!name) continue;
+          const existing = latestCategories.find(
+            (category) => normalizeCategoryKey(category.CategoryName) === normalizeCategoryKey(name)
+          );
+          if (existing) {
+            createdMappings.push({ from: decision.excelName, toCategoryId: existing.CategoryId });
+            continue;
+          }
+          const created = await inventoryService.createCategoryAsync({ CategoryName: name });
+          const newId = Number(created.CategoryId);
+          createdMappings.push({ from: decision.excelName, toCategoryId: newId });
+          latestCategories = [...latestCategories, { CategoryId: newId, CategoryName: name }];
+        }
+
+        setInventoryCategories(latestCategories);
+        const nextMappings = mergeCategoryMappings(categoryMappings, [
+          ...createdMappings,
+          ...decisionsToMappings(decisions),
+        ]);
+        setCategoryMappings(nextMappings);
+        setSkippedCategoryNames(
+          decisions.filter((decision) => decision.action === 'skip').map((decision) => decision.excelName)
+        );
+        await previewFile(previewModal.file, { keepMappings: true, mappings: nextMappings });
+        toast.success('Kategori eşlemesi uygulandı. Önizleme yenilendi.');
+      } catch (error) {
+        toast.error(getApiErrorMessage(error) || 'Kategori çözümlemesi uygulanamadı.');
+      } finally {
+        setResolvingCategories(false);
+      }
+    },
+    [previewModal, type, inventoryCategories, categoryMappings, previewFile]
+  );
+
+  const unmatchedCategories = useMemo<UnmatchedCategoryLookup[]>(() => {
+    if (type !== 'inventory' || !previewModal) return [];
+    return extractUnmatchedCategories({
+      unmatchedLookups: previewModal.unmatchedLookups,
+      errorsByRow: previewModal.errorsByRow,
+    });
+  }, [type, previewModal]);
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -920,12 +1083,19 @@ export default function ExcelManager({
           errorsByRow={previewModal.errorsByRow}
           validRowCount={previewModal.validRowCount}
           canPartialImport={previewModal.canPartialImport}
-          busy={busy === 'import'}
+          busy={busy === 'import' || busy === 'preview'}
           modalZClass={modalZClass}
+          unmatchedCategories={unmatchedCategories}
+          categories={inventoryCategories}
+          canCreateCategories={canCreateCategories}
+          skippedCategoryNames={skippedCategoryNames}
+          resolvingCategories={resolvingCategories}
+          onResolveCategories={type === 'inventory' ? applyCategoryResolutions : undefined}
           onCancel={() => {
-            if (busy === 'import') return;
+            if (busy === 'import' || busy === 'preview' || resolvingCategories) return;
             setPreviewModal(null);
             setLastFile(null);
+            resetCategorySession();
           }}
           onConfirmAll={() => void processFile(previewModal.file, 'strict')}
           onConfirmValidOnly={() => void processFile(previewModal.file, 'lenient')}

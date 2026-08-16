@@ -17,6 +17,7 @@ export interface InventoryImportError {
   category: ImportErrorCategory;
   givenValue: string | null;
   displayMessage: string;
+  code?: string;
 }
 
 export interface InventoryImportRowIssue {
@@ -25,6 +26,7 @@ export interface InventoryImportRowIssue {
   category: ImportErrorCategory | null;
   givenValue: string | null;
   displayMessage: string;
+  code?: string;
 }
 
 export interface InventoryImportRowErrors {
@@ -43,6 +45,32 @@ export interface InventoryImportSummary {
   errorsByCategory: Record<ImportErrorCategory, number>;
 }
 
+export interface UnmatchedCategoryLookup {
+  value: string;
+  rowCount: number;
+  rows: number[];
+  reason: 'not_found' | 'ambiguous';
+}
+
+export interface UnmatchedLookups {
+  categories: UnmatchedCategoryLookup[];
+}
+
+export interface InventoryCategoryMapping {
+  from: string;
+  toCategoryId?: number;
+  toCategoryName?: string;
+}
+
+export type CategoryResolutionAction = 'create' | 'map' | 'skip';
+
+export interface CategoryResolutionDecision {
+  excelName: string;
+  action: CategoryResolutionAction;
+  createName?: string;
+  mapCategoryId?: number;
+}
+
 export interface InventoryImportResponse {
   success: boolean;
   partial: boolean;
@@ -51,4 +79,5 @@ export interface InventoryImportResponse {
   summary: InventoryImportSummary;
   errors: InventoryImportError[];
   errorsByRow: InventoryImportRowErrors[];
+  unmatchedLookups?: UnmatchedLookups;
 }

@@ -8,6 +8,7 @@ export interface ExcelImportErrorRow {
   category?: ImportErrorCategory;
   givenValue?: string | null;
   displayMessage?: string;
+  code?: string;
 }
 
 export interface ExcelImportRowErrors {
@@ -22,6 +23,7 @@ export interface ExcelImportRowErrors {
     category: ImportErrorCategory | null;
     givenValue: string | null;
     displayMessage: string;
+    code?: string;
   }>;
 }
 
@@ -258,6 +260,7 @@ export function groupImportErrorsByRow(
       displayMessage:
         error.displayMessage ??
         buildDisplayMessage(error.row, error.column, error.error, error.givenValue),
+      code: error.code,
     });
   }
 

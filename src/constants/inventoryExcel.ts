@@ -26,7 +26,7 @@ export const INVENTORY_EXCEL_HELP = {
   optionalLegend: INVENTORY_OPTIONAL_EXCEL_COLUMNS.join(', '),
   stockNote: 'Toplam Stok boş bırakılırsa 0 kabul edilir.',
   categoryNote:
-    'Kategori sütununa sistemdeki kategori adını yazın (ör. "İskele Boru"). Eşleşme ada göredir; bulunamazsa hata mesajında kategori adı gösterilir.',
+    'Kategori sütununa sistemdeki kategori adını yazın (ör. "İskele Boru"). Eşleşme ada göredir. Sistemde yoksa içe aktarma önizlemesinde oluşturabilir veya mevcut kategoriye eşleyebilirsiniz.',
   roundTripNote:
     'Dışa aktarma ile içe aktarma aynı sütunları kullanır (round-trip). Kirada, Kategoriler, Alt Kategoriler ve Satın Alma Fiyatı Excel’e yazılmaz.',
   exportNote:
