@@ -94,7 +94,7 @@ export interface QuoteRowTarget {
   rawData: {
     QuoteId: number;
     QuoteCode?: string;
-    Status: 'pending' | 'accepted' | 'rejected';
+    Status: 'draft' | 'pending' | 'accepted' | 'rejected';
     ConvertedContractId?: number;
   };
 }

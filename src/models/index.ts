@@ -802,6 +802,7 @@ export interface WarehouseMovementsResponse {
 
 // Teklif (Quote) Modelleri
 export enum QuoteStatus {
+  Draft = 'draft',
   Pending = 'pending',
   Accepted = 'accepted',
   Rejected = 'rejected',
@@ -812,7 +813,7 @@ export interface Quote {
   QuoteCode?: string;
   /** Teklif konusu (backend: Subject, nullable, max 255) */
   Subject?: string | null;
-  CustomerId: number;
+  CustomerId: number | null;
   CustomerAuthorizedContactId?: number | null;
   SiteId?: number;
   /** Kiralama: ISO 8601; gün-only teklifte API null dönebilir */

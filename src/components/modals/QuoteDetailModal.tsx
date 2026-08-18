@@ -1,7 +1,8 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
-import { ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
+import { ClipboardIcon, CopySimpleIcon, PackageIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -51,6 +52,7 @@ import {
   NewSiteFormState,
   validateSiteSelection,
 } from '../../utils/siteSelection';
+import { hasMeaningfulQuoteDraftContent, isQuoteDraftStatus, quoteContractsPath } from '../../utils/quoteDraft';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -114,6 +116,7 @@ export default function QuoteDetailModal({
   startInEditMode = false,
   isClonedDraft = false,
 }: QuoteDetailModalProps) {
+  const navigate = useNavigate();
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
   const [showCloneConfirm, setShowCloneConfirm] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
@@ -138,6 +141,10 @@ export default function QuoteDetailModal({
   const [subject, setSubject] = useState('');
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const [persistedQuoteId, setPersistedQuoteId] = useState<number | null>(quote?.QuoteId ?? null);
+  const [isDirty, setIsDirty] = useState(false);
+  const skipDirtyRef = useRef(true);
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
   // Hızlı merkez yetkilisi oluşturma
   const [showCreateContactModal, setShowCreateContactModal] = useState(false);
@@ -381,6 +388,42 @@ export default function QuoteDetailModal({
   }, [isNew, startInEditMode]);
 
   useEffect(() => {
+    if (quote?.QuoteId) setPersistedQuoteId(quote.QuoteId);
+  }, [quote?.QuoteId]);
+
+  useEffect(() => {
+    skipDirtyRef.current = true;
+    setIsDirty(false);
+    const t = window.setTimeout(() => {
+      skipDirtyRef.current = false;
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [isReadOnly, quote?.QuoteId, isNew]);
+
+  useEffect(() => {
+    if (skipDirtyRef.current || isReadOnly) return;
+    setIsDirty(true);
+  }, [
+    isReadOnly,
+    selectedCustomerId,
+    selectedAuthorizedContactId,
+    selectedSiteId,
+    quoteItems,
+    subject,
+    notes,
+    quoteCode,
+    startDate,
+    plannedEndDate,
+    rentalDurationDays,
+    iskonto,
+    vatRate,
+    currency,
+    language,
+    status,
+    quoteType,
+  ]);
+
+  useEffect(() => {
     if (!quote?.QuoteId || isNew) {
       setFullQuote(null);
       return;
@@ -438,7 +481,7 @@ export default function QuoteDetailModal({
           (source as any).kdv ??
           20
       );
-      setSelectedCustomerId(source.CustomerId);
+      setSelectedCustomerId(source.CustomerId ?? '');
       setSelectedAuthorizedContactId((source as { CustomerAuthorizedContactId?: number | null }).CustomerAuthorizedContactId ?? '');
       setSelectedSiteId(source.SiteId || '');
       {
@@ -859,7 +902,7 @@ export default function QuoteDetailModal({
     try {
       const [custData, invData, whData] = await Promise.all([
         customerService.getAllAsync(),
-        inventoryService.getAllAsync(),
+        inventoryService.getAllAsync(undefined, { forceRefresh: true }),
         warehouseService.getActiveAsync(),
       ]);
       setCustomers(custData);
@@ -1120,7 +1163,197 @@ export default function QuoteDetailModal({
   const canDeleteQuote = Boolean(currentUser?.permissions?.includes('quotes_delete'));
   const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
 
-  const handleSave = async () => {
+  const isDraftRecord = isNew || isQuoteDraftStatus(status);
+  const hasDraftContent = hasMeaningfulQuoteDraftContent({
+    customerId: selectedCustomerId === '' ? null : Number(selectedCustomerId),
+    itemCount: quoteItems.length,
+    subject,
+    notes,
+    quoteCode,
+  });
+
+  const buildQuoteDetailsPayload = () => {
+    const normalizeOptionalOverride = (raw: unknown): string | null => {
+      const s = typeof raw === 'string' ? raw.trim() : '';
+      return s ? s : null;
+    };
+    return quoteItems.map((item) => {
+      if (item.kind === 'manual') {
+        return {
+          is_manual: true,
+          Description: item.Description,
+          Quantity: item.Quantity,
+          DailyPrice: item.UnitPriceSnapshot,
+        };
+      }
+      const base: Record<string, unknown> = {
+        ItemId: item.ItemId,
+        Quantity: item.Quantity,
+        is_manual: false,
+        ItemNameOverride: normalizeOptionalOverride(item.ItemNameOverride),
+        ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
+      };
+      if (quoteType === 'SALE') {
+        if (item.OverrideUnitPrice != null && Number.isFinite(item.OverrideUnitPrice)) {
+          base.OverrideUnitPrice = item.OverrideUnitPrice;
+        }
+      } else if (item.OverrideMonthlyPrice != null && Number.isFinite(item.OverrideMonthlyPrice)) {
+        base.OverrideMonthlyPrice = item.OverrideMonthlyPrice;
+      }
+      return base;
+    });
+  };
+
+  const buildQuoteHeaderPayload = (targetStatus: QuoteStatus) => {
+    const requestBody: Record<string, unknown> = {
+      Status: targetStatus,
+      Subject: normalizeText(subject) ? normalizeText(subject) : null,
+      Notes: normalizeText(notes) || undefined,
+      Iskonto: iskonto,
+      VatRate: vatRate,
+      Currency: currency,
+      Language: language,
+      Type: quoteType,
+    };
+    if (selectedCustomerId !== '') {
+      requestBody.CustomerId = Number(selectedCustomerId);
+    } else if (targetStatus === QuoteStatus.Draft) {
+      requestBody.CustomerId = null;
+    }
+    if (selectedAuthorizedContactId !== '') {
+      requestBody.CustomerAuthorizedContactId = Number(selectedAuthorizedContactId);
+    }
+    if (quoteType === 'RENTAL') {
+      const useDatePair = Boolean(startDate.trim() && plannedEndDate.trim());
+      if (useDatePair) {
+        requestBody.StartDate = new Date(startDate).toISOString();
+        requestBody.PlannedEndDate = new Date(plannedEndDate).toISOString();
+        const rd = Math.floor(Number(rentalDurationDays));
+        if (Number.isFinite(rd) && rd >= 1) requestBody.RentalDurationDays = rd;
+      } else {
+        const rd = Math.floor(Number(rentalDurationDays));
+        if (Number.isFinite(rd) && rd >= 1) {
+          requestBody.RentalDurationDays = rd;
+        }
+      }
+    }
+    const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+    if (selectedCustomerId !== '') {
+      Object.assign(requestBody, siteFields);
+    }
+    if (normalizeText(quoteCode)) {
+      requestBody.QuoteCode = normalizeText(quoteCode);
+    }
+    const details = buildQuoteDetailsPayload();
+    if (details.length > 0) requestBody.details = details;
+    return requestBody;
+  };
+
+  const persistDraft = async (options?: { silent?: boolean }): Promise<number | null> => {
+    if (!hasDraftContent) return persistedQuoteId;
+    try {
+      setIsBusy(true);
+      const body = buildQuoteHeaderPayload(QuoteStatus.Draft);
+      const existingId = persistedQuoteId ?? quote?.QuoteId ?? null;
+      let quoteId = existingId;
+      if (!quoteId) {
+        const result = await quoteService.createAsync(body as any);
+        quoteId = result.QuoteId;
+        setPersistedQuoteId(quoteId);
+        if (result.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: result.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
+      } else {
+        const updateResult = await quoteService.updateAsync(quoteId, body as any);
+        if (updateResult.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: updateResult.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
+      }
+      setStatus(QuoteStatus.Draft);
+      setIsDirty(false);
+      if (!options?.silent) {
+        toast.success('Taslak kaydedildi.');
+      }
+      await onDataChanged?.();
+      return quoteId;
+    } catch (error) {
+      console.error('Save draft quote error:', error);
+      toast.error(getApiErrorMessage(error) || 'Taslak kaydedilemedi.');
+      return null;
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const requestClose = async () => {
+    if (isBusy) return;
+    if (isDraftRecord && !isReadOnly && isDirty && hasDraftContent) {
+      const savedId = await persistDraft({ silent: true });
+      if (!savedId) return;
+      toast.info('Taslak kaydedildi. Listeden devam edebilirsiniz.');
+      onClose();
+      return;
+    }
+    if (!isDraftRecord && !isReadOnly && isDirty && !converted) {
+      setShowUnsavedConfirm(true);
+      return;
+    }
+    onClose();
+  };
+
+  const handleGoToInventory = async () => {
+    if (isBusy) return;
+    let quoteId = persistedQuoteId ?? quote?.QuoteId ?? null;
+    if (isDraftRecord && (isDirty || !quoteId) && hasDraftContent) {
+      quoteId = await persistDraft({ silent: true });
+      if (!quoteId) return;
+    } else if (!quoteId && hasDraftContent) {
+      quoteId = await persistDraft({ silent: true });
+      if (!quoteId) return;
+    }
+    if (!quoteId) {
+      toast.warning('Envantere gitmeden önce teklife müşteri, kalem veya not ekleyin.');
+      return;
+    }
+    toast.info('Taslak kaydedildi. Ürünü ekledikten sonra teklife dönebilirsiniz.');
+    navigate('/inventory', {
+      state: {
+        resumeQuote: {
+          path: quoteContractsPath(quoteType),
+          quoteId,
+        },
+      },
+    });
+  };
+
+  const openProductPicker = async () => {
+    try {
+      const invData = await inventoryService.getAllAsync(undefined, { forceRefresh: true });
+      setAvailableItems(invData);
+    } catch (error) {
+      console.error('Refresh inventory for picker error:', error);
+    }
+    setShowProductPickerModal(true);
+  };
+
+  const handleSave = async (forceStatus?: QuoteStatus) => {
+    if (!forceStatus && !isNew && isQuoteDraftStatus(status)) {
+      const savedId = await persistDraft();
+      if (savedId) onClose();
+      return;
+    }
 
     const hasRentalDatePair =
       quoteType === 'RENTAL' && Boolean(startDate.trim() && plannedEndDate.trim());
@@ -1248,8 +1481,10 @@ export default function QuoteDetailModal({
         requestBody.QuoteCode = normalizeText(quoteCode);
       }
 
-      if (isNew) {
+        const existingId = persistedQuoteId ?? quote?.QuoteId ?? null;
+        if (!existingId) {
         requestBody.Type = quoteType;
+        requestBody.Status = QuoteStatus.Pending;
         const result = await quoteService.createAsync(requestBody as any);
         if (result.CreatedSiteId && selectedCustomerId) {
           await applyCreatedSiteId({
@@ -1264,9 +1499,10 @@ export default function QuoteDetailModal({
         await onDataChanged?.();
         onClose();
         return;
-      } else if (quote) {
+        }
+
         const updateBody: Record<string, unknown> = {
-          Status: status,
+          Status: forceStatus ?? status,
           Iskonto: iskonto,
           VatRate: vatRate,
           Currency: currency,
@@ -1276,12 +1512,15 @@ export default function QuoteDetailModal({
           // Kalem değişiklikleri (override fiyatlar dahil) PATCH ile de gitsin; aksi halde fiyat yeniden hesaplanmaz.
           details,
         };
-        if ((quote as { CustomerAuthorizedContactId?: number | null }).CustomerAuthorizedContactId !== Number(selectedAuthorizedContactId)) {
+        if (
+          (quote as { CustomerAuthorizedContactId?: number | null } | null)?.CustomerAuthorizedContactId !==
+          Number(selectedAuthorizedContactId)
+        ) {
           updateBody.CustomerAuthorizedContactId = Number(selectedAuthorizedContactId);
         }
         if (quoteType === 'RENTAL') {
-          const useDatePair = Boolean(startDate.trim() && plannedEndDate.trim());
-          if (useDatePair) {
+          const useUpdateDatePair = Boolean(startDate.trim() && plannedEndDate.trim());
+          if (useUpdateDatePair) {
             updateBody.StartDate = new Date(startDate).toISOString();
             updateBody.PlannedEndDate = new Date(plannedEndDate).toISOString();
             const rd = Math.floor(Number(rentalDurationDays));
@@ -1292,11 +1531,11 @@ export default function QuoteDetailModal({
             updateBody.RentalDurationDays = Math.max(1, Math.floor(Number(rentalDurationDays)) || 1);
           }
         }
-        const originalSiteId = (quote as { SiteId?: number | null }).SiteId ?? null;
-        const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+        const originalSiteId = (quote as { SiteId?: number | null } | null)?.SiteId ?? null;
+        const updateSiteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
         if (isNewSiteMode) {
-          if (siteFields.newSite) {
-            updateBody.newSite = siteFields.newSite;
+          if (updateSiteFields.newSite) {
+            updateBody.newSite = updateSiteFields.newSite;
           }
         } else {
           const nextSiteId = selectedSiteId ? Number(selectedSiteId) : null;
@@ -1316,7 +1555,7 @@ export default function QuoteDetailModal({
           }
           updateBody.rejectionReason = reason;
         }
-        const updateResult = await quoteService.updateAsync(quote.QuoteId, updateBody as any);
+        const updateResult = await quoteService.updateAsync(existingId, updateBody as any);
         if (updateResult.CreatedSiteId && selectedCustomerId) {
           await applyCreatedSiteId({
             customerId: Number(selectedCustomerId),
@@ -1330,7 +1569,6 @@ export default function QuoteDetailModal({
         await onDataChanged?.();
         onClose();
         return;
-      }
     } catch (error) {
       console.error('Save quote error:', error);
       const fieldErrors = getApiFieldErrors(error, [
@@ -2034,6 +2272,8 @@ export default function QuoteDetailModal({
       );
     }
     switch (status) {
+      case QuoteStatus.Draft:
+        return <span className="badge bg-slate-700 text-slate-100 text-[11px] px-2 py-0.5">Taslak</span>;
       case QuoteStatus.Pending:
         return <span className="badge bg-yellow-700 text-yellow-100 text-[11px] px-2 py-0.5">Beklemede</span>;
       case QuoteStatus.Accepted:
@@ -2065,7 +2305,7 @@ export default function QuoteDetailModal({
               title="Bu teklif başka bir tekliften kopyalandı. Kaydedip kullanıcıya paylaşmadan önce gerekli alanları (teklif kodu, tarihler, fiyatlar) gözden geçirin."
             >
               <CopySimpleIcon size={12} weight="bold" aria-hidden />
-              Taslak (kopya)
+              Kopya
             </span>
           )}
           <span className="hidden md:inline text-[11px] text-text-secondary truncate">
@@ -2088,7 +2328,7 @@ export default function QuoteDetailModal({
           )}
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => void requestClose()}
             className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
           >
@@ -2352,7 +2592,7 @@ export default function QuoteDetailModal({
                 </select>
               </div>
 
-              {!isNew && (
+              {!isNew && !isQuoteDraftStatus(status) && (
                 <div className="min-w-[130px] w-[150px]">
                   <label className={fieldLabel}>Durum</label>
                   <select
@@ -2526,7 +2766,7 @@ export default function QuoteDetailModal({
                 {!isReadOnly && (
                   <button
                     type="button"
-                    onClick={() => setShowProductPickerModal(true)}
+                    onClick={() => void openProductPicker()}
                     className={`btn-secondary ${compactBtn}`}
                   >
                     Ürün Ekle
@@ -3131,21 +3371,45 @@ export default function QuoteDetailModal({
                       Sil
                     </button>
                   )}
-                  <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  <button type="button" onClick={() => void requestClose()} className={`btn-secondary ${compactBtn}`}>
                     İptal
                   </button>
+                  {isDraftRecord && (
+                    <button
+                      type="button"
+                      onClick={() => void handleGoToInventory()}
+                      disabled={isBusy}
+                      className={`btn-secondary ${compactBtn}`}
+                      title="Taslağı kaydeder ve envanter sayfasına gider"
+                    >
+                      <span className="inline-flex items-center gap-1">
+                        <PackageIcon size={14} weight="regular" aria-hidden />
+                        Envantere git
+                      </span>
+                    </button>
+                  )}
+                  {!isNew && isQuoteDraftStatus(status) && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSave(QuoteStatus.Pending)}
+                      disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
+                      className={`btn-success ${compactBtn}`}
+                    >
+                      {isBusy ? 'Kaydediliyor...' : 'Teklifi oluştur'}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={handleSave}
+                    onClick={() => void handleSave()}
                     disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
                     className={`btn-primary ${compactBtn}`}
                   >
-                    {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                    {isBusy ? 'Kaydediliyor...' : isQuoteDraftStatus(status) ? 'Taslağı kaydet' : 'Kaydet'}
                   </button>
                 </>
               )}
               {isReadOnly && (
-                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                <button type="button" onClick={() => void requestClose()} className={`btn-secondary ${compactBtn}`}>
                   Kapat
                 </button>
               )}
@@ -3285,14 +3549,31 @@ export default function QuoteDetailModal({
         title="Teklifi Kopyala"
         message={
           activeQuote?.QuoteCode
-            ? `"${activeQuote.QuoteCode}" teklifini yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Beklemede" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.`
-            : 'Bu teklifi yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Beklemede" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.'
+            ? `"${activeQuote.QuoteCode}" teklifini yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Taslak" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.`
+            : 'Bu teklifi yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Taslak" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.'
         }
         confirmLabel="Kopyala"
         cancelLabel="Vazgeç"
         loading={isCloning}
         onConfirm={handleCloneQuoteConfirm}
         onCancel={handleCloneQuoteCancel}
+      />
+
+      <ConfirmModal
+        open={showUnsavedConfirm}
+        title="Kaydedilmemiş değişiklikler"
+        message={
+          'Resmi teklifteki değişiklikler sayfa değişince taslak olarak saklanmaz.\nKaydetmek için geri dönüp Kaydet’e basın, veya değişiklikleri atın.'
+        }
+        confirmLabel="Kaydetmeden kapat"
+        cancelLabel="Geri dön"
+        variant="danger"
+        onConfirm={() => {
+          setShowUnsavedConfirm(false);
+          setIsDirty(false);
+          onClose();
+        }}
+        onCancel={() => setShowUnsavedConfirm(false)}
       />
 
       {/* Sözleşmeye Dönüştür - Depo Atama Modal */}

@@ -322,7 +322,7 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       confirm: {
         title: 'Teklifi Kopyala',
         message: (target) =>
-          `"${target.itemName}" teklifini yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Beklemede" olur, teklif kodu bos gelir; tum fiyatlar ve kalemler aynen kopyalanir.`,
+          `"${target.itemName}" teklifini yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Taslak" olur, teklif kodu bos gelir; tum fiyatlar ve kalemler aynen kopyalanir.`,
         confirmLabel: 'Kopyala',
       },
     },
@@ -340,6 +340,7 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
             Boolean(
               isQuoteTarget(target) &&
                 target.rawData.Status !== 'accepted' &&
+                target.rawData.Status !== 'draft' &&
                 !target.rawData.ConvertedContractId
             ),
         },
@@ -352,6 +353,7 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
             Boolean(
               isQuoteTarget(target) &&
                 target.rawData.Status !== 'pending' &&
+                target.rawData.Status !== 'draft' &&
                 !target.rawData.ConvertedContractId
             ),
         },

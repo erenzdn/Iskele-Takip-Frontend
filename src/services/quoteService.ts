@@ -26,8 +26,8 @@ export interface CreateQuoteDetailRequest {
 export interface CreateQuoteRequest {
   QuoteCode?: string;
   Subject?: string | null;
-  CustomerId: number;
-  CustomerAuthorizedContactId: number;
+  CustomerId?: number | null;
+  CustomerAuthorizedContactId?: number | null;
   SiteId?: number;
   newSite?: CreateSiteRequest;
   StartDate?: string; // ISO 8601 (RENTAL için opsiyonel; boşsa gönderilmez)
@@ -48,7 +48,8 @@ export interface CreateQuoteRequest {
 export interface UpdateQuoteRequest {
   QuoteCode?: string;
   Subject?: string | null;
-  CustomerAuthorizedContactId?: number;
+  CustomerId?: number | null;
+  CustomerAuthorizedContactId?: number | null;
   SiteId?: number;
   newSite?: CreateSiteRequest;
   /** RENTAL */
@@ -203,7 +204,7 @@ export const quoteService = {
       const failures: unknown[] = [];
       const s = query?.search?.trim();
       const base: QuoteListQuery = s ? { search: s } : {};
-      const [pending, accepted, rejected] = await Promise.all([
+      const [pending, accepted, rejected, draft] = await Promise.all([
         apiClient
           .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Pending }))
           .catch((e) => {
@@ -222,13 +223,19 @@ export const quoteService = {
             failures.push(e);
             return [];
           }),
+        apiClient
+          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Draft }))
+          .catch((e) => {
+            failures.push(e);
+            return [];
+          }),
       ]);
       const map = new Map<number, Quote>();
-      [...pending, ...accepted, ...rejected]
+      [...draft, ...pending, ...accepted, ...rejected]
         .map((q) => normalizeQuote(q))
         .forEach((q) => map.set(q.QuoteId, q));
       const merged = Array.from(map.values()).sort((a, b) => b.QuoteId - a.QuoteId);
-      if (merged.length === 0 && failures.length >= 3) {
+      if (merged.length === 0 && failures.length >= 4) {
         throw (failures[0] ?? error);
       }
       return merged;
@@ -273,6 +280,15 @@ export const quoteService = {
     } else {
       payload.RentalDurationDays = Math.floor(rd);
     }
+    if (data.CustomerId == null || !Number.isFinite(Number(data.CustomerId))) {
+      delete payload.CustomerId;
+    }
+    if (
+      data.CustomerAuthorizedContactId == null ||
+      !Number.isFinite(Number(data.CustomerAuthorizedContactId))
+    ) {
+      delete payload.CustomerAuthorizedContactId;
+    }
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
@@ -284,6 +300,17 @@ export const quoteService = {
   async updateAsync(id: number, data: UpdateQuoteRequest): Promise<Quote & UpdateQuoteResponse> {
     const payload: Record<string, unknown> = { ...data };
     const qType = String((data as any).Type ?? '').toUpperCase();
+    if (data.CustomerId == null || !Number.isFinite(Number(data.CustomerId))) {
+      delete payload.CustomerId;
+    } else {
+      payload.CustomerId = Number(data.CustomerId);
+    }
+    if (
+      data.CustomerAuthorizedContactId == null ||
+      !Number.isFinite(Number(data.CustomerAuthorizedContactId))
+    ) {
+      delete payload.CustomerAuthorizedContactId;
+    }
     // Type gönderilmese bile, SALE akışında tarih/saha gibi alanları göndermemek güvenli.
     if (qType === 'SALE') {
       delete payload.StartDate;
