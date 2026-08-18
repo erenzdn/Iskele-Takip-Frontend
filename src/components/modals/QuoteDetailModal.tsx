@@ -1,8 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
-import { ClipboardIcon, CopySimpleIcon, PackageIcon, XIcon, Plus } from '@phosphor-icons/react';
+import { ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -52,7 +51,7 @@ import {
   NewSiteFormState,
   validateSiteSelection,
 } from '../../utils/siteSelection';
-import { hasMeaningfulQuoteDraftContent, isQuoteDraftStatus, quoteContractsPath } from '../../utils/quoteDraft';
+import { hasMeaningfulQuoteDraftContent, isQuoteDraftStatus } from '../../utils/quoteDraft';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -116,7 +115,6 @@ export default function QuoteDetailModal({
   startInEditMode = false,
   isClonedDraft = false,
 }: QuoteDetailModalProps) {
-  const navigate = useNavigate();
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
   const [showCloneConfirm, setShowCloneConfirm] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
@@ -1313,29 +1311,14 @@ export default function QuoteDetailModal({
     onClose();
   };
 
-  const handleGoToInventory = async () => {
+  const handleSaveAsDraft = async () => {
     if (isBusy) return;
-    let quoteId = persistedQuoteId ?? quote?.QuoteId ?? null;
-    if (isDraftRecord && (isDirty || !quoteId) && hasDraftContent) {
-      quoteId = await persistDraft({ silent: true });
-      if (!quoteId) return;
-    } else if (!quoteId && hasDraftContent) {
-      quoteId = await persistDraft({ silent: true });
-      if (!quoteId) return;
-    }
-    if (!quoteId) {
-      toast.warning('Envantere gitmeden önce teklife müşteri, kalem veya not ekleyin.');
+    if (!hasDraftContent) {
+      toast.warning('Taslak için müşteri, kalem veya not ekleyin.');
       return;
     }
-    toast.info('Taslak kaydedildi. Ürünü ekledikten sonra teklife dönebilirsiniz.');
-    navigate('/inventory', {
-      state: {
-        resumeQuote: {
-          path: quoteContractsPath(quoteType),
-          quoteId,
-        },
-      },
-    });
+    const savedId = await persistDraft();
+    if (savedId) onClose();
   };
 
   const openProductPicker = async () => {
@@ -3374,18 +3357,15 @@ export default function QuoteDetailModal({
                   <button type="button" onClick={() => void requestClose()} className={`btn-secondary ${compactBtn}`}>
                     İptal
                   </button>
-                  {isDraftRecord && (
+                  {isNew && (
                     <button
                       type="button"
-                      onClick={() => void handleGoToInventory()}
+                      onClick={() => void handleSaveAsDraft()}
                       disabled={isBusy}
                       className={`btn-secondary ${compactBtn}`}
-                      title="Taslağı kaydeder ve envanter sayfasına gider"
+                      title="Eksik kalsa da taslak olarak kaydeder; listeden devam edebilirsiniz"
                     >
-                      <span className="inline-flex items-center gap-1">
-                        <PackageIcon size={14} weight="regular" aria-hidden />
-                        Envantere git
-                      </span>
+                      Taslak olarak kaydet
                     </button>
                   )}
                   {!isNew && isQuoteDraftStatus(status) && (

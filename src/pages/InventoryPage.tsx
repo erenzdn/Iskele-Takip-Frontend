@@ -95,15 +95,6 @@ export default function InventoryPage() {
   const hadFirstListLoadRef = useRef(false);
   const returnOnCloseRef = useRef<boolean>(false);
   const returnToRef = useRef<{ path: string; state?: any } | null>(null);
-  const [resumeQuote] = useState<{ path: string; quoteId: number } | null>(() => {
-    const st = location.state as { resumeQuote?: { path?: string; quoteId?: number } } | null;
-    const rq = st?.resumeQuote;
-    const quoteId = Number(rq?.quoteId);
-    if (rq?.path && Number.isFinite(quoteId) && quoteId > 0) {
-      return { path: String(rq.path), quoteId };
-    }
-    return null;
-  });
 
   useEffect(() => {
     let cancelled = false;
@@ -744,22 +735,6 @@ export default function InventoryPage() {
 
   return (
     <div>
-      {resumeQuote && (
-        <div className="mb-2 rounded border border-amber-700/50 bg-amber-950/30 px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-          <p className="text-sm text-amber-100">
-            Taslak teklif kaydedildi. Ürünü ekledikten sonra teklife dönün; yeni ürün seçicide görünür.
-          </p>
-          <button
-            type="button"
-            className="btn-primary text-sm py-1.5 px-3 shrink-0"
-            onClick={() =>
-              navigate(resumeQuote.path, { state: { openQuoteId: resumeQuote.quoteId } })
-            }
-          >
-            Teklife dön
-          </button>
-        </div>
-      )}
       <div className="mb-2 rounded border border-background-border bg-background-panel p-2">
         <div className="mb-1.5 flex items-center justify-end gap-2">
           <button
