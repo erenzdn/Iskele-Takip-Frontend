@@ -1,8 +1,9 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ArrowClockwiseIcon, 
   DownloadSimpleIcon, 
+  FunnelIcon,
   UploadSimpleIcon, 
   XIcon, 
   WarningCircleIcon,
@@ -17,6 +18,7 @@ import { formatInventoryRelatedApiText, getApiErrorMessage, getUserFacingApiErro
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
 import { resolveExcelImportErrors } from '../utils/inventoryExcelImportUi';
+import { validateCustomersExcelFile } from '../utils/validateCustomersExcel';
 import {
   decisionsToMappings,
   extractUnmatchedCategories,
@@ -378,6 +380,121 @@ function prepareImportErrors(
   });
 }
 
+type ErrorCategoryFilter = 'ALL' | ExcelErrorCategory;
+
+const CATEGORY_FILTER_OPTIONS: { key: ErrorCategoryFilter; label: string }[] = [
+  { key: 'ALL', label: 'Tümü' },
+  { key: 'VALIDATION', label: 'Doğrulama' },
+  { key: 'COERCION', label: 'Format' },
+  { key: 'BUSINESS', label: 'İş Kuralı' },
+];
+
+const FILTER_ACTIVE_CLASSES: Record<ErrorCategoryFilter, string> = {
+  ALL: 'border-error/40 bg-error/10 text-error',
+  VALIDATION: 'border-error/40 bg-error/10 text-error',
+  COERCION: 'border-orange-500/40 bg-orange-500/10 text-orange-400',
+  BUSINESS: 'border-purple-500/40 bg-purple-500/10 text-purple-400',
+};
+
+/**
+ * Hata kategorisi filtre sekmeleri + satır listesi.
+ * errorModal içinde kullanılır; önizleme ekranındaki eşdeğeri ExcelImportPreviewModal'dadır.
+ */
+const ErrorRowList = memo(function ErrorRowList({ errorsByRow }: { errorsByRow: ExcelImportRowErrors[] }) {
+  const [filter, setFilter] = useState<ErrorCategoryFilter>('ALL');
+
+  const counts = useMemo<Record<ErrorCategoryFilter, number>>(() => {
+    const c: Record<ErrorCategoryFilter, number> = { ALL: errorsByRow.length, VALIDATION: 0, COERCION: 0, BUSINESS: 0 };
+    for (const rowErr of errorsByRow) {
+      const cats = new Set(rowErr.issues.map((i) => i.category).filter(Boolean) as ExcelErrorCategory[]);
+      for (const cat of cats) c[cat] = (c[cat] ?? 0) + 1;
+    }
+    return c;
+  }, [errorsByRow]);
+
+  const filtered = useMemo(
+    () => filter === 'ALL' ? errorsByRow : errorsByRow.filter((r) => r.issues.some((i) => i.category === filter)),
+    [errorsByRow, filter]
+  );
+
+  return (
+    <div className="space-y-3">
+      {/* Filtre sekmeleri */}
+      <div className="flex items-center gap-1.5 flex-wrap border-b border-background-border pb-3">
+        <FunnelIcon size={14} className="text-text-secondary shrink-0" />
+        {CATEGORY_FILTER_OPTIONS
+          .filter((f) => f.key === 'ALL' || (counts[f.key] ?? 0) > 0)
+          .map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setFilter(f.key)}
+              className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                filter === f.key
+                  ? FILTER_ACTIVE_CLASSES[f.key]
+                  : 'border-background-border text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              {f.label}
+              <span className="ml-1.5 tabular-nums opacity-70">({counts[f.key] ?? 0})</span>
+            </button>
+          ))}
+      </div>
+
+      {/* Hata satırları */}
+      {filtered.length === 0 ? (
+        <p className="text-sm text-text-secondary py-6 text-center">Bu kategoride sorun yok.</p>
+      ) : (
+        filtered.map((rowErr) => {
+          const visibleIssues = filter === 'ALL'
+            ? rowErr.issues
+            : rowErr.issues.filter((i) => i.category === filter);
+          return (
+            <div
+              key={`${rowErr.sheet}-${rowErr.row}`}
+              className="rounded-md border border-background-border bg-background-muted/20 p-3"
+            >
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <strong className="text-sm text-text-primary">
+                  {rowErr.sheet ? (
+                    <span className="text-text-secondary font-normal mr-1">{rowErr.sheet} /</span>
+                  ) : null}
+                  {rowErr.row}. satır
+                </strong>
+                <span className="text-[10px] text-text-secondary tabular-nums">{visibleIssues.length} hata</span>
+              </div>
+              {rowErr.summary && <p className="text-xs text-text-secondary mt-1">{rowErr.summary}</p>}
+              <ul className="mt-2 space-y-1.5 text-xs text-text-secondary">
+                {visibleIssues.map((issue, i) => (
+                  <li key={`${rowErr.row}-${issue.column}-${i}`} className="flex items-start gap-2 leading-relaxed">
+                    <span className="mt-0.5 shrink-0 w-1.5 h-1.5 rounded-full bg-error/60 inline-block" />
+                    <span className="flex-1">
+                      <span className="font-medium text-text-primary">{issue.column}:</span>{' '}
+                      {issue.displayMessage}
+                      {issue.givenValue && (
+                        <span className="ml-1 font-mono text-[10px] text-text-secondary opacity-70">
+                          ({issue.givenValue})
+                        </span>
+                      )}
+                    </span>
+                    {issue.category && (
+                      <span
+                        className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-bold ${categoryBadgeClass(issue.category)}`}
+                      >
+                        {categoryBadgeLabel(issue.category)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+});
+
 function isExcelFile(file: File): boolean {
   const ext = file.name.split('.').pop()?.toLowerCase();
   if (ext === 'xlsx' || ext === 'xls') return true;
@@ -536,6 +653,41 @@ export default function ExcelManager({
       setBusy('preview');
       setErrorModal(null);
       try {
+        // ── Müşteri dosyaları için önce client-side tam validasyon ──────────────
+        // Backend'e gitmeden tüm satırlardaki hatalar (trim, format, DB uzunluk
+        // sınırları) tek geçişte tespit edilir ve önizleme ekranında gösterilir.
+        if (type === 'customers') {
+          const { errorsByRow: clientErrors, missingSheet } = await validateCustomersExcelFile(file);
+          if (missingSheet) {
+            toast.error('Excel dosyasında "Customers" sayfası bulunamadı. Lütfen doğru şablonu kullanın.');
+            return;
+          }
+          if (clientErrors.length > 0) {
+            setLastFile(file);
+            setPreviewModal({
+              file,
+              fileName: file.name,
+              message: `${clientErrors.length} satırda doğrulama hatası tespit edildi. Lütfen düzeltin ve tekrar yükleyin.`,
+              summary: {
+                totalRows: clientErrors.reduce((max, r) => Math.max(max, r.row), 0) - 1,
+                successRows: 0,
+                failedRows: clientErrors.length,
+                errorsByCategory: {
+                  COERCION: 0,
+                  VALIDATION: clientErrors.reduce((sum, r) => sum + r.errorCount, 0),
+                  BUSINESS: 0,
+                },
+              },
+              validRows: [],
+              errorsByRow: clientErrors,
+              validRowCount: 0,
+              canPartialImport: false,
+            });
+            return;
+          }
+        }
+        // ────────────────────────────────────────────────────────────────────────
+
         const formData = new FormData();
         formData.append('file', file);
         if (type === 'inventory') {
@@ -1173,35 +1325,7 @@ export default function ExcelManager({
               )}
 
               {errorModal.errorsByRow.length > 0 ? (
-                <div className="import-errors space-y-3">
-                  {errorModal.errorsByRow.map((rowErr) => (
-                    <div
-                      key={`${rowErr.sheet}-${rowErr.row}`}
-                      className="rounded-md border border-background-border bg-background-muted/20 p-3"
-                    >
-                      <strong className="text-sm text-text-primary">
-                        Excel&apos;de {rowErr.row}. satıra gidin
-                      </strong>
-                      {rowErr.summary && (
-                        <p className="text-xs text-text-secondary mt-1">{rowErr.summary}</p>
-                      )}
-                      <ul className="mt-2 space-y-1.5 list-disc list-inside text-xs text-text-secondary">
-                        {rowErr.issues.map((issue, i) => (
-                          <li key={`${rowErr.row}-${issue.column}-${i}`} className="leading-relaxed">
-                            <span>{issue.displayMessage}</span>
-                            {issue.category && (
-                              <span
-                                className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold align-middle ${categoryBadgeClass(issue.category)}`}
-                              >
-                                {categoryBadgeLabel(issue.category)}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
+                <ErrorRowList errorsByRow={errorModal.errorsByRow} />
               ) : errorModal.errors.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-10 text-text-secondary">
                   <CheckCircleIcon size={48} weight="thin" />

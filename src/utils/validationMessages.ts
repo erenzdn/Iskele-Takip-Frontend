@@ -11,7 +11,8 @@ export type ValidationCode =
   | 'invalidIban'
   | 'invalidTaxNumber'
   | 'invalidUuid'
-  | 'invalidLength';
+  | 'invalidLength'
+  | 'tooLong';
 
 export function getValidationMessage(
   fieldLabel: string,
@@ -45,6 +46,8 @@ export function getValidationMessage(
       return `${fieldLabel} geçerli bir UUID formatında olmalıdır.`;
     case 'invalidLength':
       return `${fieldLabel} tam olarak ${meta?.length ?? 0} karakter olmalıdır.`;
+    case 'tooLong':
+      return `${fieldLabel} en fazla ${meta?.max ?? 0} karakter olabilir (girilen: ${meta?.length ?? '?'} karakter).`;
     default:
       return `${fieldLabel} için geçersiz değer girdiniz.`;
   }

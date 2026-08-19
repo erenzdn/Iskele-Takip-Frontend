@@ -4,6 +4,7 @@ import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
   FileTextIcon,
+  FunnelIcon,
   UploadSimpleIcon,
   WarningCircleIcon,
   XIcon,
@@ -45,6 +46,7 @@ interface ExcelImportPreviewModalProps {
 }
 
 type PreviewTab = 'unmatched' | 'valid' | 'invalid';
+type ErrorCategoryFilter = 'ALL' | ExcelErrorCategory;
 
 const CATEGORY_BADGE_LABELS: Record<ExcelErrorCategory, string> = {
   COERCION: 'Format',
@@ -111,6 +113,25 @@ export default function ExcelImportPreviewModal({
   const [tab, setTab] = useState<PreviewTab>(
     hasUnmatchedCategories ? 'unmatched' : hasProblems && validRowCount === 0 ? 'invalid' : 'valid'
   );
+  const [errorCategoryFilter, setErrorCategoryFilter] = useState<ErrorCategoryFilter>('ALL');
+
+  // Her hata kategorisinde kaç satır var
+  const errorCategoryCounts = useMemo<Record<ErrorCategoryFilter, number>>(() => {
+    const counts: Record<ErrorCategoryFilter, number> = { ALL: errorsByRow.length, VALIDATION: 0, COERCION: 0, BUSINESS: 0 };
+    for (const rowErr of errorsByRow) {
+      const cats = new Set(rowErr.issues.map((i) => i.category).filter(Boolean) as ExcelErrorCategory[]);
+      for (const cat of cats) counts[cat] = (counts[cat] ?? 0) + 1;
+    }
+    return counts;
+  }, [errorsByRow]);
+
+  // Aktif filtreye göre gösterilecek satırlar
+  const filteredErrorRows = useMemo(() => {
+    if (errorCategoryFilter === 'ALL') return errorsByRow;
+    return errorsByRow.filter((rowErr) =>
+      rowErr.issues.some((i) => i.category === errorCategoryFilter)
+    );
+  }, [errorsByRow, errorCategoryFilter]);
   const showUpsertBreakdown =
     typeof summary?.createCount === 'number' || typeof summary?.updateCount === 'number';
   const hasActionColumn = validRows.some((row) => row.action === 'create' || row.action === 'update');
@@ -308,34 +329,100 @@ export default function ExcelImportPreviewModal({
               <p className="text-sm text-text-secondary py-8 text-center">Sorunlu satır yok.</p>
             ) : (
               <div className="space-y-3">
-                {errorsByRow.map((rowErr) => (
-                  <div
-                    key={`${rowErr.sheet}-${rowErr.row}`}
-                    className="rounded-md border border-background-border bg-background-muted/20 p-3"
-                  >
-                    <strong className="text-sm text-text-primary">
-                      Excel&apos;de {rowErr.sheet ? `${rowErr.sheet} / ` : ''}
-                      {rowErr.row}. satır
-                    </strong>
-                    {rowErr.summary && <p className="text-xs text-text-secondary mt-1">{rowErr.summary}</p>}
-                    <ul className="mt-2 space-y-1.5 list-disc list-inside text-xs text-text-secondary">
-                      {rowErr.issues.map((issue, i) => (
-                        <li key={`${rowErr.row}-${issue.column}-${i}`} className="leading-relaxed">
-                          <span>{issue.displayMessage}</span>
-                          {issue.category && (
-                            <span
-                              className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold align-middle ${
-                                CATEGORY_BADGE_CLASSES[issue.category]
-                              }`}
+                {/* ── Hata kategorisi filtre sekmeleri ── */}
+                <div className="flex items-center gap-1.5 flex-wrap border-b border-background-border pb-3">
+                  <FunnelIcon size={14} className="text-text-secondary shrink-0" />
+                  {(
+                    [
+                      { key: 'ALL' as const, label: 'Tümü' },
+                      { key: 'VALIDATION' as const, label: 'Doğrulama' },
+                      { key: 'COERCION' as const, label: 'Format' },
+                      { key: 'BUSINESS' as const, label: 'İş Kuralı' },
+                    ] as { key: ErrorCategoryFilter; label: string }[]
+                  )
+                    .filter((f) => f.key === 'ALL' || (errorCategoryCounts[f.key] ?? 0) > 0)
+                    .map((f) => (
+                      <button
+                        key={f.key}
+                        type="button"
+                        onClick={() => setErrorCategoryFilter(f.key)}
+                        className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                          errorCategoryFilter === f.key
+                            ? f.key === 'ALL'
+                              ? 'border-error/40 bg-error/10 text-error'
+                              : f.key === 'VALIDATION'
+                                ? 'border-error/40 bg-error/10 text-error'
+                                : f.key === 'COERCION'
+                                  ? 'border-orange-500/40 bg-orange-500/10 text-orange-400'
+                                  : 'border-purple-500/40 bg-purple-500/10 text-purple-400'
+                            : 'border-background-border text-text-secondary hover:bg-background-hover'
+                        }`}
+                      >
+                        {f.label}
+                        <span className="ml-1.5 tabular-nums opacity-70">
+                          ({errorCategoryCounts[f.key] ?? 0})
+                        </span>
+                      </button>
+                    ))}
+                </div>
+
+                {/* ── Hata satırları ── */}
+                {filteredErrorRows.length === 0 ? (
+                  <p className="text-sm text-text-secondary py-6 text-center">Bu kategoride sorun yok.</p>
+                ) : (
+                  filteredErrorRows.map((rowErr) => {
+                    const visibleIssues =
+                      errorCategoryFilter === 'ALL'
+                        ? rowErr.issues
+                        : rowErr.issues.filter((i) => i.category === errorCategoryFilter);
+                    return (
+                      <div
+                        key={`${rowErr.sheet}-${rowErr.row}`}
+                        className="rounded-md border border-background-border bg-background-muted/20 p-3"
+                      >
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <strong className="text-sm text-text-primary">
+                            {rowErr.sheet ? (
+                              <span className="text-text-secondary font-normal mr-1">{rowErr.sheet} /</span>
+                            ) : null}
+                            {rowErr.row}. satır
+                          </strong>
+                          <span className="text-[10px] text-text-secondary tabular-nums">
+                            {visibleIssues.length} hata
+                          </span>
+                        </div>
+                        <ul className="mt-2 space-y-1.5 text-xs text-text-secondary">
+                          {visibleIssues.map((issue, i) => (
+                            <li
+                              key={`${rowErr.row}-${issue.column}-${i}`}
+                              className="flex items-start gap-2 leading-relaxed"
                             >
-                              {CATEGORY_BADGE_LABELS[issue.category]}
-                            </span>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
+                              <span className="mt-0.5 shrink-0 w-1.5 h-1.5 rounded-full bg-error/60 inline-block" />
+                              <span className="flex-1">
+                                <span className="font-medium text-text-primary">{issue.column}:</span>{' '}
+                                {issue.displayMessage}
+                                {issue.givenValue && (
+                                  <span className="ml-1 font-mono text-[10px] text-text-secondary opacity-70">
+                                    ({issue.givenValue})
+                                  </span>
+                                )}
+                              </span>
+                              {issue.category && (
+                                <span
+                                  className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-bold ${
+                                    CATEGORY_BADGE_CLASSES[issue.category]
+                                  }`}
+                                >
+                                  {CATEGORY_BADGE_LABELS[issue.category]}
+                                </span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    );
+                  })
+                )}
               </div>
             ))}
         </div>
