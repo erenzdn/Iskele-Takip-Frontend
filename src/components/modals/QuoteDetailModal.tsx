@@ -3975,7 +3975,7 @@ export default function QuoteDetailModal({
                   <input
                     type="text"
                     value={newContactPhone}
-                    onChange={(e) => setNewContactPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                    onChange={(e) => setNewContactPhone(e.target.value.replace(/\D/g, '').slice(0, 15))}
                     className="input w-full text-sm py-1.5"
                     placeholder="Telefon"
                     maxLength={11}

@@ -37,7 +37,7 @@ export function getValidationMessage(
     case 'invalidEmail':
       return `${fieldLabel} geçerli bir e-posta formatında olmalıdır. Örnek: ad@firma.com`;
     case 'invalidPhone':
-      return `${fieldLabel} sadece rakam içermeli ve 10-11 hane olmalıdır.`;
+      return `${fieldLabel} sadece rakam içermeli ve 7-15 hane olmalıdır.`;
     case 'invalidIban':
       return `${fieldLabel} geçerli bir IBAN formatında olmalıdır. Örnek: TR330006100519786457841326`;
     case 'invalidTaxNumber':

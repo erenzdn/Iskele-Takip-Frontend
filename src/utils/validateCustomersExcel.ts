@@ -104,6 +104,26 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
           raw: false,
         });
 
+        // Duplicate vergi no tespiti: vergi no → ilk göründüğü excel satır numaraları
+        const taxIdRowMap = new Map<string, number[]>();
+        for (let i = 0; i < customersRows.length; i++) {
+          const row = customersRows[i];
+          const taxId = normalizeNumericText(
+            cellStr(row['Vergi Numarası'] ?? row['Vergi No'] ?? row['VergiNumarasi'] ?? '')
+          );
+          if (taxId) {
+            const existing = taxIdRowMap.get(taxId) ?? [];
+            existing.push(i + 2);
+            taxIdRowMap.set(taxId, existing);
+          }
+        }
+        // Birden fazla satırda geçen vergi numaraları
+        const duplicateTaxIds = new Set<string>(
+          [...taxIdRowMap.entries()]
+            .filter(([, rows]) => rows.length > 1)
+            .map(([taxId]) => taxId)
+        );
+
         for (let i = 0; i < customersRows.length; i++) {
           const row = customersRows[i];
           const excelRow = i + 2; // başlık satırı 1
@@ -124,13 +144,26 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
             if (lenIssue) issues.push(lenIssue);
           }
 
-          // Vergi numarası zorunlu + format
+          // Vergi numarası zorunlu + format + duplicate
           if (isEmpty(taxId)) {
             issues.push(buildIssue('Vergi Numarası', getValidationMessage('Vergi numarası', 'required'), 'VALIDATION'));
           } else {
             const taxResult = validateTaxNumber(taxId, 'Vergi numarası');
             if (!taxResult.valid) {
               issues.push(buildIssue('Vergi Numarası', taxResult.message!, 'VALIDATION', taxId));
+            } else {
+              const normalizedTaxId = normalizeNumericText(taxId);
+              if (duplicateTaxIds.has(normalizedTaxId)) {
+                const otherRows = (taxIdRowMap.get(normalizedTaxId) ?? []).filter((r) => r !== excelRow);
+                issues.push(
+                  buildIssue(
+                    'Vergi Numarası',
+                    `Bu vergi numarası tabloda birden fazla satırda kullanılmış (${otherRows.join(', ')}. satır ile aynı).`,
+                    'BUSINESS',
+                    taxId
+                  )
+                );
+              }
             }
           }
 

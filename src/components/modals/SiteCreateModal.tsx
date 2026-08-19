@@ -116,7 +116,7 @@ export default function SiteCreateModal({
               <input
                 type="tel"
                 value={responsiblePhone}
-                onChange={(e) => setResponsiblePhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                onChange={(e) => setResponsiblePhone(e.target.value.replace(/\D/g, '').slice(0, 15))}
                 placeholder="05XXXXXXXXX"
                 maxLength={11}
                 className="input w-full text-sm py-1.5"

@@ -110,7 +110,7 @@ export function validatePhone(value: string, fieldLabel: string, required = fals
     }
     return { valid: true };
   }
-  if (digits.length < 10 || digits.length > 11) {
+  if (digits.length < 7 || digits.length > 15) {
     return { valid: false, code: 'invalidPhone', message: getValidationMessage(fieldLabel, 'invalidPhone') };
   }
   return { valid: true };

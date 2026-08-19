@@ -654,32 +654,48 @@ export default function ExcelManager({
       setErrorModal(null);
       try {
         // ── Müşteri dosyaları için önce client-side tam validasyon ──────────────
-        // Backend'e gitmeden tüm satırlardaki hatalar (trim, format, DB uzunluk
-        // sınırları) tek geçişte tespit edilir ve önizleme ekranında gösterilir.
+        // Hatalı satırlar tespit edilir.
+        // - Tüm satırlar hatalıysa: eski davranış korunur, backend'e gidilmez,
+        //   hatalar doğrudan önizlemede gösterilir.
+        // - Bir kısmı hatalı, bir kısmı geçerliyse: backend'e preview isteği de
+        //   atılır, geçerli satırlar birleştirilerek kısmi import seçeneği sunulur.
+        let customerClientErrors: ExcelImportRowErrors[] = [];
         if (type === 'customers') {
           const { errorsByRow: clientErrors, missingSheet } = await validateCustomersExcelFile(file);
           if (missingSheet) {
             toast.error('Excel dosyasında "Customers" sayfası bulunamadı. Lütfen doğru şablonu kullanın.');
             return;
           }
-          if (clientErrors.length > 0) {
+          customerClientErrors = clientErrors;
+        }
+
+        // Tüm satırlar hatalıysa backend'e gitmeye gerek yok — eski davranış.
+        if (type === 'customers' && customerClientErrors.length > 0) {
+          // Toplam veri satırı sayısını tahmin etmek için dosyayı tekrar okumak
+          // pahalı; bunun yerine hata satırlarının max row'unu kullanıyoruz.
+          const maxRow = customerClientErrors.reduce((m, r) => Math.max(m, r.row), 0);
+          // maxRow başlık satırı hariç son satır numarası (excel row); veri satırı = maxRow - 1
+          const estimatedTotal = Math.max(maxRow - 1, customerClientErrors.length);
+          const allRowsInvalid = customerClientErrors.length >= estimatedTotal;
+
+          if (allRowsInvalid) {
             setLastFile(file);
             setPreviewModal({
               file,
               fileName: file.name,
-              message: `${clientErrors.length} satırda doğrulama hatası tespit edildi. Lütfen düzeltin ve tekrar yükleyin.`,
+              message: `${customerClientErrors.length} satırda doğrulama hatası tespit edildi. Lütfen düzeltin ve tekrar yükleyin.`,
               summary: {
-                totalRows: clientErrors.reduce((max, r) => Math.max(max, r.row), 0) - 1,
+                totalRows: estimatedTotal,
                 successRows: 0,
-                failedRows: clientErrors.length,
+                failedRows: customerClientErrors.length,
                 errorsByCategory: {
                   COERCION: 0,
-                  VALIDATION: clientErrors.reduce((sum, r) => sum + r.errorCount, 0),
+                  VALIDATION: customerClientErrors.reduce((sum, r) => sum + r.errorCount, 0),
                   BUSINESS: 0,
                 },
               },
               validRows: [],
-              errorsByRow: clientErrors,
+              errorsByRow: customerClientErrors,
               validRowCount: 0,
               canPartialImport: false,
             });
@@ -719,6 +735,48 @@ export default function ExcelManager({
           normalized.errors ?? [],
           normalized.errorsByRow ?? []
         );
+
+        // Client-side hataları backend hataları ile birleştir (müşteri modülü).
+        // Aynı satır+sayfa varsa client hatası önceliklidir; tekrar eklenmez.
+        const mergedErrorsByRow = (() => {
+          if (customerClientErrors.length === 0) return prepared.errorsByRow;
+          const backendRows = prepared.errorsByRow.filter(
+            (be) =>
+              !customerClientErrors.some(
+                (ce) => ce.row === be.row && ce.sheet === be.sheet
+              )
+          );
+          return [...customerClientErrors, ...backendRows].sort((a, b) => {
+            const sheetCmp = (a.sheet ?? '').localeCompare(b.sheet ?? '');
+            return sheetCmp !== 0 ? sheetCmp : a.row - b.row;
+          });
+        })();
+
+        // Hatalı satır numaralarını çıkar; backend geçerli satır sayısını bilmiyorsa hesapla.
+        const errorRowKeys = new Set(
+          mergedErrorsByRow.map((r) => `${r.sheet ?? ''}:${r.row}`)
+        );
+        const backendValidRows = normalized.validRows ?? [];
+        const filteredValidRows = backendValidRows.filter(
+          (r) => !errorRowKeys.has(`${r.sheet ?? ''}:${r.row}`)
+        );
+        const mergedValidRowCount =
+          normalized.validRowCount !== undefined
+            ? Math.max(0, normalized.validRowCount - customerClientErrors.length)
+            : filteredValidRows.length;
+        const mergedCanPartialImport =
+          normalized.canPartialImport === true ||
+          (customerClientErrors.length > 0 && mergedValidRowCount > 0);
+
+        // Özet güncelle
+        const mergedSummary = normalized.summary
+          ? {
+              ...normalized.summary,
+              failedRows: mergedErrorsByRow.length,
+              successRows: mergedValidRowCount,
+            }
+          : undefined;
+
         setLastFile(file);
         setPreviewModal({
           file,
@@ -727,11 +785,11 @@ export default function ExcelManager({
             type === 'inventory' && normalized.message
               ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
               : normalized.message,
-          summary: normalized.summary,
-          validRows: normalized.validRows ?? [],
-          errorsByRow: prepared.errorsByRow,
-          validRowCount: normalized.validRowCount ?? (normalized.validRows ?? []).length,
-          canPartialImport: normalized.canPartialImport === true,
+          summary: mergedSummary,
+          validRows: filteredValidRows,
+          errorsByRow: mergedErrorsByRow,
+          validRowCount: mergedValidRowCount,
+          canPartialImport: mergedCanPartialImport,
           unmatchedLookups: normalized.unmatchedLookups,
         });
       } catch (e) {
