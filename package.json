@@ -1,6 +1,6 @@
 {
   "name": "iskele-takip-electron",
-  "version": "2.0.6",
+  "version": "2.0.7",
   "description": "İskeleTakip Desktop - Electron + React + TypeScript",
   "appId": "com.iskeletakip.app",
   "main": "dist-electron/main.js",
