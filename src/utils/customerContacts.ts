@@ -1,5 +1,5 @@
 import { AuthorizedContact, Customer } from '../models';
-import { normalizeNumericText, normalizeText, validateRequired } from './validation';
+import { isMobilePhone, normalizeNumericText, normalizeText, validateRequired } from './validation';
 
 export function getPreferredCustomerContact(customer: Customer): AuthorizedContact | null {
   const contacts = customer.AuthorizedContacts ?? [];
@@ -29,14 +29,16 @@ export function validateAuthorizedContacts(contacts: AuthorizedContact[]): strin
     return `Yetkili ${nameMissingIndex + 1}: Yetkili adı zorunludur.`;
   }
 
-  const normalizedPhones = contacts
-    .map((contact) => normalizeNumericText(contact.Phone ?? ''))
-    .filter((phone) => Boolean(phone));
-  const hasDuplicatePhone = normalizedPhones.some(
-    (phone, index) => normalizedPhones.indexOf(phone) !== index
+  // Yalnızca cep telefonları unique kısıtına tabidir; sabit hatlar birden fazla yetkilide kullanılabilir.
+  const mobilePhones = contacts
+    .map((contact) => contact.Phone ?? '')
+    .filter((phone) => Boolean(phone) && isMobilePhone(phone))
+    .map((phone) => normalizeNumericText(phone));
+  const hasDuplicateMobile = mobilePhones.some(
+    (phone, index) => mobilePhones.indexOf(phone) !== index
   );
-  if (hasDuplicatePhone) {
-    return 'Aynı müşteri içinde yetkili telefon numaraları tekrar edemez.';
+  if (hasDuplicateMobile) {
+    return 'Aynı müşteri içinde yetkili cep telefonu numaraları tekrar edemez.';
   }
 
   const primaryCount = contacts.filter((contact) => contact.IsPrimary).length;

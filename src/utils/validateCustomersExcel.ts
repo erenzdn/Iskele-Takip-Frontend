@@ -16,7 +16,7 @@
 
 import * as XLSX from 'xlsx';
 import type { ExcelImportRowErrors } from '../components/ExcelManager';
-import { validateEmail, validatePhone, validateTaxNumber, normalizeNumericText } from './validation';
+import { validateEmail, validatePhone, validateTaxNumber, normalizeNumericText, isMobilePhone } from './validation';
 import { getValidationMessage } from './validationMessages';
 
 // ─── Sabitler ──────────────────────────────────────────────────────────────────
@@ -118,8 +118,10 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
             existing.push(i + 2);
             taxIdRowMap.set(taxId, existing);
           }
-          const phone = normalizeNumericText(cellStr(row['Telefon'] ?? ''));
-          if (phone) {
+          const rawPhone = cellStr(row['Telefon'] ?? '');
+          // Yalnızca cep telefonları unique kısıtına tabidir; sabit hatlar atlanır.
+          if (rawPhone && isMobilePhone(rawPhone)) {
+            const phone = normalizeNumericText(rawPhone);
             const existing = phoneRowMap.get(phone) ?? [];
             existing.push(i + 2);
             phoneRowMap.set(phone, existing);
@@ -193,7 +195,7 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
             if (lenIssue) issues.push(lenIssue);
           }
 
-          // Telefon — opsiyonel ama format + DB uzunluk + duplicate
+          // Telefon — opsiyonel ama format + DB uzunluk + duplicate (yalnızca cep telefonları)
           if (!isEmpty(phone)) {
             const lenIssue = checkMaxLength(phone, 'Telefon', 'Telefon', DB_LIMITS.phoneNumber);
             if (lenIssue) {
@@ -202,14 +204,15 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
               const phoneResult = validatePhone(phone, 'Telefon');
               if (!phoneResult.valid) {
                 issues.push(buildIssue('Telefon', phoneResult.message!, 'VALIDATION', phone));
-              } else {
+              } else if (isMobilePhone(phone)) {
+                // Sabit hatlar birden fazla şirket tarafından kullanılabilir; unique kontrolü uygulanmaz.
                 const normalizedPhone = normalizeNumericText(phone);
                 if (duplicatePhones.has(normalizedPhone)) {
                   const otherRows = (phoneRowMap.get(normalizedPhone) ?? []).filter((r) => r !== excelRow);
                   issues.push(
                     buildIssue(
                       'Telefon',
-                      `Bu telefon numarası tabloda birden fazla satırda kullanılmış (${otherRows.join(', ')}. satır ile aynı).`,
+                      `Bu cep telefonu numarası tabloda birden fazla satırda kullanılmış (${otherRows.join(', ')}. satır ile aynı).`,
                       'BUSINESS',
                       phone
                     )

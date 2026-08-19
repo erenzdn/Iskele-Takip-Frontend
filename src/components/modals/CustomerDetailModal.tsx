@@ -629,8 +629,8 @@ export default function CustomerDetailModal({
                     setFormError(null);
                   }}
                   disabled={isReadOnly}
-                  placeholder="05XX XXX XX XX"
-                  maxLength={11}
+                  placeholder="05XX XXX XX XX veya 0212 XXX XX XX"
+                  maxLength={15}
                   className="input w-full"
                 />
                 {topLevelErrorFor('PhoneNumber', 'phoneNumber') && <p className="mt-1 text-xs text-red-400">{topLevelErrorFor('PhoneNumber', 'phoneNumber')}</p>}

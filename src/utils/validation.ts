@@ -102,6 +102,21 @@ export function validateEmail(value: string, fieldLabel: string, required = fals
   return { valid: true };
 }
 
+/**
+ * Türkiye cep telefonu tespiti.
+ * Ham değeri (rakamlar öncesi normalize edilmemiş) kabul eder.
+ * 05xxxxxxxxx, 5xxxxxxxxx, +905xxxxxxxxx, 00905xxxxxxxxx → cep telefonu
+ * Sabit hatlar (212…, 312…, 0212… vb.) → false döner.
+ */
+export function isMobilePhone(value: string): boolean {
+  const trimmed = value.trim();
+  // +90 veya 0090 ile başlıyorsa ülke kodunu soy
+  const withoutCountryCode = trimmed.replace(/^(\+90|0090)/, '0');
+  const digits = normalizeNumericText(withoutCountryCode);
+  // 05XXXXXXXXX (11 hane) veya 5XXXXXXXXX (10 hane)
+  return /^05\d{9}$/.test(digits) || /^5\d{9}$/.test(digits);
+}
+
 export function validatePhone(value: string, fieldLabel: string, required = false): ValidationResult {
   const digits = normalizeNumericText(value);
   if (!digits) {
