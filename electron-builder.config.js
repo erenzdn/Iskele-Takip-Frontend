@@ -14,6 +14,7 @@ export default {
   ],
   files: ['dist-web/**/*', 'dist-electron/**/*', 'package.json', 'LICENSE.txt'],
   win: {
+    icon: 'assets/icon.ico',
     target: [
       {
         target: 'nsis',

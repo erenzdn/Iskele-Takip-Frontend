@@ -10,7 +10,7 @@ export default function LoginPage() {
   const login = useAuthStore((state) => state.login);
   
   const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('123456');
+  const [password, setPassword] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isBusy, setIsBusy] = useState(false);
 

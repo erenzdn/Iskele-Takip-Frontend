@@ -8,6 +8,7 @@ import {
   ContractQuoteType,
   Customer,
   Inventory,
+  MaterialCategory,
   ContractLineItem,
   InventoryContractLineItem,
   ConstructionSite,
@@ -47,6 +48,7 @@ import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
 import ContractAddLineItemModal from './ContractAddLineItemModal';
 import SettleNonReturnModal from './SettleNonReturnModal';
+import InventoryDetailModal from './InventoryDetailModal';
 import {
   applyCreatedSiteId,
   buildSiteRequestFields,
@@ -108,6 +110,8 @@ export default function ContractDetailModal({
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
+  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
+  const [selectedInventoryForDetail, setSelectedInventoryForDetail] = useState<Inventory | null>(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [selectedAuthorizedContactId, setSelectedAuthorizedContactId] = useState<number | ''>('');
   const [authorizedContacts, setAuthorizedContacts] = useState<NonNullable<Customer['AuthorizedContacts']>>([]);
@@ -636,14 +640,16 @@ export default function ContractDetailModal({
 
   const loadData = async () => {
     try {
-      const [custData, invData, whData] = await Promise.all([
+      const [custData, invData, whData, catData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(),
         warehouseService.getActiveAsync(),
+        inventoryService.getAllCategoriesAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
       setWarehouses(whData);
+      setInventoryCategories(catData);
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -2622,9 +2628,18 @@ export default function ContractDetailModal({
                             </td>
                             <td className="px-3 py-2">
                               <div className="font-medium">
-                                {item.kind === 'inventory'
-                                  ? formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)
-                                  : item.Description}
+                                {item.kind === 'inventory' ? (
+                                  <button
+                                    type="button"
+                                    className="text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                                    title="Ürün detayını görüntüle"
+                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                  >
+                                    {formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
+                                  </button>
+                                ) : (
+                                  item.Description
+                                )}
                               </div>
                               {isRentalContract && item.kind === 'inventory' && item.EffectiveStartDate && (
                                 <div className="text-[11px] text-text-secondary mt-0.5">
@@ -3149,6 +3164,14 @@ export default function ContractDetailModal({
           onAdded={async () => {
             await refreshContract();
           }}
+        />
+      )}
+      {selectedInventoryForDetail && (
+        <InventoryDetailModal
+          item={selectedInventoryForDetail}
+          categories={inventoryCategories}
+          isNew={false}
+          onClose={() => setSelectedInventoryForDetail(null)}
         />
       )}
       </div>
