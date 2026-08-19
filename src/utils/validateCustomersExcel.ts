@@ -104,8 +104,10 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
           raw: false,
         });
 
-        // Duplicate vergi no tespiti: vergi no → ilk göründüğü excel satır numaraları
+        // Duplicate vergi no tespiti: vergi no → excel satır numaraları
         const taxIdRowMap = new Map<string, number[]>();
+        // Duplicate telefon tespiti: normalize telefon → excel satır numaraları
+        const phoneRowMap = new Map<string, number[]>();
         for (let i = 0; i < customersRows.length; i++) {
           const row = customersRows[i];
           const taxId = normalizeNumericText(
@@ -116,12 +118,24 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
             existing.push(i + 2);
             taxIdRowMap.set(taxId, existing);
           }
+          const phone = normalizeNumericText(cellStr(row['Telefon'] ?? ''));
+          if (phone) {
+            const existing = phoneRowMap.get(phone) ?? [];
+            existing.push(i + 2);
+            phoneRowMap.set(phone, existing);
+          }
         }
         // Birden fazla satırda geçen vergi numaraları
         const duplicateTaxIds = new Set<string>(
           [...taxIdRowMap.entries()]
             .filter(([, rows]) => rows.length > 1)
             .map(([taxId]) => taxId)
+        );
+        // Birden fazla satırda geçen telefon numaraları
+        const duplicatePhones = new Set<string>(
+          [...phoneRowMap.entries()]
+            .filter(([, rows]) => rows.length > 1)
+            .map(([phone]) => phone)
         );
 
         for (let i = 0; i < customersRows.length; i++) {
@@ -179,9 +193,8 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
             if (lenIssue) issues.push(lenIssue);
           }
 
-          // Telefon — opsiyonel ama format + DB uzunluk
+          // Telefon — opsiyonel ama format + DB uzunluk + duplicate
           if (!isEmpty(phone)) {
-            // DB VARCHAR(20) kontrolü
             const lenIssue = checkMaxLength(phone, 'Telefon', 'Telefon', DB_LIMITS.phoneNumber);
             if (lenIssue) {
               issues.push(lenIssue);
@@ -189,6 +202,19 @@ export function validateCustomersExcelFile(file: File): Promise<CustomerExcelVal
               const phoneResult = validatePhone(phone, 'Telefon');
               if (!phoneResult.valid) {
                 issues.push(buildIssue('Telefon', phoneResult.message!, 'VALIDATION', phone));
+              } else {
+                const normalizedPhone = normalizeNumericText(phone);
+                if (duplicatePhones.has(normalizedPhone)) {
+                  const otherRows = (phoneRowMap.get(normalizedPhone) ?? []).filter((r) => r !== excelRow);
+                  issues.push(
+                    buildIssue(
+                      'Telefon',
+                      `Bu telefon numarası tabloda birden fazla satırda kullanılmış (${otherRows.join(', ')}. satır ile aynı).`,
+                      'BUSINESS',
+                      phone
+                    )
+                  );
+                }
               }
             }
           }

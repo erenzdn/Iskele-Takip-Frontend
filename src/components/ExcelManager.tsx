@@ -256,11 +256,19 @@ function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null
           ? obj.ValidRowCount
           : undefined,
     message:
-      typeof obj.message === 'string'
+      typeof obj.message === 'string' && obj.message
         ? obj.message
-        : typeof obj.Message === 'string'
+        : typeof obj.Message === 'string' && obj.Message
           ? obj.Message
-          : undefined,
+          : typeof obj.error === 'string' && obj.error
+            ? obj.error
+            : typeof obj.Error === 'string' && obj.Error
+              ? obj.Error
+              : typeof obj.title === 'string' && obj.title
+                ? obj.title
+                : typeof obj.detail === 'string' && obj.detail
+                  ? obj.detail
+                  : undefined,
     summary: normalizeExcelImportSummary(obj.summary ?? obj.Summary),
     errors,
     errorsByRow,
@@ -864,6 +872,7 @@ export default function ExcelManager({
 
         // Kısmi Başarı (207) veya Hata (400+)
         if (data && typeof data === 'object') {
+          console.warn('[ExcelManager] Import non-success response:', JSON.stringify(data));
           const normalized = normalizeExcelImportResponse(data);
           const prepared = prepareImportErrors(
             type,
@@ -1385,9 +1394,13 @@ export default function ExcelManager({
               {errorModal.errorsByRow.length > 0 ? (
                 <ErrorRowList errorsByRow={errorModal.errorsByRow} />
               ) : errorModal.errors.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-text-secondary">
-                  <CheckCircleIcon size={48} weight="thin" />
-                  <p className="mt-2 text-sm">Satır bazlı detaylı hata bulunmadı.</p>
+                <div className="flex flex-col items-center justify-center py-10 text-text-secondary gap-3">
+                  <WarningCircleIcon size={48} weight="thin" className="text-error/60" />
+                  <p className="mt-1 text-sm font-medium text-text-primary text-center max-w-md">
+                    {errorModal.message && errorModal.message !== 'İçe aktarma sırasında sorunlar oluştu.'
+                      ? errorModal.message
+                      : 'Sunucudan satır bazlı hata detayı gelmedi. Lütfen Excel dosyanızı kontrol edin veya sistem yöneticisiyle iletişime geçin.'}
+                  </p>
                 </div>
               ) : (
                 <table className="w-full text-xs border-collapse">
