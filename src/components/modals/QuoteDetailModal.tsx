@@ -11,6 +11,7 @@ import {
   QuotePackage,
   Customer,
   Inventory,
+  MaterialCategory,
   QuoteLineItem,
   ConstructionSite,
   QuoteStatus,
@@ -41,6 +42,7 @@ import SiteSelectField from '../SiteSelectField';
 import CustomerDetailModal from './CustomerDetailModal';
 import SiteCreateModal from './SiteCreateModal';
 import ContractDetailModal from './ContractDetailModal';
+import InventoryDetailModal from './InventoryDetailModal';
 import {
   applyCreatedSiteId,
   buildSiteRequestFields,
@@ -120,6 +122,9 @@ export default function QuoteDetailModal({
   const [isCloning, setIsCloning] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
+  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
+  const [selectedInventoryForDetail, setSelectedInventoryForDetail] = useState<Inventory | null>(null);
+  const [showInventoryCreateModal, setShowInventoryCreateModal] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [selectedAuthorizedContactId, setSelectedAuthorizedContactId] = useState<number | ''>('');
   const [authorizedContacts, setAuthorizedContacts] = useState<NonNullable<Customer['AuthorizedContacts']>>([]);
@@ -898,14 +903,16 @@ export default function QuoteDetailModal({
 
   const loadData = async () => {
     try {
-      const [custData, invData, whData] = await Promise.all([
+      const [custData, invData, whData, catData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(undefined, { forceRefresh: true }),
         warehouseService.getActiveAsync(),
+        inventoryService.getAllCategoriesAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
       setWarehouses(whData);
+      setInventoryCategories(catData);
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -1722,6 +1729,8 @@ export default function QuoteDetailModal({
 
   useEffect(() => {
     if (!showConvertModal) return;
+    // Stok düşülmeyecekse depo stok sorgusu gerekmez.
+    if (decrementStock === false) return;
     const invItems = quoteItems.filter((i) => i.kind === 'inventory');
     if (invItems.length === 0) return;
 
@@ -1754,7 +1763,7 @@ export default function QuoteDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [showConvertModal, quoteItems, warehouses]);
+  }, [showConvertModal, quoteItems, warehouses, decrementStock]);
 
   const handleReduceConvertQuantity = (available: number) => {
     const itemName = extractFirstQuotedName(convertModalError ?? '');
@@ -1866,7 +1875,10 @@ export default function QuoteDetailModal({
       return;
     }
 
-    if (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) {
+    // Stok düşülmeyecekse depo seçimi zorunlu değil; backend'e depo bilgisi gönderilmez.
+    const needsWarehouse = effectiveDecrementStock;
+
+    if (needsWarehouse && convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) {
       if (warehouses.length === 0) {
         setConvertModalError('Sözleşmeye dönüştürmek için önce en az bir depo tanımlanmalı.');
       } else {
@@ -1890,35 +1902,37 @@ export default function QuoteDetailModal({
       }
     }
 
-    let options: { warehouseAssignments: WarehouseAssignment[] } | { defaultWarehouseId: number };
+    let options: Partial<{ warehouseAssignments: WarehouseAssignment[]; defaultWarehouseId: number }> = {};
 
-    if (convertMode === 'defaultWarehouse' && defaultWarehouseIdForConvert) {
-      options = { defaultWarehouseId: Number(defaultWarehouseIdForConvert) };
-    } else {
-      const assignments: WarehouseAssignment[] = [];
-      for (const item of quoteItems) {
-        if (item.kind !== 'inventory') continue;
-        const itemAssignments = perItemAssignments[item.ItemId] ?? [];
-        const total = itemAssignments.reduce((s, a) => s + a.Quantity, 0);
-        if (total !== item.Quantity) {
+    if (needsWarehouse) {
+      if (convertMode === 'defaultWarehouse' && defaultWarehouseIdForConvert) {
+        options = { defaultWarehouseId: Number(defaultWarehouseIdForConvert) };
+      } else {
+        const assignments: WarehouseAssignment[] = [];
+        for (const item of quoteItems) {
+          if (item.kind !== 'inventory') continue;
+          const itemAssignments = perItemAssignments[item.ItemId] ?? [];
+          const total = itemAssignments.reduce((s, a) => s + a.Quantity, 0);
+          if (total !== item.Quantity) {
+            setConvertModalError(
+              `"${formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}" için atanan toplam miktar (${total}) teklif miktarı (${item.Quantity}) ile eşleşmiyor.`
+            );
+            return;
+          }
+          for (const a of itemAssignments) {
+            if (a.Quantity > 0) {
+              assignments.push({ ItemId: item.ItemId, WarehouseId: a.WarehouseId, Quantity: a.Quantity });
+            }
+          }
+        }
+        if (assignments.length === 0) {
           setConvertModalError(
-            `"${formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}" için atanan toplam miktar (${total}) teklif miktarı (${item.Quantity}) ile eşleşmiyor.`
+            'Ürün bazlı modda her envanter kalemi için depo ve miktar ataması yapın; toplamlar teklif miktarlarıyla eşleşmeli.'
           );
           return;
         }
-        for (const a of itemAssignments) {
-          if (a.Quantity > 0) {
-            assignments.push({ ItemId: item.ItemId, WarehouseId: a.WarehouseId, Quantity: a.Quantity });
-          }
-        }
+        options = { warehouseAssignments: assignments };
       }
-      if (assignments.length === 0) {
-        setConvertModalError(
-          'Ürün bazlı modda her envanter kalemi için depo ve miktar ataması yapın; toplamlar teklif miktarlarıyla eşleşmeli.'
-        );
-        return;
-      }
-      options = { warehouseAssignments: assignments };
     }
 
     try {
@@ -2941,18 +2955,25 @@ export default function QuoteDetailModal({
                           <td className="px-3 py-1 font-medium">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
-                                language === 'EN' ? (
-                                  itemEnName ? (
-                                    item.ItemNameOverride ?? itemEnName
+                                <button
+                                  type="button"
+                                  className="text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                                  title="Ürün detayını görüntüle"
+                                  onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                >
+                                  {language === 'EN' ? (
+                                    itemEnName ? (
+                                      item.ItemNameOverride ?? itemEnName
+                                    ) : (
+                                      <span>
+                                        {item.ItemNameOverride ?? canonicalItemName}{' '}
+                                        <span className="text-yellow-500 text-xs">(Bu ürünün İngilizce adı yoktur)</span>
+                                      </span>
+                                    )
                                   ) : (
-                                    <span>
-                                      {item.ItemNameOverride ?? canonicalItemName}{' '}
-                                      <span className="text-yellow-500 text-xs">(Bu ürünün İngilizce adı yoktur)</span>
-                                    </span>
-                                  )
-                                ) : (
-                                  item.ItemNameOverride ?? canonicalItemName
-                                )
+                                    item.ItemNameOverride ?? canonicalItemName
+                                  )}
+                                </button>
                               ) : (
                                 <div className="flex items-center gap-2 min-w-[280px]">
                                   <div className="flex-1 relative">
@@ -3000,6 +3021,14 @@ export default function QuoteDetailModal({
                                     title="Varsayılana dön"
                                   >
                                     Reset
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                    className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
+                                    title="Ürün detayını görüntüle"
+                                  >
+                                    Detay
                                   </button>
                                 </div>
                               )
@@ -3563,7 +3592,9 @@ export default function QuoteDetailModal({
             <h3 className="text-xl font-bold mb-4">Sözleşmeye Dönüştür – Stok / Depo</h3>
             <p className="text-sm text-text-secondary mb-4">
               {quoteType === 'SALE'
-                ? 'Satış teklifinde envanter çıkışı seçtiğiniz depodan düşülür. Tüm kalemler için tek depo seçin veya ürün bazlı depo/miktar dağıtımı yapın.'
+                ? decrementStock === false
+                  ? 'Stok düşülmeyecek. Envanter miktarları bu dönüşümden etkilenmez.'
+                  : 'Satış teklifinde envanter çıkışı seçtiğiniz depodan düşülür. Tüm kalemler için tek depo seçin veya ürün bazlı depo/miktar dağıtımı yapın.'
                 : 'Kiralama sözleşmesine dönüşümde stok depodan rezerve edilir. Tek depo (varsayılan) veya ürün bazlı atama zorunludur; global envanter seçeneği kullanılmaz.'}
             </p>
 
@@ -3652,85 +3683,88 @@ export default function QuoteDetailModal({
               </p>
             )}
 
-            <div className="space-y-3 mb-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="convertMode"
-                  checked={convertMode === 'defaultWarehouse'}
-                  onChange={() => {
-                    setConvertModalError(null);
-                    setConvertMode('defaultWarehouse');
-                  }}
-                  className="rounded-full"
-                  disabled={isBusy}
-                />
-                <span className="text-sm">Tüm kalemler tek depodan çıksın (varsayılan depo)</span>
-              </label>
-              {convertMode === 'defaultWarehouse' && (
-                <div className="ml-6 space-y-2">
-                  <select
-                    value={defaultWarehouseIdForConvert}
-                    onChange={(e) => {
-                      setDefaultWarehouseIdForConvert(Number(e.target.value) || '');
-                      setConvertModalError(null);
-                    }}
-                    className="input w-full max-w-xs"
-                    disabled={isBusy}
-                  >
-                    <option value="">Depo seçin</option>
-                    {warehouses.map((wh) => (
-                      <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                        {wh.WarehouseName}
-                      </option>
-                    ))}
-                  </select>
-                  {defaultWarehouseIdForConvert &&
-                    quoteItems
-                      .filter((i) => i.kind === 'inventory')
-                      .map((item) => {
-                        const stock = getConvertStockForWarehouse(
-                          item.ItemId,
-                          Number(defaultWarehouseIdForConvert)
-                        );
-                        if (stock == null) return null;
-                        const label = formatInventoryLineBilingualLabel(
-                          item.ItemName,
-                          item.ItemNameEn,
-                          item.Item
-                        );
-                        const insufficient = item.Quantity > stock;
-                        return (
-                          <p
-                            key={item.ItemId}
-                            className={`text-xs ${insufficient ? 'text-amber-400' : 'text-text-secondary'}`}
-                          >
-                            {label}: seçili depoda {stock} adet
-                            {insufficient ? ` — talep ${item.Quantity} adet (yetersiz)` : ''}
-                          </p>
-                        );
-                      })}
-                </div>
-              )}
-              {quoteItems.some((i) => i.kind === 'inventory') && (
+            {/* Stok düşülmeyecekse depo seçimi gerekmez */}
+            {decrementStock !== false && (
+              <div className="space-y-3 mb-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="convertMode"
-                    checked={convertMode === 'perItem'}
+                    checked={convertMode === 'defaultWarehouse'}
                     onChange={() => {
                       setConvertModalError(null);
-                      setConvertMode('perItem');
+                      setConvertMode('defaultWarehouse');
                     }}
                     className="rounded-full"
                     disabled={isBusy}
                   />
-                  <span className="text-sm">Ürün bazlı depo ataması yap</span>
+                  <span className="text-sm">Tüm kalemler tek depodan çıksın (varsayılan depo)</span>
                 </label>
-              )}
-            </div>
+                {convertMode === 'defaultWarehouse' && (
+                  <div className="ml-6 space-y-2">
+                    <select
+                      value={defaultWarehouseIdForConvert}
+                      onChange={(e) => {
+                        setDefaultWarehouseIdForConvert(Number(e.target.value) || '');
+                        setConvertModalError(null);
+                      }}
+                      className="input w-full max-w-xs"
+                      disabled={isBusy}
+                    >
+                      <option value="">Depo seçin</option>
+                      {warehouses.map((wh) => (
+                        <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                          {wh.WarehouseName}
+                        </option>
+                      ))}
+                    </select>
+                    {defaultWarehouseIdForConvert &&
+                      quoteItems
+                        .filter((i) => i.kind === 'inventory')
+                        .map((item) => {
+                          const stock = getConvertStockForWarehouse(
+                            item.ItemId,
+                            Number(defaultWarehouseIdForConvert)
+                          );
+                          if (stock == null) return null;
+                          const label = formatInventoryLineBilingualLabel(
+                            item.ItemName,
+                            item.ItemNameEn,
+                            item.Item
+                          );
+                          const insufficient = item.Quantity > stock;
+                          return (
+                            <p
+                              key={item.ItemId}
+                              className={`text-xs ${insufficient ? 'text-amber-400' : 'text-text-secondary'}`}
+                            >
+                              {label}: seçili depoda {stock} adet
+                              {insufficient ? ` — talep ${item.Quantity} adet (yetersiz)` : ''}
+                            </p>
+                          );
+                        })}
+                  </div>
+                )}
+                {quoteItems.some((i) => i.kind === 'inventory') && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="convertMode"
+                      checked={convertMode === 'perItem'}
+                      onChange={() => {
+                        setConvertModalError(null);
+                        setConvertMode('perItem');
+                      }}
+                      className="rounded-full"
+                      disabled={isBusy}
+                    />
+                    <span className="text-sm">Ürün bazlı depo ataması yap</span>
+                  </label>
+                )}
+              </div>
+            )}
 
-            {convertMode === 'perItem' && (
+            {decrementStock !== false && convertMode === 'perItem' && (
               <div className="space-y-4 mb-6">
                 {quoteItems.filter((i) => i.kind === 'inventory').map((item) => {
                   const assignments = perItemAssignments[item.ItemId] ?? [];
@@ -3859,8 +3893,9 @@ export default function QuoteDetailModal({
                 disabled={
                   isBusy ||
                   (quoteType === 'SALE' && decrementStock == null) ||
-                  (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) ||
-                  (convertMode === 'perItem' &&
+                  // Depo seçimi yalnızca stok düşümü yapılacaksa zorunlu
+                  (decrementStock !== false && convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) ||
+                  (decrementStock !== false && convertMode === 'perItem' &&
                     quoteItems
                       .filter((q) => q.kind === 'inventory')
                       .some((q) => getAssignmentTotalForItem(q.ItemId) !== q.Quantity)) ||
@@ -3887,6 +3922,7 @@ export default function QuoteDetailModal({
         quotePricing={quoteType === 'SALE' ? 'sale' : 'rental'}
         currency={currency}
         pickedItemIds={pickerPickedItemIds}
+        onAddNewItem={() => setShowInventoryCreateModal(true)}
       />
       <ManualLineItemModal
         open={showManualLineModal}
@@ -4044,6 +4080,30 @@ export default function QuoteDetailModal({
             setIsContractModalOpen(false);
             setConvertedContract(null);
             await refreshQuoteDetail();
+          }}
+        />
+      )}
+      {selectedInventoryForDetail && (
+        <InventoryDetailModal
+          item={selectedInventoryForDetail}
+          categories={inventoryCategories}
+          isNew={false}
+          onClose={() => setSelectedInventoryForDetail(null)}
+        />
+      )}
+      {showInventoryCreateModal && (
+        <InventoryDetailModal
+          item={null}
+          categories={inventoryCategories}
+          isNew={true}
+          onClose={async () => {
+            setShowInventoryCreateModal(false);
+            try {
+              const invData = await inventoryService.getAllAsync(undefined, { forceRefresh: true });
+              setAvailableItems(invData);
+            } catch {
+              // sessizce devam et
+            }
           }}
         />
       )}

@@ -345,7 +345,9 @@ export const quoteService = {
   },
 
   /**
-   * Late binding: gövdede `defaultWarehouseId` veya `warehouseAssignments` zorunlu (boş gövde gönderilmez).
+   * Teklifi sözleşmeye dönüştürür.
+   * decrementStock: false ise depo alanları gönderilmez; backend stok işlemi yapmaz.
+   * decrementStock: true ise defaultWarehouseId veya warehouseAssignments zorunludur.
    */
   async convertToContractAsync(
     id: number,
@@ -354,20 +356,22 @@ export const quoteService = {
     const body: ConvertQuoteRequest = {
       decrementStock: options.decrementStock,
     };
-    if (options.defaultWarehouseId != null) {
-      body.defaultWarehouseId = options.defaultWarehouseId;
-    }
-    if (options.warehouseAssignments != null && options.warehouseAssignments.length > 0) {
-      body.warehouseAssignments = options.warehouseAssignments;
+    if (options.decrementStock) {
+      if (options.defaultWarehouseId != null) {
+        body.defaultWarehouseId = options.defaultWarehouseId;
+      }
+      if (options.warehouseAssignments != null && options.warehouseAssignments.length > 0) {
+        body.warehouseAssignments = options.warehouseAssignments;
+      }
+      if (body.defaultWarehouseId == null && (body.warehouseAssignments == null || body.warehouseAssignments.length === 0)) {
+        throw new Error('Stok düşümü için defaultWarehouseId veya warehouseAssignments gerekli.');
+      }
     }
     if (options.StartDate != null && String(options.StartDate).trim()) {
       body.StartDate = options.StartDate;
     }
     if (options.PlannedEndDate != null && String(options.PlannedEndDate).trim()) {
       body.PlannedEndDate = options.PlannedEndDate;
-    }
-    if (body.defaultWarehouseId == null && (body.warehouseAssignments == null || body.warehouseAssignments.length === 0)) {
-      throw new Error('Dönüşüm için defaultWarehouseId veya warehouseAssignments gerekli.');
     }
     return apiClient.post<ConvertQuoteResponse>(`/quotes/${id}/convert`, body);
   },
