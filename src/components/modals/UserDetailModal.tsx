@@ -21,6 +21,7 @@ export default function UserDetailModal({
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [isActive, setIsActive] = useState(true);
@@ -147,6 +148,11 @@ export default function UserDetailModal({
       return;
     }
 
+    if (password.trim() && password !== confirmPassword) {
+      toast.warning('Şifreler eşleşmiyor');
+      return;
+    }
+
     try {
       setIsBusy(true);
       if (isNew) {
@@ -167,6 +173,8 @@ export default function UserDetailModal({
           Permissions: selectedPermissions,
         });
       }
+      setPassword('');
+      setConfirmPassword('');
       onClose();
     } catch (error) {
       console.error('Save user error:', error);
@@ -271,6 +279,32 @@ export default function UserDetailModal({
                 placeholder={isNew ? 'Şifre girin' : 'Yeni şifre (opsiyonel)'}
                 className="input w-full"
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-2">
+                Şifre Onay {isNew ? '*' : ''}
+              </label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                disabled={isReadOnly}
+                placeholder={isNew ? 'Şifreyi tekrar girin' : 'Yeni şifreyi tekrar girin'}
+                className={`input w-full ${
+                  confirmPassword && password !== confirmPassword
+                    ? 'border-red-500 focus:border-red-500'
+                    : confirmPassword && password === confirmPassword
+                    ? 'border-green-500 focus:border-green-500'
+                    : ''
+                }`}
+              />
+              {confirmPassword && password !== confirmPassword && (
+                <p className="text-xs text-red-400 mt-1">Şifreler eşleşmiyor</p>
+              )}
+              {confirmPassword && password === confirmPassword && (
+                <p className="text-xs text-green-400 mt-1">Şifreler eşleşiyor</p>
+              )}
             </div>
 
             <div>
