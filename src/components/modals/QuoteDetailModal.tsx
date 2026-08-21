@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
+import { ClipboardIcon, CopySimpleIcon, DotsSixVerticalIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -24,6 +24,7 @@ import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
+import { discountPercentFromNet, lineDiscountAmount, lineNetFromGross } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -202,6 +203,11 @@ export default function QuoteDetailModal({
    * key: ItemId
    */
   const [priceOverrideInputs, setPriceOverrideInputs] = useState<Record<number, string>>({});
+  /**
+   * İskontolu satır tutarı (yeşil Toplam) taslak girişi.
+   * key: inventory → ItemId string; manual → `man-${ClientId}`
+   */
+  const [lineNetInputs, setLineNetInputs] = useState<Record<string, string>>({});
 
   // Teklif şablonu yönetimi
   const [templates, setTemplates] = useState<QuoteTemplate[]>([]);
@@ -226,8 +232,11 @@ export default function QuoteDetailModal({
   const [isContractModalOpen, setIsContractModalOpen] = useState(false);
   const [convertedContract, setConvertedContract] = useState<Contract | null>(null);
   const [isOpeningConvertedContract, setIsOpeningConvertedContract] = useState(false);
-  const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 6 } | null>(null);
+  const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 5 | 6 } | null>(null);
   const quoteGridRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const [dragItemIndex, setDragItemIndex] = useState<number | null>(null);
+  const [dragOverItemIndex, setDragOverItemIndex] = useState<number | null>(null);
+  const dragItemIndexRef = useRef<number | null>(null);
   const activeQuote = fullQuote ?? quote;
   const converted = Boolean(activeQuote && isQuoteConverted(activeQuote));
 
@@ -984,12 +993,20 @@ export default function QuoteDetailModal({
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getItemIskonto = (itemId: number) => itemIskonto[itemId] ?? iskonto;
 
+  const getRowDiscountPercent = (item: QuoteLineItem) =>
+    item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto;
+
+  /** İskonto sonrası satır tutarı (yeşil Toplam). */
+  const getLineNetTotal = (item: QuoteLineItem) =>
+    lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
+
+  const lineNetInputKey = (item: QuoteLineItem) =>
+    item.kind === 'inventory' ? String(item.ItemId) : `man-${item.ClientId}`;
+
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = totalPrice;
   const discountAmount = quoteItems.reduce((sum, item) => {
-    const lineTotal = getLineTotal(item);
-    const pct = item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto;
-    return sum + lineTotal * (pct / 100);
+    return sum + lineDiscountAmount(getLineTotal(item), getRowDiscountPercent(item));
   }, 0);
   const discountedTotal = subtotal - discountAmount;
   const vatAmount = discountedTotal * (vatRate / 100);
@@ -1069,9 +1086,9 @@ export default function QuoteDetailModal({
   const handleQuoteGridKeyDown = (
     e: React.KeyboardEvent<HTMLElement>,
     row: number,
-    col: 2 | 3 | 4 | 6
+    col: 2 | 3 | 4 | 5 | 6
   ) => {
-    const colOrder: Array<2 | 3 | 4 | 6> = [2, 3, 4, 6];
+    const colOrder: Array<2 | 3 | 4 | 5 | 6> = [2, 3, 4, 5, 6];
     const colIndex = colOrder.indexOf(col);
     if (colIndex < 0 || quoteItems.length === 0) return;
 
@@ -1139,16 +1156,70 @@ export default function QuoteDetailModal({
     setQuoteItems(quoteItems.filter((i) => !(i.kind === 'manual' && i.ClientId === clientId)));
   };
 
+  const handleQuoteItemDragStart = (e: React.DragEvent, index: number) => {
+    dragItemIndexRef.current = index;
+    setDragItemIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  };
+
+  const handleQuoteItemDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverItemIndex !== index) setDragOverItemIndex(index);
+  };
+
+  const handleQuoteItemDrop = (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault();
+    const fromIndex = dragItemIndexRef.current;
+    setDragItemIndex(null);
+    setDragOverItemIndex(null);
+    dragItemIndexRef.current = null;
+    if (fromIndex == null || fromIndex === toIndex) return;
+    setQuoteItems((prev) => {
+      if (fromIndex < 0 || fromIndex >= prev.length || toIndex < 0 || toIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const handleQuoteItemDragEnd = () => {
+    setDragItemIndex(null);
+    setDragOverItemIndex(null);
+    dragItemIndexRef.current = null;
+  };
+
   const updateQuoteItemQuantity = (itemId: number, newQty: number) => {
     const qty = Math.max(0, Math.floor(newQty));
     setQuoteItems((prev) =>
       prev.map((i) => (i.kind === 'inventory' && i.ItemId === itemId ? { ...i, Quantity: qty } : i))
     );
+    setLineNetInputs((prev) => {
+      const key = String(itemId);
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const updateQuoteItemIskonto = (itemId: number, value: number) => {
     const pct = Math.max(0, Math.min(100, value));
     setItemIskonto((prev) => ({ ...prev, [itemId]: pct }));
+  };
+
+  /** Yeşil Toplam (net) değişince iskonto % ters hesaplanır; mevcut % akışı bozulmaz. */
+  const applyLineNetTarget = (item: QuoteLineItem, targetNet: number) => {
+    const gross = getLineTotal(item);
+    const result = discountPercentFromNet(gross, targetNet);
+    if (item.kind === 'inventory') {
+      updateQuoteItemIskonto(item.ItemId, result.discountPercent);
+    } else {
+      setIskonto(result.discountPercent);
+    }
+    return result;
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
@@ -1161,6 +1232,7 @@ export default function QuoteDetailModal({
       });
       return next;
     });
+    setLineNetInputs({});
   };
 
   const currentUser = useAuthStore((s) => s.user);
@@ -2836,6 +2908,9 @@ export default function QuoteDetailModal({
               <table className="w-full text-sm border-collapse text-text-primary">
                 <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
                   <tr>
+                    {!isReadOnly && (
+                      <th className="w-8 px-1 py-1.5" aria-label="Sırala" />
+                    )}
                     <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       Ürün Kodu
                     </th>
@@ -2851,7 +2926,10 @@ export default function QuoteDetailModal({
                     <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-20 text-xs">
                       İskonto (%)
                     </th>
-                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
+                    <th
+                      className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs"
+                      title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
+                    >
                       Toplam
                     </th>
                     <th className="text-center px-2 py-1.5 font-semibold text-text-secondary w-16 text-xs">
@@ -2863,7 +2941,7 @@ export default function QuoteDetailModal({
                   {quoteItems.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={isReadOnly ? 7 : 8}
                         className="px-3 py-6 text-center text-sm text-text-secondary"
                       >
                         Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
@@ -2884,17 +2962,40 @@ export default function QuoteDetailModal({
                       const itemEnName = invItem?.ItemNameEn;
                       const canonicalItemName =
                         invItem?.ItemName ?? (item.kind === 'inventory' ? item.ItemName : '');
-                      const lineTotal = getLineTotal(item);
+                      const lineNet = getLineNetTotal(item);
+                      const netKey = lineNetInputKey(item);
                       const justAdded =
                         item.kind === 'inventory' ? lastAddedItemIds.includes(item.ItemId) : false;
                       const isRowActive = activeQuoteGridCell?.row === rowIndex;
+                      const isDragging = dragItemIndex === rowIndex;
+                      const isDragOver = dragOverItemIndex === rowIndex && dragItemIndex !== rowIndex;
                       return (
                         <tr
                           key={item.kind === 'inventory' ? `inv-${item.ItemId}` : `man-${item.ClientId}`}
+                          onDragOver={!isReadOnly ? (e) => handleQuoteItemDragOver(e, rowIndex) : undefined}
+                          onDrop={!isReadOnly ? (e) => handleQuoteItemDrop(e, rowIndex) : undefined}
                           className={`border-b border-background-border bg-background-surface hover:bg-background-hover transition-colors duration-300 ${
                             justAdded ? 'bg-green-500/20' : ''
-                          } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
+                          } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''} ${
+                            isDragging ? 'opacity-40' : ''
+                          } ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
                         >
+                          {!isReadOnly && (
+                            <td className="px-1 py-1 align-middle">
+                              <span
+                                draggable
+                                onDragStart={(e) => handleQuoteItemDragStart(e, rowIndex)}
+                                onDragEnd={handleQuoteItemDragEnd}
+                                className="cursor-grab active:cursor-grabbing touch-none inline-flex items-center justify-center p-1 rounded text-text-secondary/70 hover:text-text-primary hover:bg-background-hover select-none"
+                                title="Sürükleyerek sırala"
+                                aria-label="Sürükleyerek sırala"
+                                role="button"
+                                tabIndex={0}
+                              >
+                                <DotsSixVerticalIcon size={16} weight="bold" aria-hidden />
+                              </span>
+                            </td>
+                          )}
                           <td className="px-3 py-1 text-text-secondary">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
@@ -3138,6 +3239,13 @@ export default function QuoteDetailModal({
                                         : x
                                     )
                                   );
+                                  setLineNetInputs((prev) => {
+                                    const key = String(item.ItemId);
+                                    if (!(key in prev)) return prev;
+                                    const next = { ...prev };
+                                    delete next[key];
+                                    return next;
+                                  });
                                 }}
                                 onBlur={() => {
                                   const raw = priceOverrideInputs[item.ItemId] ?? '';
@@ -3193,6 +3301,13 @@ export default function QuoteDetailModal({
                                         : x
                                     )
                                   );
+                                  setLineNetInputs((prev) => {
+                                    const key = String(item.ItemId);
+                                    if (!(key in prev)) return prev;
+                                    const next = { ...prev };
+                                    delete next[key];
+                                    return next;
+                                  });
                                 }}
                                 onBlur={() => {
                                   const raw = priceOverrideInputs[item.ItemId] ?? '';
@@ -3244,6 +3359,12 @@ export default function QuoteDetailModal({
                                   } else {
                                     setIskonto(Number.isFinite(v) ? v : 0);
                                   }
+                                  setLineNetInputs((prev) => {
+                                    if (!(netKey in prev)) return prev;
+                                    const next = { ...prev };
+                                    delete next[netKey];
+                                    return next;
+                                  });
                                 }}
                                 className="input w-24 text-right py-1 text-sm"
                                 aria-label="İskonto %"
@@ -3251,7 +3372,65 @@ export default function QuoteDetailModal({
                             )}
                           </td>
                           <td className="px-3 py-1 text-right font-medium text-green-500">
-                            {formatCurrency(lineTotal)}
+                            {isReadOnly ? (
+                              formatCurrency(lineNet)
+                            ) : (
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={lineNetInputs[netKey] ?? formatPriceInput(lineNet)}
+                                ref={(el) => {
+                                  const key = `${rowIndex}-5`;
+                                  if (el) quoteGridRefs.current.set(key, el);
+                                  else quoteGridRefs.current.delete(key);
+                                }}
+                                onFocus={(e) => {
+                                  setActiveQuoteGridCell({ row: rowIndex, col: 5 });
+                                  e.currentTarget.select();
+                                }}
+                                onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 5)}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  const { masked } = normalizeMaskedDecimalTR(raw, {
+                                    maxIntDigits: 12,
+                                    maxFracDigits: 2,
+                                  });
+                                  setLineNetInputs((prev) => ({ ...prev, [netKey]: masked }));
+                                }}
+                                onBlur={(e) => {
+                                  const raw = e.currentTarget.value;
+                                  const { numeric } = normalizeMaskedDecimalTR(raw, {
+                                    maxIntDigits: 12,
+                                    maxFracDigits: 2,
+                                  });
+                                  if (numeric === null || numeric === undefined) {
+                                    if (raw.trim() !== '') {
+                                      toast.warning('Satır tutarı negatif olamaz ve sayı olmalıdır.');
+                                    }
+                                    setLineNetInputs((prev) => {
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
+                                    return;
+                                  }
+                                  const result = applyLineNetTarget(item, numeric);
+                                  if (result.reason === 'net_above_gross') {
+                                    toast.warning('Satır tutarı brüt tutarı aşamaz; iskonto %0 yapıldı.');
+                                  } else if (result.reason === 'gross_zero') {
+                                    toast.warning('Brüt tutar 0 iken iskonto hesaplanamaz.');
+                                  }
+                                  setLineNetInputs((prev) => {
+                                    const next = { ...prev };
+                                    delete next[netKey];
+                                    return next;
+                                  });
+                                }}
+                                className="input w-32 text-right py-1 text-sm font-medium text-green-500"
+                                aria-label="İskontolu satır tutarı"
+                                title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
+                              />
+                            )}
                           </td>
                           <td className="px-2 py-1 text-center">
                             {!isReadOnly && (

@@ -1295,3 +1295,52 @@ export interface ListTransactionsResponse {
   limit: number;
   offset: number;
 }
+
+// --- Sözleşme Zeyilname (Ek Protokol) ---
+
+export type AddendumStatus = 'draft' | 'pending' | 'approved' | 'rejected';
+
+export type ChangeType = 'ADD' | 'INCREASE' | 'DECREASE' | 'PRICE_CHANGE';
+
+export interface AddendumDetail {
+  DetailId: number;
+  AddendumId: number;
+  ChangeType: ChangeType;
+  ContractDetailId?: number | null;
+  ItemId?: number | null;
+  WarehouseId?: number | null;
+  IsManual?: boolean;
+  Description?: string | null;
+  QuantityChange?: number | null;
+  NewUnitPrice?: number | null;
+  NewMonthlyOverride?: number | null;
+  /** Liste/detay zenginleştirmeleri (backend opsiyonel) */
+  ItemName?: string | null;
+  ItemCode?: string | null;
+  WarehouseName?: string | null;
+  ContractDetailDescription?: string | null;
+}
+
+export interface Addendum {
+  AddendumId: number;
+  ContractId: number;
+  AddendumNo?: number | null;
+  AddendumCode?: string | null;
+  Status: AddendumStatus;
+  EffectiveDate: string;
+  Reason?: string | null;
+  RejectionReason?: string | null;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+  SubmittedAt?: string | null;
+  ApprovedAt?: string | null;
+  RejectedAt?: string | null;
+  CreatedByUserId?: number | null;
+  CreatedByName?: string | null;
+  ApprovedByUserId?: number | null;
+  ApprovedByName?: string | null;
+  RejectedByUserId?: number | null;
+  RejectedByName?: string | null;
+  details?: AddendumDetail[];
+  Details?: AddendumDetail[];
+}

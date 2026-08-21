@@ -94,8 +94,8 @@ export default function DashboardPage() {
       setLoading(true);
       const [contracts, customers, inventory] = await Promise.all([
         contractService.getAllAsync(),
-        customerService.getAllAsync(),
-        inventoryService.getAllAsync(),
+        customerService.getAllAsync(undefined, { staleTimeMs: 120_000 }),
+        inventoryService.getAllAsync({}, { staleTimeMs: 120_000 }),
       ]);
 
       const customerMap = new Map<number, Customer>();

@@ -339,6 +339,7 @@ export type UserFacingApiErrorContext =
   | 'contract-cancel'
   | 'contract-archive'
   | 'contract-add-line'
+  | 'addendum'
   | 'stock-receipt'
   | 'package-save'
   | 'purchase-invoice'
@@ -354,6 +355,7 @@ const CONTEXT_FALLBACKS: Record<Exclude<UserFacingApiErrorContext, 'inventory-de
   'contract-cancel': 'Sözleşme iptal edilemedi.',
   'contract-archive': 'Sözleşme arşivlenemedi.',
   'contract-add-line': 'Pasif ürün bu işlemde kullanılamaz.',
+  addendum: 'Zeyilname işlemi başarısız.',
   'stock-receipt': 'Pasif ürün stok hareketine eklenemez.',
   'package-save': 'Pasif ürün pakete eklenemez.',
   'purchase-invoice': 'Pasif ürün bu işlemde kullanılamaz.',
@@ -372,6 +374,7 @@ const CONTEXT_PREFIXES: Partial<
   'contract-cancel': 'Sözleşme iptal edilemedi',
   'contract-archive': 'Sözleşme arşivlenemedi',
   'contract-add-line': 'Sözleşmeye kalem eklenemedi',
+  addendum: 'Zeyilname işlemi başarısız',
   'stock-receipt': 'Stok fişi kaydedilemedi',
   'package-save': 'Paket oluşturulamadı',
   'purchase-invoice': 'Alış faturası kaydedilemedi',
