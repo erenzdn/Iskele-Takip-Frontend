@@ -20,12 +20,30 @@ import {
   Tooltip,
   ResponsiveContainer,
 } from 'recharts';
-import { contractService } from '../services/contractService';
-import { customerService } from '../services/customerService';
-import { inventoryService } from '../services/inventoryService';
-import { Contract, Customer, Inventory, ContractAlert, AlertType } from '../models';
+import { dashboardService, type DashboardLowStockItem, type DashboardUpcomingExpiration } from '../services/dashboardService';
 
 const MONTH_NAMES = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+
+function formatDashboardMonth(monthKey: string): string {
+  const match = /^(\d{4})-(\d{2})$/.exec(monthKey);
+  if (!match) return monthKey;
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  if (monthIndex < 0 || monthIndex > 11) return monthKey;
+  return `${MONTH_NAMES[monthIndex]} ${year}`;
+}
+
+function formatUpcomingExpirationLabel(plannedEndDate?: string | null): string {
+  if (!plannedEndDate) return '—';
+  const end = new Date(plannedEndDate);
+  end.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const daysRemaining = Math.floor((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+  if (daysRemaining < 0) return `${Math.abs(daysRemaining)} gün gecikmiş!`;
+  if (daysRemaining === 0) return 'Bugün bitiyor!';
+  return `${daysRemaining} gün kaldı`;
+}
 
 /** Klas yatay dağılım çubuğu - sade ve profesyonel */
 function DistributionBar({
@@ -72,9 +90,11 @@ export default function DashboardPage() {
   const [completedContractsThisMonth, setCompletedContractsThisMonth] = useState(0);
   const [totalInventoryCount, setTotalInventoryCount] = useState(0);
   const [completedContractsCount, setCompletedContractsCount] = useState(0);
-  const [upcomingExpirations, setUpcomingExpirations] = useState<ContractAlert[]>([]);
-  const [recentContracts, setRecentContracts] = useState<Contract[]>([]);
-  const [lowStockItems, setLowStockItems] = useState<Inventory[]>([]);
+  const [upcomingExpirations, setUpcomingExpirations] = useState<DashboardUpcomingExpiration[]>([]);
+  const [recentContracts, setRecentContracts] = useState<
+    Awaited<ReturnType<typeof dashboardService.getSummaryAsync>>['recentContracts']
+  >([]);
+  const [lowStockItems, setLowStockItems] = useState<DashboardLowStockItem[]>([]);
   const [monthlyRevenueData, setMonthlyRevenueData] = useState<{ ay: string; gelir: number }[]>([]);
   const [totalStockSum, setTotalStockSum] = useState(0);
   const [loading, setLoading] = useState(true);
@@ -92,131 +112,30 @@ export default function DashboardPage() {
   const loadDashboardData = async () => {
     try {
       setLoading(true);
-      const [contracts, customers, inventory] = await Promise.all([
-        contractService.getAllAsync(),
-        customerService.getAllAsync(undefined, { staleTimeMs: 120_000 }),
-        inventoryService.getAllAsync({}, { staleTimeMs: 120_000 }),
-      ]);
+      const summary = await dashboardService.getSummaryAsync();
 
-      const customerMap = new Map<number, Customer>();
-      customers.forEach((c) => customerMap.set(c.CustomerId, c));
-      const contractsWithCustomers = contracts.map((contract) => ({
-        ...contract,
-        Customer: customerMap.get(contract.CustomerId),
-      }));
+      setActiveContractsCount(summary.activeContractsCount);
+      setCompletedContractsCount(summary.completedContractsCount);
+      setTotalCustomersCount(summary.totalCustomersCount);
+      setItemsOnRentCount(summary.itemsOnRentCount);
+      setTotalRevenue(summary.totalRevenue);
+      setMonthlyRevenue(summary.monthlyRevenue);
+      setCompletedContractsThisMonth(summary.completedContractsThisMonth);
+      setTotalInventoryCount(summary.totalInventoryCount);
+      setTotalStockSum(summary.totalStockSum);
 
-      const activeContracts = contractsWithCustomers.filter((c) => !c.IsCompleted);
-      const completedContracts = contractsWithCustomers.filter((c) => c.IsCompleted);
-
-      setActiveContractsCount(activeContracts.length);
-      setCompletedContractsCount(completedContracts.length);
-      setTotalCustomersCount(customers.length);
-
-      const totalOnRent = inventory.reduce((sum, item) => sum + item.OnRent, 0);
-      setItemsOnRentCount(totalOnRent);
-
-      const totalRev = completedContracts.reduce(
-        (sum, c) => sum + (c.FinalCalculatedPrice || 0),
-        0
-      );
-      setTotalRevenue(totalRev);
-
-      const now = new Date();
-      const thisMonth = now.getMonth();
-      const thisYear = now.getFullYear();
-
-      const completedThisMonth = completedContracts.filter((c) => {
-        if (!c.ActualEndDate) return false;
-        const endDate = new Date(c.ActualEndDate);
-        return endDate.getMonth() === thisMonth && endDate.getFullYear() === thisYear;
-      });
-
-      setCompletedContractsThisMonth(completedThisMonth.length);
-      const monthlyRev = completedThisMonth.reduce(
-        (sum, c) => sum + (c.FinalCalculatedPrice || 0),
-        0
-      );
-      setMonthlyRevenue(monthlyRev);
-      setTotalInventoryCount(inventory.length);
-
-      const totalStock = inventory.reduce((s, i) => s + i.TotalStock, 0);
-      setTotalStockSum(totalStock);
-
-      // Son 6 ay gelir verisi
-      const monthlyData: { ay: string; gelir: number }[] = [];
-      for (let i = 5; i >= 0; i--) {
-        const d = new Date(thisYear, thisMonth - i, 1);
-        const month = d.getMonth();
-        const year = d.getFullYear();
-        const revenue = completedContracts
-          .filter((c) => {
-            if (!c.ActualEndDate) return false;
-            const endDate = new Date(c.ActualEndDate);
-            return endDate.getMonth() === month && endDate.getFullYear() === year;
-          })
-          .reduce((sum, c) => sum + (c.FinalCalculatedPrice || 0), 0);
-        monthlyData.push({ ay: `${MONTH_NAMES[month]} ${year}`, gelir: revenue });
-      }
+      const monthlyData = [...summary.monthlyRevenueSeries]
+        .reverse()
+        .slice(-6)
+        .map((point) => ({
+          ay: formatDashboardMonth(point.month),
+          gelir: point.revenue ?? 0,
+        }));
       setMonthlyRevenueData(monthlyData);
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const alerts: ContractAlert[] = [];
-
-      for (const contract of activeContracts) {
-        if (!contract.PlannedEndDate) continue;
-        const plannedEnd = new Date(contract.PlannedEndDate);
-        plannedEnd.setHours(0, 0, 0, 0);
-        const daysRemaining = Math.floor(
-          (plannedEnd.getTime() - today.getTime()) / (1000 * 60 * 60 * 24)
-        );
-
-        let alertType: AlertType;
-        if (daysRemaining < 0) {
-          alertType = AlertType.Overdue;
-        } else if (daysRemaining <= 2) {
-          alertType = AlertType.Critical;
-        } else if (daysRemaining <= 7) {
-          alertType = AlertType.Warning;
-        } else {
-          continue;
-        }
-
-        const alertMessage =
-          alertType === AlertType.Overdue
-            ? `${Math.abs(daysRemaining)} gün gecikmiş!`
-            : daysRemaining === 0
-            ? 'Bugün bitiyor!'
-            : `${daysRemaining} gün kaldı`;
-
-        alerts.push({
-          Contract: contract as Contract,
-          DaysRemaining: daysRemaining,
-          AlertType: alertType,
-          AlertMessage: alertMessage,
-        });
-      }
-
-      alerts.sort((a, b) => {
-        if (a.AlertType !== b.AlertType) return a.AlertType - b.AlertType;
-        return a.DaysRemaining - b.DaysRemaining;
-      });
-
-      setUpcomingExpirations(alerts.slice(0, 5));
-
-      const recent = contractsWithCustomers
-        .sort((a, b) => new Date(b.StartDate).getTime() - new Date(a.StartDate).getTime())
-        .slice(0, 5);
-      setRecentContracts(recent);
-
-      const lowStock = inventory
-        .filter(
-          (item) =>
-            item.TotalStock > 0 &&
-            item.TotalStock - item.OnRent <= item.TotalStock * 0.2
-        )
-        .slice(0, 5);
-      setLowStockItems(lowStock);
+      setUpcomingExpirations(summary.upcomingExpirations.slice(0, 5));
+      setRecentContracts(summary.recentContracts);
+      setLowStockItems(summary.lowStockItems.slice(0, 5));
     } catch (error) {
       console.error('Dashboard load error:', error);
     } finally {
@@ -233,17 +152,16 @@ export default function DashboardPage() {
     return date.toLocaleDateString('tr-TR');
   };
 
-  const getAlertColor = (type: AlertType) => {
-    switch (type) {
-      case AlertType.Overdue:
-        return 'bg-error';
-      case AlertType.Critical:
-        return 'bg-warning';
-      case AlertType.Warning:
-        return 'bg-primary';
-      default:
-        return 'bg-gray-500';
-    }
+  const getAlertColor = (plannedEndDate?: string | null) => {
+    if (!plannedEndDate) return 'bg-gray-500';
+    const end = new Date(plannedEndDate);
+    end.setHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const daysRemaining = Math.floor((end.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+    if (daysRemaining < 0) return 'bg-error';
+    if (daysRemaining <= 2) return 'bg-warning';
+    return 'bg-primary';
   };
 
   const contractStatusData = useMemo(
@@ -497,18 +415,15 @@ export default function DashboardPage() {
             <div className="space-y-4">
               {upcomingExpirations.map((alert) => (
                 <div
-                  key={alert.Contract.ContractId}
+                  key={alert.ContractId}
                   className="py-3 border-b border-background-border last:border-0"
                 >
-                  <div className="font-medium text-sm mb-1">{alert.Contract.Customer?.Name}</div>
-                  <div
-                    className="text-xs text-text-secondary mb-2"
-                    title={alert.Contract.Type === 'SALE' ? 'Satışlarda planlanan bitiş tarihi kullanılmaz.' : undefined}
-                  >
-                    {alert.Contract.Type === 'SALE' ? '—' : alert.Contract.PlannedEndDate ? formatDate(alert.Contract.PlannedEndDate) : '—'}
+                  <div className="font-medium text-sm mb-1">{alert.CustomerName || '—'}</div>
+                  <div className="text-xs text-text-secondary mb-2">
+                    {alert.PlannedEndDate ? formatDate(alert.PlannedEndDate) : '—'}
                   </div>
-                  <span className={`badge ${getAlertColor(alert.AlertType)} text-white text-xs`}>
-                    {alert.AlertMessage}
+                  <span className={`badge ${getAlertColor(alert.PlannedEndDate)} text-white text-xs`}>
+                    {formatUpcomingExpirationLabel(alert.PlannedEndDate)}
                   </span>
                 </div>
               ))}
@@ -534,24 +449,18 @@ export default function DashboardPage() {
                   className="py-3 border-b border-background-border last:border-0 flex items-center justify-between gap-4"
                 >
                   <div>
-                    <div className="font-medium text-sm">{contract.Customer?.Name}</div>
+                    <div className="font-medium text-sm">{contract.CustomerName || '—'}</div>
                     <div className="text-xs text-text-secondary mt-0.5">
-                      {contract.Type === 'SALE'
-                        ? `${formatDate(contract.StartDate)}`
-                        : `${formatDate(contract.StartDate)} – ${contract.PlannedEndDate ? formatDate(contract.PlannedEndDate) : '—'}`}
+                      {contract.StartDate ? formatDate(contract.StartDate) : '—'}
                     </div>
                   </div>
                   <div className="flex items-center gap-3 shrink-0">
                     <span className="text-success font-semibold text-sm">
-                      {formatCurrency(contract.InitialTotalPrice)}
+                      {formatCurrency(contract.NetTotal ?? 0)}
                     </span>
-                    <span
-                      className={`badge text-xs ${
-                        contract.IsCompleted ? 'bg-success' : 'bg-primary'
-                      } text-white`}
-                    >
-                      {contract.IsCompleted ? 'Tamamlandı' : 'Aktif'}
-                    </span>
+                    {contract.Type ? (
+                      <span className="badge bg-primary text-white text-xs">{contract.Type}</span>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -574,7 +483,7 @@ export default function DashboardPage() {
                 >
                   <div className="font-medium text-sm">{item.ItemName}</div>
                   <div className="text-xs text-text-secondary mt-0.5">
-                    Müsait: {item.TotalStock - item.OnRent} / Toplam: {item.TotalStock}
+                    Müsait: {(item.AvailableStock ?? item.TotalStock - item.OnRent)} / Toplam: {item.TotalStock}
                   </div>
                 </div>
               ))}

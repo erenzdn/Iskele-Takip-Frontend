@@ -107,6 +107,9 @@ export interface Inventory {
   UnitName?: string | null;
   Categories?: MaterialCategory[];
   SubCategories?: SubCategory[];
+  /** Lean liste DTO — GET /inventory */
+  CategoryIds?: number[];
+  SubCategoryIds?: number[];
   CreatedAt?: string;
   CreatedByUserFullName?: string;
   CreatedByUserName?: string;

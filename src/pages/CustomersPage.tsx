@@ -3,6 +3,7 @@ import { UsersIcon } from '@phosphor-icons/react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { customerService } from '../services/customerService';
 import { Customer } from '../models';
+import { DEFAULT_PAGE_LIMIT } from '../utils/paginatedResponse';
 import { formatShortDateTime } from '../utils/formatters';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from '../components/EmptyState';
@@ -39,6 +40,9 @@ export default function CustomersPage() {
     return pct != null ? { width: `${pct}%` } : undefined;
   };
   const [customers, setCustomers] = useState<Customer[]>([]);
+  const [totalCustomers, setTotalCustomers] = useState(0);
+  const [offset, setOffset] = useState(0);
+  const pageLimit = DEFAULT_PAGE_LIMIT;
   const [searchText, setSearchText] = useState('');
   const debouncedSearch = useDebouncedValue(searchText, 300);
   const [loading, setLoading] = useState(true);
@@ -57,16 +61,18 @@ export default function CustomersPage() {
   const { openContextMenu } = useContextMenu();
   const { setActions } = useHeaderActions();
 
-  const fetchCustomers = useCallback(async (forceRefresh = false) => {
+  const fetchCustomers = useCallback(async () => {
     const q = debouncedSearch.trim() || undefined;
     try {
       if (!hadFirstLoadRef.current) setLoading(true);
       else setListLoading(true);
-      const data = await customerService.getAllAsync(q, {
-        forceRefresh,
-        staleTimeMs: 120_000,
+      const page = await customerService.getPageAsync({
+        search: q,
+        limit: pageLimit,
+        offset,
       });
-      setCustomers(data);
+      setCustomers(page.items);
+      setTotalCustomers(page.total);
     } catch (error) {
       console.error('Load customers error:', error);
     } finally {
@@ -77,14 +83,18 @@ export default function CustomersPage() {
         setHadFirstLoad(true);
       }
     }
+  }, [debouncedSearch, offset, pageLimit]);
+
+  useEffect(() => {
+    setOffset(0);
   }, [debouncedSearch]);
 
   useEffect(() => {
     void fetchCustomers();
   }, [fetchCustomers]);
 
-  const loadCustomers = useCallback((forceRefresh = true) => {
-    void fetchCustomers(forceRefresh);
+  const loadCustomers = useCallback(() => {
+    void fetchCustomers();
   }, [fetchCustomers]);
 
   const handleAddNew = useCallback(() => {
@@ -162,7 +172,7 @@ export default function CustomersPage() {
       }
       return;
     }
-    loadCustomers(true);
+    loadCustomers();
   };
 
   const openCustomerContextMenu = (event: MouseEvent<HTMLTableRowElement>, customer: Customer) => {
@@ -243,7 +253,7 @@ export default function CustomersPage() {
           try {
             await customerService.deleteAsync(row.entityId);
             toast.success('Müşteri arşivlendi (listeden kaldırıldı).');
-            loadCustomers(true);
+            loadCustomers();
           } catch (error) {
             toast.error(getUserFacingErrorMessage(error, 'Arşivleme sırasında hata oluştu.'));
           }
@@ -257,13 +267,18 @@ export default function CustomersPage() {
     .slice()
     .sort((a, b) => (a.Name || '').localeCompare(b.Name || '', 'tr-TR'));
 
+  const hasPrev = offset > 0;
+  const hasNext = offset + pageLimit < totalCustomers;
+  const totalPages = Math.max(1, Math.ceil(totalCustomers / pageLimit));
+  const currentPage = Math.floor(offset / pageLimit) + 1;
+
   const headerActions = useMemo(
     () => (
       <>
-        <button onClick={() => loadCustomers(true)} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => loadCustomers()} className="btn-secondary py-2 px-3 text-sm">
           Yenile
         </button>
-        <ExcelManager type="customers" onImportSuccess={() => void fetchCustomers(true)} />
+        <ExcelManager type="customers" onImportSuccess={() => void fetchCustomers()} />
         <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
           + Yeni Müşteri
         </button>
@@ -449,10 +464,28 @@ export default function CustomersPage() {
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span className="flex items-center gap-2">
-              Toplam: {displayedCustomers.length} müşteri
+              Toplam: {totalCustomers} müşteri
+              {displayedCustomers.length > 0 ? ` (sayfa ${currentPage}/${totalPages})` : ''}
               {listLoading ? <span className="text-accent">Güncelleniyor…</span> : null}
             </span>
-            <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className="btn-secondary py-1 px-2 text-xs disabled:opacity-50"
+                disabled={!hasPrev || listLoading}
+                onClick={() => setOffset((prev) => Math.max(0, prev - pageLimit))}
+              >
+                Önceki
+              </button>
+              <button
+                type="button"
+                className="btn-secondary py-1 px-2 text-xs disabled:opacity-50"
+                disabled={!hasNext || listLoading}
+                onClick={() => setOffset((prev) => prev + pageLimit)}
+              >
+                Sonraki
+              </button>
+            </div>
           </div>
         </div>
       )}

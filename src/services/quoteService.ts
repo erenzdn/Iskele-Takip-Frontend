@@ -1,6 +1,7 @@
 import { apiClient } from './apiClient';
 import { ContractQuoteType, Quote, QuoteDetail, QuoteStatus } from '../models';
 import { CreateSiteRequest } from './siteService';
+import { normalizePaginatedResponse, unwrapListItems, type PaginatedResponse } from '../utils/paginatedResponse';
 
 export interface CreateQuoteDetailRequest {
   ItemId: number;
@@ -182,8 +183,13 @@ function normalizeQuote(raw: any): Quote {
 }
 
 function normalizeQuoteList(raw: unknown): Quote[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((item) => normalizeQuote(item));
+  const list = unwrapListItems<Quote>(raw);
+  return list.map((item) => normalizeQuote(item));
+}
+
+async function fetchQuotesPage(url: string): Promise<PaginatedResponse<Quote>> {
+  const raw = await apiClient.get<Quote[] | PaginatedResponse<Quote>>(url);
+  return normalizePaginatedResponse(raw);
 }
 
 export const quoteService = {
@@ -195,8 +201,8 @@ export const quoteService = {
     const query = parseQuoteListArg(arg);
     const url = buildQuotesListPath(query);
     try {
-      const rows = await apiClient.get<Quote[]>(url);
-      return normalizeQuoteList(rows);
+      const page = await fetchQuotesPage(url);
+      return normalizeQuoteList(page);
     } catch (error) {
       // Bazı backend sürümlerinde /quotes (parametresiz) 500 dönebilir.
       // status, type veya includeConverted ile filtre varsa birleştirme denemesi yapılmaz.
@@ -205,26 +211,26 @@ export const quoteService = {
       const s = query?.search?.trim();
       const base: QuoteListQuery = s ? { search: s } : {};
       const [pending, accepted, rejected, draft] = await Promise.all([
-        apiClient
-          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Pending }))
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Pending }))
+          .then((page) => normalizeQuoteList(page))
           .catch((e) => {
             failures.push(e);
             return [];
           }),
-        apiClient
-          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Accepted }))
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Accepted }))
+          .then((page) => normalizeQuoteList(page))
           .catch((e) => {
             failures.push(e);
             return [];
           }),
-        apiClient
-          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Rejected }))
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Rejected }))
+          .then((page) => normalizeQuoteList(page))
           .catch((e) => {
             failures.push(e);
             return [];
           }),
-        apiClient
-          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Draft }))
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Draft }))
+          .then((page) => normalizeQuoteList(page))
           .catch((e) => {
             failures.push(e);
             return [];
@@ -232,7 +238,6 @@ export const quoteService = {
       ]);
       const map = new Map<number, Quote>();
       [...draft, ...pending, ...accepted, ...rejected]
-        .map((q) => normalizeQuote(q))
         .forEach((q) => map.set(q.QuoteId, q));
       const merged = Array.from(map.values()).sort((a, b) => b.QuoteId - a.QuoteId);
       if (merged.length === 0 && failures.length >= 4) {
@@ -248,13 +253,13 @@ export const quoteService = {
   },
 
   async getPendingQuotesAsync(): Promise<Quote[]> {
-    const rows = await apiClient.get<Quote[]>('/quotes?status=pending');
-    return normalizeQuoteList(rows);
+    const page = await fetchQuotesPage('/quotes?status=pending');
+    return normalizeQuoteList(page);
   },
 
   async getAcceptedQuotesAsync(): Promise<Quote[]> {
-    const rows = await apiClient.get<Quote[]>('/quotes?status=accepted');
-    return normalizeQuoteList(rows);
+    const page = await fetchQuotesPage('/quotes?status=accepted');
+    return normalizeQuoteList(page);
   },
 
   async getRejectedQuotesAsync(): Promise<Quote[]> {

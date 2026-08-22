@@ -1,5 +1,11 @@
 import { apiClient } from './apiClient';
 import {
+  DEFAULT_PAGE_LIMIT,
+  fetchAllPaginatedPages,
+  normalizePaginatedResponse,
+  type PaginatedResponse,
+} from '../utils/paginatedResponse';
+import {
   AuditLog,
   Inventory,
   InventoryItemMovementsResponse,
@@ -130,6 +136,8 @@ export interface InventoryListQuery {
   categoryId?: number;
   search?: string;
   includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
 }
 
 interface InventoryQueryOptions {
@@ -183,6 +191,28 @@ export const inventoryService = {
     return apiClient.post<{ message: string; updatedCount: number }>(`/categories/${categoryId}/apply-discount`, data);
   },
 
+  buildInventoryListEndpoint(params?: InventoryListQuery): string {
+    const sp = new URLSearchParams();
+    if (params?.categoryId != null) sp.set('categoryId', String(params.categoryId));
+    if (params?.search != null && params.search.trim() !== '') sp.set('search', params.search.trim());
+    if (params?.includeArchived) sp.set('includeArchived', 'true');
+    if (params?.limit != null) sp.set('limit', String(params.limit));
+    if (params?.offset != null) sp.set('offset', String(params.offset));
+    const qs = sp.toString();
+    return qs ? `/inventory?${qs}` : '/inventory';
+  },
+
+  async getPageAsync(params?: InventoryListQuery): Promise<PaginatedResponse<Inventory>> {
+    const raw = await apiClient.get<Inventory[] | PaginatedResponse<Inventory>>(
+      this.buildInventoryListEndpoint(params)
+    );
+    return normalizePaginatedResponse(
+      raw,
+      params?.limit ?? DEFAULT_PAGE_LIMIT,
+      params?.offset ?? 0
+    );
+  },
+
   // Inventory Items
   async getAllAsync(
     params?: InventoryListQuery,
@@ -204,23 +234,26 @@ export const inventoryService = {
       }
     }
 
-    const sp = new URLSearchParams();
-    if (params?.categoryId != null) sp.set('categoryId', String(params.categoryId));
-    if (params?.search != null && params.search.trim() !== '') sp.set('search', params.search.trim());
-    if (params?.includeArchived) sp.set('includeArchived', 'true');
-    const qs = sp.toString();
-    const endpoint = qs ? `/inventory?${qs}` : '/inventory';
+    const listParams: InventoryListQuery = {
+      categoryId: params?.categoryId,
+      search: params?.search,
+      includeArchived: params?.includeArchived,
+    };
 
-    const request = apiClient.get<Inventory[]>(endpoint).then((data) => {
-      const rows = data ?? [];
-      inventoryListCache.set(key, {
-        data: rows,
-        fetchedAt: Date.now(),
+    const request = fetchAllPaginatedPages<Inventory>((limit, offset) =>
+      this.getPageAsync({ ...listParams, limit, offset })
+    )
+      .then((page) => {
+        const rows = page.items;
+        inventoryListCache.set(key, {
+          data: rows,
+          fetchedAt: Date.now(),
+        });
+        return rows;
+      })
+      .finally(() => {
+        inFlightInventoryLists.delete(key);
       });
-      return rows;
-    }).finally(() => {
-      inFlightInventoryLists.delete(key);
-    });
 
     inFlightInventoryLists.set(key, request);
     return request;
