@@ -114,7 +114,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const debouncedContractSearch = useDebouncedValue(searchText, 300);
   const [quoteSearchText, setQuoteSearchText] = useState('');
   const debouncedQuoteSearch = useDebouncedValue(quoteSearchText, 300);
-  const [quoteStatusFilter, setQuoteStatusFilter] = useState<'all' | 'pending' | 'accepted' | 'rejected'>('all');
+  const [quoteStatusFilter, setQuoteStatusFilter] = useState<'all' | 'draft' | 'pending' | 'accepted' | 'rejected'>('all');
   const [quotesError, setQuotesError] = useState<string | null>(null);
   const [contractsError, setContractsError] = useState<string | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false);
@@ -248,7 +248,9 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
             ? ('converted' as const)
             : quoteStatusFilter === 'all'
               ? undefined
-              : quoteStatusFilter === 'pending'
+              : quoteStatusFilter === 'draft'
+                ? QuoteStatus.Draft
+                : quoteStatusFilter === 'pending'
                 ? QuoteStatus.Pending
                 : quoteStatusFilter === 'accepted'
                   ? QuoteStatus.Accepted
@@ -587,6 +589,8 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const getQuoteStatusBadge = (status: QuoteStatus) => {
     const c = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
     switch (status) {
+      case QuoteStatus.Draft:
+        return <span className={`${c} bg-slate-700 text-slate-100`}>Taslak</span>;
       case QuoteStatus.Pending:
         return <span className={`${c} bg-yellow-700 text-yellow-100`}>Beklemede</span>;
       case QuoteStatus.Accepted:
@@ -881,6 +885,10 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         'quote.accept': async (target) => {
           const row = target as QuoteRowTarget;
           if (row.rawData.Status === 'accepted') return;
+          if (row.rawData.Status === 'draft') {
+            toast.warning('Taslak teklif önce Beklemede durumuna alınmalıdır.');
+            return;
+          }
           await quoteService.acceptQuoteAsync(row.entityId);
           toast.success('Teklif kabul edildi.');
           await loadData();
@@ -888,6 +896,10 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         'quote.rollback': async (target) => {
           const row = target as QuoteRowTarget;
           if (row.rawData.Status === 'pending') return;
+          if (row.rawData.Status === 'draft') {
+            toast.warning('Taslak teklif Beklemede durumuna alınamaz; teklifi açıp Teklifi oluştur kullanın.');
+            return;
+          }
           await quoteService.updateAsync(row.entityId, { Status: QuoteStatus.Pending });
           toast.success('Teklif beklemede durumuna geri alındı.');
           await loadData();
@@ -1144,7 +1156,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                     {quote.Subject ? quote.Subject : <span className="text-text-secondary">-</span>}
                   </td>
                   <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 font-medium text-text-primary">
-                    {quote.CustomerName ?? customerMap.get(quote.CustomerId)?.Name ?? '—'}
+                    {quote.CustomerName ?? (quote.CustomerId != null ? customerMap.get(quote.CustomerId)?.Name : undefined) ?? '—'}
                   </td>
                   <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{quote.Site ? quote.Site.SiteName : <span className="text-text-secondary">-</span>}</td>
                   {!isSaleScope && (
@@ -1285,12 +1297,13 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               value={quoteStatusFilter}
               onChange={(e) =>
                 setQuoteStatusFilter(
-                  e.target.value as 'all' | 'pending' | 'accepted' | 'rejected'
+                  e.target.value as 'all' | 'draft' | 'pending' | 'accepted' | 'rejected'
                 )
               }
               className="input py-1.5 px-3 text-sm w-40"
             >
               <option value="all">Tüm Durumlar</option>
+              <option value="draft">Taslak</option>
               <option value="pending">Beklemede</option>
               <option value="accepted">Kabul Edilen</option>
               <option value="rejected">Reddedilen</option>
@@ -1362,7 +1375,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           defaultTypeForNew={scopeType}
           lockNewQuoteType
           onQuoteCloned={handleQuoteCloned}
-          startInEditMode={isQuoteClonedDraft}
+          startInEditMode={isQuoteClonedDraft || selectedQuote?.Status === QuoteStatus.Draft}
           isClonedDraft={isQuoteClonedDraft}
         />
       )}

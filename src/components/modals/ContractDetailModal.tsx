@@ -8,6 +8,7 @@ import {
   ContractQuoteType,
   Customer,
   Inventory,
+  MaterialCategory,
   ContractLineItem,
   InventoryContractLineItem,
   ConstructionSite,
@@ -37,6 +38,7 @@ import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
+import { discountPercentFromNet, lineDiscountAmount, lineNetFromGross } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -45,8 +47,9 @@ import { useAuthStore } from '../../store/authStore';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
-import ContractAddLineItemModal from './ContractAddLineItemModal';
 import SettleNonReturnModal from './SettleNonReturnModal';
+import InventoryDetailModal from './InventoryDetailModal';
+import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import {
   applyCreatedSiteId,
   buildSiteRequestFields,
@@ -62,7 +65,7 @@ interface ContractDetailModalProps {
   contract: Contract | null;
   isNew: boolean;
   onClose: () => void;
-  initialTab?: 'info' | 'return' | 'returns' | 'history';
+  initialTab?: 'info' | 'return' | 'returns' | 'history' | 'addenda';
   /** Yeni sözleşme: menüden gelen varsayılan tip (kiralama / satış sayfası) */
   defaultTypeForNew?: ContractQuoteType;
   /** true ise yeni kayıtta tip seçilemez (ayrı menü sayfaları) */
@@ -108,6 +111,8 @@ export default function ContractDetailModal({
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
+  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
+  const [selectedInventoryForDetail, setSelectedInventoryForDetail] = useState<Inventory | null>(null);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [selectedAuthorizedContactId, setSelectedAuthorizedContactId] = useState<number | ''>('');
   const [authorizedContacts, setAuthorizedContacts] = useState<NonNullable<Customer['AuthorizedContacts']>>([]);
@@ -155,7 +160,10 @@ export default function ContractDetailModal({
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ContractTemplate | null>(null);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
-  const [activeTab, setActiveTab] = useState<'info' | 'return' | 'returns' | 'history'>(initialTab);
+  const [activeTab, setActiveTab] = useState<'info' | 'return' | 'returns' | 'history' | 'addenda'>(
+    initialTab
+  );
+  const [pendingOpenAddendumCreate, setPendingOpenAddendumCreate] = useState(false);
   const [contractLogs, setContractLogs] = useState<AuditLog[]>([]);
   const [contractLogsLoading, setContractLogsLoading] = useState(false);
   const [fullContract, setFullContract] = useState<Contract | null>(null);
@@ -175,6 +183,8 @@ export default function ContractDetailModal({
   const [iskonto, setIskonto] = useState<number>(0);
   /** Satır bazlı iskonto (%) - key: "ItemId-WarehouseId". Üstteki iskonto değişince tüm satırlara yansır; satırda tek tek de düzenlenebilir. */
   const [itemIskonto, setItemIskonto] = useState<Record<string, number>>({});
+  /** İskontolu satır tutarı taslağı. key: "ItemId-WarehouseId" | `man-${ClientId}` */
+  const [lineNetInputs, setLineNetInputs] = useState<Record<string, string>>({});
   const [vatRate, setVatRate] = useState<number>(20);
   const [contractCode, setContractCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
@@ -184,7 +194,7 @@ export default function ContractDetailModal({
 
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
   const [lastAddedKeys, setLastAddedKeys] = useState<string[]>([]);
-  const [activeItemsGridCell, setActiveItemsGridCell] = useState<{ row: number; col: 4 | 6 | 8 } | null>(null);
+  const [activeItemsGridCell, setActiveItemsGridCell] = useState<{ row: number; col: 4 | 6 | 7 | 8 } | null>(null);
   const itemsGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
@@ -194,10 +204,12 @@ export default function ContractDetailModal({
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [isAddingMaterialTable, setIsAddingMaterialTable] = useState(false);
   const [showManualLineModal, setShowManualLineModal] = useState(false);
-  const [showAddLineItemModal, setShowAddLineItemModal] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
+  const canViewContracts = Boolean(currentUser?.permissions?.includes('contracts_view'));
+  const canUpdateContracts = Boolean(currentUser?.permissions?.includes('contracts_update'));
   const canRevertToQuote = Boolean(currentUser?.permissions?.includes('contracts_delete'));
   const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
+  const canDeleteContracts = Boolean(currentUser?.permissions?.includes('contracts_delete'));
   const canArchiveContract = Boolean(
     currentUser?.permissions?.includes('contracts_archive') ||
     currentUser?.permissions?.includes('contracts_delete')
@@ -636,14 +648,16 @@ export default function ContractDetailModal({
 
   const loadData = async () => {
     try {
-      const [custData, invData, whData] = await Promise.all([
+      const [custData, invData, whData, catData] = await Promise.all([
         customerService.getAllAsync(),
         inventoryService.getAllAsync(),
         warehouseService.getActiveAsync(),
+        inventoryService.getAllCategoriesAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
       setWarehouses(whData);
+      setInventoryCategories(catData);
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -676,12 +690,19 @@ export default function ContractDetailModal({
   const getItemIskonto = (itemId: number, warehouseId: number) =>
     itemIskonto[`${itemId}-${warehouseId}`] ?? iskonto;
 
+  const getRowDiscountPercent = (item: ContractLineItem) =>
+    item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto;
+
+  const getLineNetTotal = (item: ContractLineItem) =>
+    lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
+
+  const lineNetInputKey = (item: ContractLineItem) =>
+    item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : `man-${item.ClientId}`;
+
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = initialTotalPrice;
   const discountAmount = contractItems.reduce((sum, item) => {
-    const lineTotal = getLineTotal(item);
-    const pct = item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto;
-    return sum + lineTotal * (pct / 100);
+    return sum + lineDiscountAmount(getLineTotal(item), getRowDiscountPercent(item));
   }, 0);
 
   const totalSettlementCharge = contractReturns.reduce((sum, ret) => {
@@ -796,9 +817,9 @@ export default function ContractDetailModal({
   const handleItemsGridKeyDown = (
     e: React.KeyboardEvent<HTMLElement>,
     row: number,
-    col: 4 | 6 | 8
+    col: 4 | 6 | 7 | 8
   ) => {
-    const colOrder: Array<4 | 6 | 8> = [4, 6, 8];
+    const colOrder: Array<4 | 6 | 7 | 8> = [4, 6, 7, 8];
     const colIndex = colOrder.indexOf(col);
     if (colIndex < 0 || contractItems.length === 0) return;
     if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
@@ -905,11 +926,29 @@ export default function ContractDetailModal({
           : i
       )
     );
+    setLineNetInputs((prev) => {
+      const key = `${itemId}-${warehouseId}`;
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const updateContractItemIskonto = (itemId: number, warehouseId: number, value: number) => {
     const pct = Math.max(0, Math.min(100, value));
     setItemIskonto((prev) => ({ ...prev, [`${itemId}-${warehouseId}`]: pct }));
+  };
+
+  /** Yeşil Toplam (net) → iskonto % ters hesabı. */
+  const applyLineNetTarget = (item: ContractLineItem, targetNet: number) => {
+    const result = discountPercentFromNet(getLineTotal(item), targetNet);
+    if (item.kind === 'inventory') {
+      updateContractItemIskonto(item.ItemId, item.WarehouseId, result.discountPercent);
+    } else {
+      setIskonto(result.discountPercent);
+    }
+    return result;
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
@@ -922,6 +961,7 @@ export default function ContractDetailModal({
       });
       return next;
     });
+    setLineNetInputs({});
   };
 
   const handleSave = async () => {
@@ -1851,6 +1891,19 @@ export default function ContractDetailModal({
             >
               Geçmiş
             </button>
+            {canViewContracts && (
+              <button
+                type="button"
+                onClick={() => setActiveTab('addenda')}
+                className={`px-4 py-2 font-medium transition-colors ${
+                  activeTab === 'addenda'
+                    ? 'text-accent border-b-2 border-accent'
+                    : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                Zeyilnameler
+              </button>
+            )}
           </div>
         )}
 
@@ -2079,6 +2132,28 @@ export default function ContractDetailModal({
               </button>
             </div>
           </>
+        )}
+
+        {activeTab === 'addenda' && !isNew && contract?.ContractId && canViewContracts && (
+          <ContractAddendaPanel
+            contractId={contract.ContractId}
+            contractType={contractType}
+            contractActive={active}
+            contractLines={contractItems}
+            items={availableItems}
+            warehouses={warehouses}
+            templateId={selectedTemplateId}
+            canView={canViewContracts}
+            canUpdate={canUpdateContracts}
+            canDelete={canDeleteContracts}
+            openCreateRequest={pendingOpenAddendumCreate}
+            onOpenCreateConsumed={() => setPendingOpenAddendumCreate(false)}
+            onContractRefresh={async () => {
+              await refreshContract();
+              await Promise.resolve(onDataChanged?.());
+            }}
+            onClose={onClose}
+          />
         )}
 
         {(activeTab === 'info' || isNew) && (
@@ -2405,8 +2480,7 @@ export default function ContractDetailModal({
                 </span>
               </div>
               <div className="flex flex-wrap gap-2">
-                {/* Not: Mevcut sözleşmede picker ile ürün ekleme backend'e gitmediği için kapalı.
-                    Yeni kalem ekleme akışı: POST /contracts/:id/details (Kalem Ekle) */}
+                {/* Mevcut sözleşmede kalem değişikliği Zeyilname / Ek Protokol üzerinden yapılır. */}
                 {isNew && !isReadOnly && (
                   <button
                     type="button"
@@ -2465,13 +2539,19 @@ export default function ContractDetailModal({
                     {isAddingMaterialTable ? 'Ekleniyor...' : 'Tabloyu Şablona Ekle'}
                   </button>
                 )}
-                {!isNew && contract && active && (
+                {!isNew && contract && active && canViewContracts && (
                   <button
                     type="button"
-                    onClick={() => setShowAddLineItemModal(true)}
+                    onClick={() => {
+                      setActiveTab('addenda');
+                      if (canUpdateContracts) {
+                        setPendingOpenAddendumCreate(true);
+                      }
+                    }}
                     className="btn-secondary"
+                    title="Kalem ekleme / miktar-fiyat değişikliği zeyilname ile yapılır"
                   >
-                    Kalem Ekle
+                    Zeyilname / Ek Protokol
                   </button>
                 )}
                 {!isNew && contract && selectedTemplateId && (
@@ -2521,7 +2601,12 @@ export default function ContractDetailModal({
                         {contractType === 'SALE' ? 'Birim Fiyat' : 'Günlük Fiyat'}
                       </th>
                       <th className="text-right px-3 py-2 font-semibold text-text-secondary w-20">İskonto (%)</th>
-                      <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">Toplam</th>
+                      <th
+                        className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap"
+                        title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
+                      >
+                        Toplam
+                      </th>
                       <th className="text-center px-2 py-2 font-semibold text-text-secondary w-20">İşlem</th>
                     </tr>
                   </thead>
@@ -2622,9 +2707,18 @@ export default function ContractDetailModal({
                             </td>
                             <td className="px-3 py-2">
                               <div className="font-medium">
-                                {item.kind === 'inventory'
-                                  ? formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)
-                                  : item.Description}
+                                {item.kind === 'inventory' ? (
+                                  <button
+                                    type="button"
+                                    className="text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                                    title="Ürün detayını görüntüle"
+                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                  >
+                                    {formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
+                                  </button>
+                                ) : (
+                                  item.Description
+                                )}
                               </div>
                               {isRentalContract && item.kind === 'inventory' && item.EffectiveStartDate && (
                                 <div className="text-[11px] text-text-secondary mt-0.5">
@@ -2717,6 +2811,7 @@ export default function ContractDetailModal({
                                   onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 6)}
                                   onChange={(e) => {
                                     const v = parseFloat(e.target.value);
+                                    const netKey = lineNetInputKey(item);
                                     if (item.kind === 'inventory') {
                                       updateContractItemIskonto(
                                         item.ItemId,
@@ -2726,13 +2821,79 @@ export default function ContractDetailModal({
                                     } else {
                                       setIskonto(Number.isFinite(v) ? v : 0);
                                     }
+                                    setLineNetInputs((prev) => {
+                                      if (!(netKey in prev)) return prev;
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
                                   }}
                                   className="input w-16 text-right py-1 text-sm"
                                   aria-label="İskonto %"
                                 />
                               )}
                             </td>
-                            <td className="px-3 py-2 text-right font-medium text-green-500">{formatCurrency(getLineTotal(item))}</td>
+                            <td className="px-3 py-2 text-right font-medium text-green-500">
+                              {isReadOnly ? (
+                                formatCurrency(getLineNetTotal(item))
+                              ) : (
+                                <input
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  value={
+                                    lineNetInputs[lineNetInputKey(item)] !== undefined
+                                      ? lineNetInputs[lineNetInputKey(item)]
+                                      : getLineNetTotal(item)
+                                  }
+                                  ref={(el) => {
+                                    const key = `${rowIndex}-7`;
+                                    if (el) itemsGridRefs.current.set(key, el);
+                                    else itemsGridRefs.current.delete(key);
+                                  }}
+                                  onFocus={(e) => {
+                                    setActiveItemsGridCell({ row: rowIndex, col: 7 });
+                                    e.currentTarget.select();
+                                  }}
+                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 7)}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    const netKey = lineNetInputKey(item);
+                                    setLineNetInputs((prev) => ({ ...prev, [netKey]: raw }));
+                                  }}
+                                  onBlur={(e) => {
+                                    const netKey = lineNetInputKey(item);
+                                    const raw = e.currentTarget.value;
+                                    const v = parseFloat(raw);
+                                    if (!Number.isFinite(v) || v < 0) {
+                                      if (String(raw).trim() !== '') {
+                                        toast.warning('Satır tutarı negatif olamaz ve sayı olmalıdır.');
+                                      }
+                                      setLineNetInputs((prev) => {
+                                        const next = { ...prev };
+                                        delete next[netKey];
+                                        return next;
+                                      });
+                                      return;
+                                    }
+                                    const result = applyLineNetTarget(item, v);
+                                    if (result.reason === 'net_above_gross') {
+                                      toast.warning('Satır tutarı brüt tutarı aşamaz; iskonto %0 yapıldı.');
+                                    } else if (result.reason === 'gross_zero') {
+                                      toast.warning('Brüt tutar 0 iken iskonto hesaplanamaz.');
+                                    }
+                                    setLineNetInputs((prev) => {
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
+                                  }}
+                                  className="input w-28 text-right py-1 text-sm font-medium text-green-500"
+                                  aria-label="İskontolu satır tutarı"
+                                  title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
+                                />
+                              )}
+                            </td>
                             <td className="px-2 py-2 text-center">
                               {isRentalContract && !isNew && item.kind === 'inventory' && active && remainingOnRent > 0 && isReadOnly && (
                                 <button type="button" onClick={() => openReturnForm(item)} className="btn-secondary text-xs px-2 py-1" disabled={isReturning}>İade Et</button>
@@ -3138,17 +3299,12 @@ export default function ContractDetailModal({
         downloadFileName={`sozlesme_${contract?.ContractId ?? ''}.pdf`}
         onClose={closePdfPreview}
       />
-      {!isNew && contract?.ContractId && (
-        <ContractAddLineItemModal
-          open={showAddLineItemModal}
-          contractId={contract.ContractId}
-          contractType={contractType}
-          items={availableItems}
-          warehouses={warehouses}
-          onClose={() => setShowAddLineItemModal(false)}
-          onAdded={async () => {
-            await refreshContract();
-          }}
+      {selectedInventoryForDetail && (
+        <InventoryDetailModal
+          item={selectedInventoryForDetail}
+          categories={inventoryCategories}
+          isNew={false}
+          onClose={() => setSelectedInventoryForDetail(null)}
         />
       )}
       </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, Outlet } from 'react-router-dom';
 import {
   CaretDownIcon,
   ChartBarIcon,
@@ -27,7 +27,7 @@ import { HeaderActionsContext } from './HeaderActionsContext';
 import { useUpdateStore } from '../store/updateStore';
 
 interface MainLayoutProps {
-  children: React.ReactNode;
+  children?: React.ReactNode;
 }
 
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'layout_sidebar_collapsed';
@@ -181,7 +181,7 @@ function NavLink({
   );
 }
 
-export default function MainLayout({ children }: MainLayoutProps) {
+export default function MainLayout({ children }: MainLayoutProps = {}) {
   const location = useLocation();
   const isResizingRef = useRef(false);
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(() => {
@@ -476,7 +476,7 @@ export default function MainLayout({ children }: MainLayoutProps) {
 
         <div className="h-[calc(100vh-3.5rem)] overflow-auto px-4 py-3">
           <HeaderActionsContext.Provider value={{ setActions: handleSetHeaderActions }}>
-            {children}
+            {children || <Outlet />}
           </HeaderActionsContext.Provider>
         </div>
       </main>

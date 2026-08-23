@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { CheckCircleIcon, MinusCircleIcon, XIcon } from '@phosphor-icons/react';
+import { CheckCircleIcon, MinusCircleIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
 import { Inventory } from '../../models';
 import ItemPickerPanel, { ItemDisplayMode, QuotePricingMode } from '../ItemPickerPanel';
 import { formatInventoryBilingualLabel } from '../../utils/formatters';
@@ -24,6 +24,8 @@ interface ProductPickerModalProps {
   currency?: 'TRY' | 'EUR' | 'USD';
   /** Tanımlıysa satırlarda listede olan ürünler kalıcı işaretlenir (teklif/sözleşme). */
   pickedItemIds?: ReadonlySet<number>;
+  /** Tanımlıysa başlık alanında "Yeni Ürün Ekle" butonu gösterilir. */
+  onAddNewItem?: () => void;
 }
 
 function normalizePickResult(raw: ProductPickResult): 'added' | 'removed' | null {
@@ -72,6 +74,7 @@ export default function ProductPickerModal({
   quotePricing = 'rental',
   currency = 'TRY',
   pickedItemIds,
+  onAddNewItem,
 }: ProductPickerModalProps) {
   const [highlightedItemIds, setHighlightedItemIds] = useState<Set<number>>(() => new Set());
   const [toast, setToast] = useState<{ message: string; kind: 'added' | 'removed' } | null>(null);
@@ -163,14 +166,26 @@ export default function ProductPickerModal({
       <div className="flex h-full w-full min-h-0 flex-col bg-background-panel shadow-2xl overflow-hidden">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-background-border shrink-0 bg-background-secondary/50">
           <h2 className="text-lg font-semibold text-text-primary">Ürün Seçimi</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
-            aria-label="Kapat"
-          >
-            <XIcon size={22} weight="regular" />
-          </button>
+          <div className="flex items-center gap-2">
+            {onAddNewItem && (
+              <button
+                type="button"
+                onClick={onAddNewItem}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary/90 transition-colors"
+              >
+                <PlusIcon size={16} weight="bold" />
+                Yeni Ürün Ekle
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+              aria-label="Kapat"
+            >
+              <XIcon size={22} weight="regular" />
+            </button>
+          </div>
         </div>
         <div className="flex-1 min-h-0 p-3 sm:p-4 overflow-hidden flex flex-col">
           <div className="flex-1 min-h-0 overflow-hidden border border-background-border bg-background-panel">

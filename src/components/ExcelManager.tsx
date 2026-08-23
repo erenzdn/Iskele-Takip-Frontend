@@ -1,8 +1,9 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
 import { 
   ArrowClockwiseIcon, 
   DownloadSimpleIcon, 
+  FunnelIcon,
   UploadSimpleIcon, 
   XIcon, 
   WarningCircleIcon,
@@ -10,12 +11,27 @@ import {
   FileTextIcon
 } from '@phosphor-icons/react';
 import { apiClient } from '../services/apiClient';
+import { inventoryService } from '../services/inventoryService';
 import { useAuthStore } from '../store/authStore';
 import { toast } from '../hooks/useToast';
 import { formatInventoryRelatedApiText, getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { CUSTOMERS_EXCEL_HELP } from '../constants/customersExcel';
 import { INVENTORY_EXCEL_HELP } from '../constants/inventoryExcel';
-import { resolveInventoryImportErrors } from '../utils/inventoryExcelImportUi';
+import { resolveExcelImportErrors } from '../utils/inventoryExcelImportUi';
+import { validateCustomersExcelFile } from '../utils/validateCustomersExcel';
+import {
+  decisionsToMappings,
+  extractUnmatchedCategories,
+  mergeCategoryMappings,
+  normalizeCategoryKey,
+} from '../utils/unmatchedCategoryResolution';
+import ExcelImportPreviewModal, { type ExcelPreviewValidRow } from './ExcelImportPreviewModal';
+import type { MaterialCategory } from '../models';
+import type {
+  CategoryResolutionDecision,
+  InventoryCategoryMapping,
+  UnmatchedCategoryLookup,
+} from '../types/inventoryExcelImport';
 
 export type ExcelModuleType = 'inventory' | 'customers' | 'checks' | 'stockReceipts';
 
@@ -43,6 +59,7 @@ export interface ExcelImportErrorRow {
   category?: ExcelErrorCategory;
   givenValue?: string | null;
   displayMessage?: string;
+  code?: string;
 }
 
 export interface ExcelImportRowErrors {
@@ -57,6 +74,7 @@ export interface ExcelImportRowErrors {
     category: ExcelErrorCategory | null;
     givenValue: string | null;
     displayMessage: string;
+    code?: string;
   }>;
 }
 
@@ -65,10 +83,13 @@ export interface ExcelImportSummary {
   successRows: number;
   failedRows: number;
   errorsByCategory: Record<ExcelErrorCategory, number>;
+  createCount?: number;
+  updateCount?: number;
 }
 
 interface ExcelImportResponse {
   success: boolean;
+  preview?: boolean;
   partial?: boolean;
   canPartialImport?: boolean;
   validRowCount?: number;
@@ -76,10 +97,12 @@ interface ExcelImportResponse {
   summary?: ExcelImportSummary;
   errors?: ExcelImportErrorRow[];
   errorsByRow?: ExcelImportRowErrors[];
+  validRows?: ExcelPreviewValidRow[];
+  unmatchedLookups?: { categories?: Array<{ value: string; rowCount: number; rows: number[]; reason: 'not_found' | 'ambiguous' }> };
   count?: number;
 }
 
-type Busy = null | 'export' | 'import';
+type Busy = null | 'export' | 'import' | 'preview';
 type ExcelImportMode = 'strict' | 'lenient' | 'force';
 
 function normalizeExcelErrorRow(raw: unknown): ExcelImportErrorRow | null {
@@ -113,6 +136,7 @@ function normalizeExcelErrorRow(raw: unknown): ExcelImportErrorRow | null {
       typeof displayMessageRaw === 'string' && displayMessageRaw.trim()
         ? displayMessageRaw
         : undefined,
+    code: typeof (row.code ?? row.Code) === 'string' ? String(row.code ?? row.Code) : undefined,
   };
 }
 
@@ -137,8 +161,8 @@ function normalizeExcelImportRowErrors(row: unknown): ExcelImportRowErrors | nul
         typeof displayMessageRaw === 'string' && displayMessageRaw.trim()
           ? displayMessageRaw
           : `Satır ${Number.isFinite(rowNumber) ? rowNumber : '?'}, ${column}: ${error}`;
-
-      return {
+      const codeRaw = i.code ?? i.Code;
+      const normalizedIssue: ExcelImportRowErrors['issues'][number] = {
         column,
         error,
         category,
@@ -150,6 +174,8 @@ function normalizeExcelImportRowErrors(row: unknown): ExcelImportRowErrors | nul
               : null,
         displayMessage,
       };
+      if (typeof codeRaw === 'string' && codeRaw.trim()) normalizedIssue.code = codeRaw;
+      return normalizedIssue;
     })
     .filter((issue): issue is ExcelImportRowErrors['issues'][number] => issue !== null);
 
@@ -177,6 +203,9 @@ function normalizeExcelImportSummary(summary: unknown): ExcelImportSummary | und
     Record<ExcelErrorCategory, number>
   >;
 
+  const createCount = Number(obj.createCount ?? obj.CreateCount);
+  const updateCount = Number(obj.updateCount ?? obj.UpdateCount);
+
   return {
     totalRows: Number.isFinite(totalRows) ? totalRows : 0,
     successRows: Number.isFinite(successRows) ? successRows : 0,
@@ -186,6 +215,8 @@ function normalizeExcelImportSummary(summary: unknown): ExcelImportSummary | und
       VALIDATION: Number(rawCategories.VALIDATION ?? 0),
       BUSINESS: Number(rawCategories.BUSINESS ?? 0),
     },
+    createCount: Number.isFinite(createCount) ? createCount : undefined,
+    updateCount: Number.isFinite(updateCount) ? updateCount : undefined,
   };
 }
 
@@ -225,16 +256,85 @@ function normalizeExcelImportResponse(data: unknown): ExcelImportResponse | null
           ? obj.ValidRowCount
           : undefined,
     message:
-      typeof obj.message === 'string'
+      typeof obj.message === 'string' && obj.message
         ? obj.message
-        : typeof obj.Message === 'string'
+        : typeof obj.Message === 'string' && obj.Message
           ? obj.Message
-          : undefined,
+          : typeof obj.error === 'string' && obj.error
+            ? obj.error
+            : typeof obj.Error === 'string' && obj.Error
+              ? obj.Error
+              : typeof obj.title === 'string' && obj.title
+                ? obj.title
+                : typeof obj.detail === 'string' && obj.detail
+                  ? obj.detail
+                  : undefined,
     summary: normalizeExcelImportSummary(obj.summary ?? obj.Summary),
     errors,
     errorsByRow,
+    validRows: normalizeExcelPreviewRows(obj.validRows ?? obj.ValidRows),
+    preview: Boolean(obj.preview ?? obj.Preview),
+    unmatchedLookups: normalizeUnmatchedLookups(obj.unmatchedLookups ?? obj.UnmatchedLookups),
     count: typeof obj.count === 'number' ? obj.count : typeof obj.Count === 'number' ? obj.Count : undefined,
   };
+}
+
+function normalizeUnmatchedLookups(raw: unknown): ExcelImportResponse['unmatchedLookups'] {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const obj = raw as Record<string, unknown>;
+  const list = Array.isArray(obj.categories)
+    ? obj.categories
+    : Array.isArray(obj.Categories)
+      ? obj.Categories
+      : [];
+  const categories = list
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      const value = String(row.value ?? row.Value ?? '').trim();
+      if (!value) return null;
+      const rowsRaw = Array.isArray(row.rows) ? row.rows : Array.isArray(row.Rows) ? row.Rows : [];
+      const reasonRaw = String(row.reason ?? row.Reason ?? 'not_found');
+      return {
+        value,
+        rowCount: Number(row.rowCount ?? row.RowCount ?? rowsRaw.length) || 0,
+        rows: rowsRaw.map(Number).filter((n) => Number.isFinite(n)),
+        reason: reasonRaw === 'ambiguous' ? ('ambiguous' as const) : ('not_found' as const),
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
+  return { categories };
+}
+
+function normalizeExcelPreviewRows(raw: unknown): ExcelPreviewValidRow[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      if (!item || typeof item !== 'object') return null;
+      const row = item as Record<string, unknown>;
+      const rowNumber = Number(row.row ?? row.Row);
+      const valuesRaw = row.values ?? row.Values;
+      if (!Number.isFinite(rowNumber) || !valuesRaw || typeof valuesRaw !== 'object') return null;
+      const values: ExcelPreviewValidRow['values'] = {};
+      Object.entries(valuesRaw as Record<string, unknown>).forEach(([key, value]) => {
+        if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+          values[key] = value;
+        } else if (value !== undefined) {
+          values[key] = String(value);
+        }
+      });
+      const actionRaw = String(row.action ?? row.Action ?? '').toLowerCase();
+      const action: ExcelPreviewValidRow['action'] =
+        actionRaw === 'update' || actionRaw === 'create' ? actionRaw : undefined;
+      const previewRow: ExcelPreviewValidRow = {
+        row: rowNumber,
+        sheet: String(row.sheet ?? row.Sheet ?? ''),
+        action,
+        values,
+      };
+      return previewRow;
+    })
+    .filter((row): row is ExcelPreviewValidRow => row !== null);
 }
 
 function normalizeExcelImportError(error: unknown): ExcelImportResponse | null {
@@ -281,51 +381,127 @@ function prepareImportErrors(
   errors: ExcelImportErrorRow[],
   errorsByRow: ExcelImportRowErrors[]
 ): { errors: ExcelImportErrorRow[]; errorsByRow: ExcelImportRowErrors[] } {
-  if (type !== 'inventory') {
-    return { errors, errorsByRow: errorsByRow.length > 0 ? errorsByRow : groupImportErrorsByRowGeneric(errors) };
-  }
-  return resolveInventoryImportErrors(errors, errorsByRow);
+  // Backend displayMessage / summary birincil kaynak; frontend yalnızca eksikleri tamamlar.
+  return resolveExcelImportErrors(errors, errorsByRow, {
+    mapInventoryColumns: type === 'inventory',
+    softenTechnicalErrors: type === 'inventory',
+  });
 }
 
-function groupImportErrorsByRowGeneric(errors: ExcelImportErrorRow[]): ExcelImportRowErrors[] {
-  const byRow = new Map<number, ExcelImportRowErrors>();
+type ErrorCategoryFilter = 'ALL' | ExcelErrorCategory;
 
-  for (const err of errors) {
-    if (!err.row) continue;
-    let rowErr = byRow.get(err.row);
-    if (!rowErr) {
-      rowErr = {
-        row: err.row,
-        sheet: err.sheet ?? '-',
-        errorCount: 0,
-        columns: [],
-        summary: '',
-        issues: [],
-      };
-      byRow.set(err.row, rowErr);
+const CATEGORY_FILTER_OPTIONS: { key: ErrorCategoryFilter; label: string }[] = [
+  { key: 'ALL', label: 'Tümü' },
+  { key: 'VALIDATION', label: 'Doğrulama' },
+  { key: 'COERCION', label: 'Format' },
+  { key: 'BUSINESS', label: 'İş Kuralı' },
+];
+
+const FILTER_ACTIVE_CLASSES: Record<ErrorCategoryFilter, string> = {
+  ALL: 'border-error/40 bg-error/10 text-error',
+  VALIDATION: 'border-error/40 bg-error/10 text-error',
+  COERCION: 'border-orange-500/40 bg-orange-500/10 text-orange-400',
+  BUSINESS: 'border-purple-500/40 bg-purple-500/10 text-purple-400',
+};
+
+/**
+ * Hata kategorisi filtre sekmeleri + satır listesi.
+ * errorModal içinde kullanılır; önizleme ekranındaki eşdeğeri ExcelImportPreviewModal'dadır.
+ */
+const ErrorRowList = memo(function ErrorRowList({ errorsByRow }: { errorsByRow: ExcelImportRowErrors[] }) {
+  const [filter, setFilter] = useState<ErrorCategoryFilter>('ALL');
+
+  const counts = useMemo<Record<ErrorCategoryFilter, number>>(() => {
+    const c: Record<ErrorCategoryFilter, number> = { ALL: errorsByRow.length, VALIDATION: 0, COERCION: 0, BUSINESS: 0 };
+    for (const rowErr of errorsByRow) {
+      const cats = new Set(rowErr.issues.map((i) => i.category).filter(Boolean) as ExcelErrorCategory[]);
+      for (const cat of cats) c[cat] = (c[cat] ?? 0) + 1;
     }
+    return c;
+  }, [errorsByRow]);
 
-    const displayMessage =
-      err.displayMessage?.trim() || `Satır ${err.row}, ${err.column}: ${err.error}`;
+  const filtered = useMemo(
+    () => filter === 'ALL' ? errorsByRow : errorsByRow.filter((r) => r.issues.some((i) => i.category === filter)),
+    [errorsByRow, filter]
+  );
 
-    rowErr.issues.push({
-      column: err.column,
-      error: err.error,
-      category: err.category ?? null,
-      givenValue: err.givenValue ?? null,
-      displayMessage,
-    });
-  }
+  return (
+    <div className="space-y-3">
+      {/* Filtre sekmeleri */}
+      <div className="flex items-center gap-1.5 flex-wrap border-b border-background-border pb-3">
+        <FunnelIcon size={14} className="text-text-secondary shrink-0" />
+        {CATEGORY_FILTER_OPTIONS
+          .filter((f) => f.key === 'ALL' || (counts[f.key] ?? 0) > 0)
+          .map((f) => (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => setFilter(f.key)}
+              className={`px-2.5 py-1 text-xs rounded-md border transition-colors ${
+                filter === f.key
+                  ? FILTER_ACTIVE_CLASSES[f.key]
+                  : 'border-background-border text-text-secondary hover:bg-background-hover'
+              }`}
+            >
+              {f.label}
+              <span className="ml-1.5 tabular-nums opacity-70">({counts[f.key] ?? 0})</span>
+            </button>
+          ))}
+      </div>
 
-  return Array.from(byRow.values())
-    .map((rowErr) => ({
-      ...rowErr,
-      errorCount: rowErr.issues.length,
-      columns: rowErr.issues.map((issue) => issue.column),
-      summary: rowErr.issues.map((issue) => `${issue.column}: ${issue.error}`).join('; '),
-    }))
-    .sort((a, b) => a.row - b.row);
-}
+      {/* Hata satırları */}
+      {filtered.length === 0 ? (
+        <p className="text-sm text-text-secondary py-6 text-center">Bu kategoride sorun yok.</p>
+      ) : (
+        filtered.map((rowErr) => {
+          const visibleIssues = filter === 'ALL'
+            ? rowErr.issues
+            : rowErr.issues.filter((i) => i.category === filter);
+          return (
+            <div
+              key={`${rowErr.sheet}-${rowErr.row}`}
+              className="rounded-md border border-background-border bg-background-muted/20 p-3"
+            >
+              <div className="flex items-center justify-between gap-2 flex-wrap">
+                <strong className="text-sm text-text-primary">
+                  {rowErr.sheet ? (
+                    <span className="text-text-secondary font-normal mr-1">{rowErr.sheet} /</span>
+                  ) : null}
+                  {rowErr.row}. satır
+                </strong>
+                <span className="text-[10px] text-text-secondary tabular-nums">{visibleIssues.length} hata</span>
+              </div>
+              {rowErr.summary && <p className="text-xs text-text-secondary mt-1">{rowErr.summary}</p>}
+              <ul className="mt-2 space-y-1.5 text-xs text-text-secondary">
+                {visibleIssues.map((issue, i) => (
+                  <li key={`${rowErr.row}-${issue.column}-${i}`} className="flex items-start gap-2 leading-relaxed">
+                    <span className="mt-0.5 shrink-0 w-1.5 h-1.5 rounded-full bg-error/60 inline-block" />
+                    <span className="flex-1">
+                      <span className="font-medium text-text-primary">{issue.column}:</span>{' '}
+                      {issue.displayMessage}
+                      {issue.givenValue && (
+                        <span className="ml-1 font-mono text-[10px] text-text-secondary opacity-70">
+                          ({issue.givenValue})
+                        </span>
+                      )}
+                    </span>
+                    {issue.category && (
+                      <span
+                        className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] font-bold ${categoryBadgeClass(issue.category)}`}
+                      >
+                        {categoryBadgeLabel(issue.category)}
+                      </span>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+});
 
 function isExcelFile(file: File): boolean {
   const ext = file.name.split('.').pop()?.toLowerCase();
@@ -358,6 +534,27 @@ export interface ExcelManagerProps {
   modalZClass?: string;
 }
 
+function appendInventoryExcelFields(
+  formData: FormData,
+  rates: {
+    usdRate: string;
+    eurRate: string;
+    rentalRateTry: string;
+    rentalRateUsd: string;
+    rentalRateEur: string;
+  },
+  mappings: InventoryCategoryMapping[]
+) {
+  if (rates.usdRate) formData.append('usdRate', rates.usdRate);
+  if (rates.eurRate) formData.append('eurRate', rates.eurRate);
+  if (rates.rentalRateTry) formData.append('rentalRateTry', rates.rentalRateTry);
+  if (rates.rentalRateUsd) formData.append('rentalRateUsd', rates.rentalRateUsd);
+  if (rates.rentalRateEur) formData.append('rentalRateEur', rates.rentalRateEur);
+  if (mappings.length > 0) {
+    formData.append('categoryMappings', JSON.stringify(mappings));
+  }
+}
+
 export default function ExcelManager({
   type,
   title,
@@ -370,6 +567,12 @@ export default function ExcelManager({
   const { view: viewPerm, create: createPerm } = PERMISSIONS[type];
   const canView = permissions.includes(viewPerm);
   const canImport = permissions.includes(createPerm);
+  const canCreateCategories = permissions.includes('categories_create');
+
+  const resetCategorySession = useCallback(() => {
+    setCategoryMappings([]);
+    setSkippedCategoryNames([]);
+  }, []);
 
   const [busy, setBusy] = useState<Busy>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -386,6 +589,21 @@ export default function ExcelManager({
     validRowCount?: number;
   } | null>(null);
   const [importInfoModalType, setImportInfoModalType] = useState<ExcelModuleType | null>(null);
+  const [previewModal, setPreviewModal] = useState<{
+    file: File;
+    fileName: string;
+    message?: string;
+    summary?: ExcelImportSummary;
+    validRows: ExcelPreviewValidRow[];
+    errorsByRow: ExcelImportRowErrors[];
+    validRowCount: number;
+    canPartialImport: boolean;
+    unmatchedLookups?: ExcelImportResponse['unmatchedLookups'];
+  } | null>(null);
+  const [categoryMappings, setCategoryMappings] = useState<InventoryCategoryMapping[]>([]);
+  const [skippedCategoryNames, setSkippedCategoryNames] = useState<string[]>([]);
+  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
+  const [resolvingCategories, setResolvingCategories] = useState(false);
 
   // Otomatik hesaplama oranları state'leri
   const [usdRate, setUsdRate] = useState<string>('');
@@ -423,6 +641,187 @@ export default function ExcelManager({
     }
   }, [canView, type]);
 
+  const previewFile = useCallback(
+    async (file: File, options?: { keepMappings?: boolean; mappings?: InventoryCategoryMapping[] }) => {
+      if (!canImport) return;
+      if (!isExcelFile(file)) {
+        toast.warning('Yalnızca .xlsx veya .xls dosyası yükleyebilirsiniz.');
+        return;
+      }
+      if (file.size > 10 * 1024 * 1024) {
+        toast.warning('Dosya boyutu 10MB limitini aşıyor.');
+        return;
+      }
+
+      const mappings = options?.mappings ?? (options?.keepMappings ? categoryMappings : []);
+      if (!options?.keepMappings) {
+        resetCategorySession();
+      }
+
+      setBusy('preview');
+      setErrorModal(null);
+      try {
+        // ── Müşteri dosyaları için önce client-side tam validasyon ──────────────
+        // Hatalı satırlar tespit edilir.
+        // - Tüm satırlar hatalıysa: eski davranış korunur, backend'e gidilmez,
+        //   hatalar doğrudan önizlemede gösterilir.
+        // - Bir kısmı hatalı, bir kısmı geçerliyse: backend'e preview isteği de
+        //   atılır, geçerli satırlar birleştirilerek kısmi import seçeneği sunulur.
+        let customerClientErrors: ExcelImportRowErrors[] = [];
+        if (type === 'customers') {
+          const { errorsByRow: clientErrors, missingSheet } = await validateCustomersExcelFile(file);
+          if (missingSheet) {
+            toast.error('Excel dosyasında "Customers" sayfası bulunamadı. Lütfen doğru şablonu kullanın.');
+            return;
+          }
+          customerClientErrors = clientErrors;
+        }
+
+        // Tüm satırlar hatalıysa backend'e gitmeye gerek yok — eski davranış.
+        if (type === 'customers' && customerClientErrors.length > 0) {
+          // Toplam veri satırı sayısını tahmin etmek için dosyayı tekrar okumak
+          // pahalı; bunun yerine hata satırlarının max row'unu kullanıyoruz.
+          const maxRow = customerClientErrors.reduce((m, r) => Math.max(m, r.row), 0);
+          // maxRow başlık satırı hariç son satır numarası (excel row); veri satırı = maxRow - 1
+          const estimatedTotal = Math.max(maxRow - 1, customerClientErrors.length);
+          const allRowsInvalid = customerClientErrors.length >= estimatedTotal;
+
+          if (allRowsInvalid) {
+            setLastFile(file);
+            setPreviewModal({
+              file,
+              fileName: file.name,
+              message: `${customerClientErrors.length} satırda doğrulama hatası tespit edildi. Lütfen düzeltin ve tekrar yükleyin.`,
+              summary: {
+                totalRows: estimatedTotal,
+                successRows: 0,
+                failedRows: customerClientErrors.length,
+                errorsByCategory: {
+                  COERCION: 0,
+                  VALIDATION: customerClientErrors.reduce((sum, r) => sum + r.errorCount, 0),
+                  BUSINESS: 0,
+                },
+              },
+              validRows: [],
+              errorsByRow: customerClientErrors,
+              validRowCount: 0,
+              canPartialImport: false,
+            });
+            return;
+          }
+        }
+        // ────────────────────────────────────────────────────────────────────────
+
+        const formData = new FormData();
+        formData.append('file', file);
+        if (type === 'inventory') {
+          appendInventoryExcelFields(
+            formData,
+            { usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur },
+            mappings
+          );
+          if (inventoryCategories.length === 0) {
+            try {
+              const cats = await inventoryService.getAllCategoriesAsync();
+              setInventoryCategories(cats);
+            } catch {
+              // Kategori listesi yüklenemezse eşleme paneli boş gelir; önizleme yine açılır.
+            }
+          }
+        }
+        const data = await apiClient.postFormData<ExcelImportResponse>(
+          `/excel/preview/${type}`,
+          formData
+        );
+        const normalized = normalizeExcelImportResponse(data);
+        if (!normalized) {
+          toast.error('Önizleme yanıtı okunamadı.');
+          return;
+        }
+        const prepared = prepareImportErrors(
+          type,
+          normalized.errors ?? [],
+          normalized.errorsByRow ?? []
+        );
+
+        // Client-side hataları backend hataları ile birleştir (müşteri modülü).
+        // Aynı satır+sayfa varsa client hatası önceliklidir; tekrar eklenmez.
+        const mergedErrorsByRow = (() => {
+          if (customerClientErrors.length === 0) return prepared.errorsByRow;
+          const backendRows = prepared.errorsByRow.filter(
+            (be) =>
+              !customerClientErrors.some(
+                (ce) => ce.row === be.row && ce.sheet === be.sheet
+              )
+          );
+          return [...customerClientErrors, ...backendRows].sort((a, b) => {
+            const sheetCmp = (a.sheet ?? '').localeCompare(b.sheet ?? '');
+            return sheetCmp !== 0 ? sheetCmp : a.row - b.row;
+          });
+        })();
+
+        // Hatalı satır numaralarını çıkar; backend geçerli satır sayısını bilmiyorsa hesapla.
+        const errorRowKeys = new Set(
+          mergedErrorsByRow.map((r) => `${r.sheet ?? ''}:${r.row}`)
+        );
+        const backendValidRows = normalized.validRows ?? [];
+        const filteredValidRows = backendValidRows.filter(
+          (r) => !errorRowKeys.has(`${r.sheet ?? ''}:${r.row}`)
+        );
+        const mergedValidRowCount =
+          normalized.validRowCount !== undefined
+            ? Math.max(0, normalized.validRowCount - customerClientErrors.length)
+            : filteredValidRows.length;
+        const mergedCanPartialImport =
+          normalized.canPartialImport === true ||
+          (customerClientErrors.length > 0 && mergedValidRowCount > 0);
+
+        // Özet güncelle
+        const mergedSummary = normalized.summary
+          ? {
+              ...normalized.summary,
+              failedRows: mergedErrorsByRow.length,
+              successRows: mergedValidRowCount,
+            }
+          : undefined;
+
+        setLastFile(file);
+        setPreviewModal({
+          file,
+          fileName: file.name,
+          message:
+            type === 'inventory' && normalized.message
+              ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
+              : normalized.message,
+          summary: mergedSummary,
+          validRows: filteredValidRows,
+          errorsByRow: mergedErrorsByRow,
+          validRowCount: mergedValidRowCount,
+          canPartialImport: mergedCanPartialImport,
+          unmatchedLookups: normalized.unmatchedLookups,
+        });
+      } catch (e) {
+        console.error('Excel preview error:', e);
+        toast.error(excelImportErrorMessage(type, e, 'Dosya doğrulanamadı.'));
+      } finally {
+        setBusy(null);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+      }
+    },
+    [
+      canImport,
+      type,
+      usdRate,
+      eurRate,
+      rentalRateTry,
+      rentalRateUsd,
+      rentalRateEur,
+      categoryMappings,
+      inventoryCategories.length,
+      resetCategorySession,
+    ]
+  );
+
   const processFile = useCallback(
     async (file: File, mode: ExcelImportMode = 'strict') => {
       if (!canImport) return;
@@ -442,11 +841,11 @@ export default function ExcelManager({
         const formData = new FormData();
         formData.append('file', file);
         if (type === 'inventory') {
-          if (usdRate) formData.append('usdRate', usdRate);
-          if (eurRate) formData.append('eurRate', eurRate);
-          if (rentalRateTry) formData.append('rentalRateTry', rentalRateTry);
-          if (rentalRateUsd) formData.append('rentalRateUsd', rentalRateUsd);
-          if (rentalRateEur) formData.append('rentalRateEur', rentalRateEur);
+          appendInventoryExcelFields(
+            formData,
+            { usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur },
+            categoryMappings
+          );
         }
 
         // mode query parametresi eklendi
@@ -464,13 +863,16 @@ export default function ExcelManager({
                 : `${data.count || ''} satır başarıyla işlendi.`)
           );
           setErrorModal(null);
+          setPreviewModal(null);
           setLastFile(null);
+          resetCategorySession();
           onImportSuccess?.();
           return;
         }
 
         // Kısmi Başarı (207) veya Hata (400+)
         if (data && typeof data === 'object') {
+          console.warn('[ExcelManager] Import non-success response:', JSON.stringify(data));
           const normalized = normalizeExcelImportResponse(data);
           const prepared = prepareImportErrors(
             type,
@@ -489,9 +891,11 @@ export default function ExcelManager({
                   : 'İçe aktarma kısmen tamamlandı.')
             );
             setLastFile(null);
+            setPreviewModal(null);
             onImportSuccess?.();
           } else {
             setLastFile(file);
+            setPreviewModal(null);
             toast.error(
               (type === 'inventory' && normalized?.message
                 ? formatInventoryRelatedApiText(normalized.message, 'excel-import')
@@ -517,7 +921,10 @@ export default function ExcelManager({
               normalized?.canPartialImport === true && 
               mode === 'strict',
             canImportAllRows:
-              !normalized?.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+              type === 'inventory' &&
+              !normalized?.partial &&
+              (rowsByRow.length > 0 || rows.length > 0) &&
+              mode === 'strict',
             validRowCount: normalized?.validRowCount,
           });
           return;
@@ -536,6 +943,7 @@ export default function ExcelManager({
           const rows = prepared.errors;
           const rowsByRow = prepared.errorsByRow;
           setLastFile(file);
+          setPreviewModal(null);
           setErrorModal({
             message: excelImportErrorMessage(type, e, 'İçe aktarma sırasında sorunlar oluştu.'),
             errors: rows,
@@ -548,26 +956,86 @@ export default function ExcelManager({
               normalized.canPartialImport === true && 
               mode === 'strict',
             canImportAllRows:
-              !normalized.partial && (rowsByRow.length > 0 || rows.length > 0) && mode === 'strict',
+              type === 'inventory' &&
+              !normalized.partial &&
+              (rowsByRow.length > 0 || rows.length > 0) &&
+              mode === 'strict',
             validRowCount: normalized.validRowCount,
           });
           toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
           return;
         }
         toast.error(excelImportErrorMessage(type, e, 'İçe aktarma başarısız.'));
+        setPreviewModal(null);
       } finally {
         setBusy(null);
         if (fileInputRef.current) fileInputRef.current.value = '';
       }
     },
-    [canImport, type, onImportSuccess, usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur]
+    [canImport, type, onImportSuccess, usdRate, eurRate, rentalRateTry, rentalRateUsd, rentalRateEur, categoryMappings, resetCategorySession]
   );
+
+  const applyCategoryResolutions = useCallback(
+    async (decisions: CategoryResolutionDecision[]) => {
+      if (!previewModal || type !== 'inventory') return;
+      setResolvingCategories(true);
+      try {
+        let latestCategories = inventoryCategories;
+        if (latestCategories.length === 0) {
+          latestCategories = await inventoryService.getAllCategoriesAsync();
+        }
+
+        const createdMappings: InventoryCategoryMapping[] = [];
+        for (const decision of decisions) {
+          if (decision.action !== 'create') continue;
+          const name = (decision.createName || decision.excelName).trim();
+          if (!name) continue;
+          const existing = latestCategories.find(
+            (category) => normalizeCategoryKey(category.CategoryName) === normalizeCategoryKey(name)
+          );
+          if (existing) {
+            createdMappings.push({ from: decision.excelName, toCategoryId: existing.CategoryId });
+            continue;
+          }
+          const created = await inventoryService.createCategoryAsync({ CategoryName: name });
+          const newId = Number(created.CategoryId);
+          createdMappings.push({ from: decision.excelName, toCategoryId: newId });
+          latestCategories = [...latestCategories, { CategoryId: newId, CategoryName: name }];
+        }
+
+        setInventoryCategories(latestCategories);
+        const nextMappings = mergeCategoryMappings(categoryMappings, [
+          ...createdMappings,
+          ...decisionsToMappings(decisions),
+        ]);
+        setCategoryMappings(nextMappings);
+        setSkippedCategoryNames(
+          decisions.filter((decision) => decision.action === 'skip').map((decision) => decision.excelName)
+        );
+        await previewFile(previewModal.file, { keepMappings: true, mappings: nextMappings });
+        toast.success('Kategori eşlemesi uygulandı. Önizleme yenilendi.');
+      } catch (error) {
+        toast.error(getApiErrorMessage(error) || 'Kategori çözümlemesi uygulanamadı.');
+      } finally {
+        setResolvingCategories(false);
+      }
+    },
+    [previewModal, type, inventoryCategories, categoryMappings, previewFile]
+  );
+
+  const unmatchedCategories = useMemo<UnmatchedCategoryLookup[]>(() => {
+    if (type !== 'inventory' || !previewModal) return [];
+    return extractUnmatchedCategories({
+      unmatchedLookups: previewModal.unmatchedLookups,
+      errorsByRow: previewModal.errorsByRow,
+    });
+  }, [type, previewModal]);
 
   const onInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       setImportInfoModalType(null);
-      void processFile(file);
+      void previewFile(file);
     }
   };
 
@@ -579,7 +1047,7 @@ export default function ExcelManager({
     const file = e.dataTransfer.files?.[0];
     if (file) {
       setImportInfoModalType(null);
-      void processFile(file);
+      void previewFile(file);
     }
   };
 
@@ -669,7 +1137,7 @@ export default function ExcelManager({
               }}
               className="btn-secondary py-1.5 px-2.5 text-xs inline-flex items-center gap-1.5 border-none bg-transparent hover:bg-background-hover"
             >
-              {busy === 'import' ? (
+              {busy === 'import' || busy === 'preview' ? (
                 <ArrowClockwiseIcon size={14} className="animate-spin shrink-0" />
               ) : (
                 <UploadSimpleIcon size={14} weight="bold" className="shrink-0 text-accent" />
@@ -720,7 +1188,8 @@ export default function ExcelManager({
                     {INVENTORY_EXCEL_HELP.optionalLegend}
                   </div>
                   <p>{INVENTORY_EXCEL_HELP.stockNote}</p>
-                  <p className="text-text-secondary/80">{INVENTORY_EXCEL_HELP.notInTemplate}</p>
+                  <p>{INVENTORY_EXCEL_HELP.categoryNote}</p>
+                  <p>{INVENTORY_EXCEL_HELP.roundTripNote}</p>
                   <p className="text-warning/90">{INVENTORY_EXCEL_HELP.exportNote}</p>
                 </div>
               )}
@@ -792,6 +1261,7 @@ export default function ExcelManager({
                 </div>
               )}
               <p className="text-xs text-text-secondary">
+                Dosya seçildikten sonra önce doğrulama ekranı açılır; onaylamadan hiçbir kayıt yazılmaz.
                 Desteklenen dosya tipleri: <code>.xlsx</code> / <code>.xls</code> (maksimum 10MB)
               </p>
             </div>
@@ -810,7 +1280,7 @@ export default function ExcelManager({
                 onClick={() => fileInputRef.current?.click()}
                 className="btn-primary py-2 px-4 text-sm inline-flex items-center gap-2"
               >
-                {busy === 'import' ? (
+                {busy === 'import' || busy === 'preview' ? (
                   <ArrowClockwiseIcon size={16} className="animate-spin shrink-0" />
                 ) : (
                   <UploadSimpleIcon size={16} weight="bold" className="shrink-0" />
@@ -821,6 +1291,34 @@ export default function ExcelManager({
           </div>
         </div>,
         document.body
+      )}
+
+      {previewModal && (
+        <ExcelImportPreviewModal
+          fileName={previewModal.fileName}
+          message={previewModal.message}
+          summary={previewModal.summary}
+          validRows={previewModal.validRows}
+          errorsByRow={previewModal.errorsByRow}
+          validRowCount={previewModal.validRowCount}
+          canPartialImport={previewModal.canPartialImport}
+          busy={busy === 'import' || busy === 'preview'}
+          modalZClass={modalZClass}
+          unmatchedCategories={unmatchedCategories}
+          categories={inventoryCategories}
+          canCreateCategories={canCreateCategories}
+          skippedCategoryNames={skippedCategoryNames}
+          resolvingCategories={resolvingCategories}
+          onResolveCategories={type === 'inventory' ? applyCategoryResolutions : undefined}
+          onCancel={() => {
+            if (busy === 'import' || busy === 'preview' || resolvingCategories) return;
+            setPreviewModal(null);
+            setLastFile(null);
+            resetCategorySession();
+          }}
+          onConfirmAll={() => void processFile(previewModal.file, 'strict')}
+          onConfirmValidOnly={() => void processFile(previewModal.file, 'lenient')}
+        />
       )}
 
       {errorModal && createPortal(
@@ -894,39 +1392,15 @@ export default function ExcelManager({
               )}
 
               {errorModal.errorsByRow.length > 0 ? (
-                <div className="import-errors space-y-3">
-                  {errorModal.errorsByRow.map((rowErr) => (
-                    <div
-                      key={`${rowErr.sheet}-${rowErr.row}`}
-                      className="rounded-md border border-background-border bg-background-muted/20 p-3"
-                    >
-                      <strong className="text-sm text-text-primary">
-                        Excel&apos;de {rowErr.row}. satıra gidin
-                      </strong>
-                      {rowErr.summary && (
-                        <p className="text-xs text-text-secondary mt-1">{rowErr.summary}</p>
-                      )}
-                      <ul className="mt-2 space-y-1.5 list-disc list-inside text-xs text-text-secondary">
-                        {rowErr.issues.map((issue, i) => (
-                          <li key={`${rowErr.row}-${issue.column}-${i}`} className="leading-relaxed">
-                            <span>{issue.displayMessage}</span>
-                            {issue.category && (
-                              <span
-                                className={`ml-2 px-1.5 py-0.5 rounded border text-[10px] font-bold align-middle ${categoryBadgeClass(issue.category)}`}
-                              >
-                                {categoryBadgeLabel(issue.category)}
-                              </span>
-                            )}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
+                <ErrorRowList errorsByRow={errorModal.errorsByRow} />
               ) : errorModal.errors.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-10 text-text-secondary">
-                  <CheckCircleIcon size={48} weight="thin" />
-                  <p className="mt-2 text-sm">Satır bazlı detaylı hata bulunmadı.</p>
+                <div className="flex flex-col items-center justify-center py-10 text-text-secondary gap-3">
+                  <WarningCircleIcon size={48} weight="thin" className="text-error/60" />
+                  <p className="mt-1 text-sm font-medium text-text-primary text-center max-w-md">
+                    {errorModal.message && errorModal.message !== 'İçe aktarma sırasında sorunlar oluştu.'
+                      ? errorModal.message
+                      : 'Sunucudan satır bazlı hata detayı gelmedi. Lütfen Excel dosyanızı kontrol edin veya sistem yöneticisiyle iletişime geçin.'}
+                  </p>
                 </div>
               ) : (
                 <table className="w-full text-xs border-collapse">

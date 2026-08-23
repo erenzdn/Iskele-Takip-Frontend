@@ -68,13 +68,13 @@ export default function CustomerDetailModal({
   const [totalContracts, setTotalContracts] = useState(0);
   const [activeContracts, setActiveContracts] = useState(0);
 
-  // Telefon girişini sadece rakamla sınırla (max 11 hane: 0XXX XXX XX XX)
+  // Telefon girişini sadece rakamla sınırla (max 15 hane)
   const handlePhoneInput = (
     value: string,
     setter: (val: string) => void
   ) => {
     const digitsOnly = value.replace(/\D/g, '');
-    if (digitsOnly.length <= 11) {
+    if (digitsOnly.length <= 15) {
       setter(digitsOnly);
     }
   };
@@ -629,8 +629,8 @@ export default function CustomerDetailModal({
                     setFormError(null);
                   }}
                   disabled={isReadOnly}
-                  placeholder="05XX XXX XX XX"
-                  maxLength={11}
+                  placeholder="05XX XXX XX XX veya 0212 XXX XX XX"
+                  maxLength={15}
                   className="input w-full"
                 />
                 {topLevelErrorFor('PhoneNumber', 'phoneNumber') && <p className="mt-1 text-xs text-red-400">{topLevelErrorFor('PhoneNumber', 'phoneNumber')}</p>}
@@ -743,7 +743,7 @@ export default function CustomerDetailModal({
                               type="tel"
                               value={contact.Phone ?? ''}
                               onChange={(e) => {
-                                const digits = e.target.value.replace(/\D/g, '').slice(0, 11);
+                                const digits = e.target.value.replace(/\D/g, '').slice(0, 15);
                                 updateAuthorizedContact(index, { Phone: digits });
                                 setFormError(null);
                               }}

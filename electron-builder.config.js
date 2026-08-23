@@ -3,6 +3,7 @@ export default {
   productName: 'IskeleTakip',
   directories: {
     output: 'release',
+    buildResources: 'build',
   },
   publish: [
     {
@@ -14,13 +15,14 @@ export default {
   ],
   files: ['dist-web/**/*', 'dist-electron/**/*', 'package.json', 'LICENSE.txt'],
   win: {
+    icon: 'build/icons/icon.ico',
     target: [
       {
         target: 'nsis',
         arch: ['x64'],
       },
     ],
-    signAndEditExecutable: false,
+    signAndEditExecutable: true,
   },
   nsis: {
     oneClick: true,

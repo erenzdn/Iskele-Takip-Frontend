@@ -1,7 +1,7 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { useAuthStore } from '../../store/authStore';
-import { ClipboardIcon, CopySimpleIcon, XIcon, Plus } from '@phosphor-icons/react';
+import { ClipboardIcon, CopySimpleIcon, DotsSixVerticalIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
   Contract,
@@ -11,6 +11,7 @@ import {
   QuotePackage,
   Customer,
   Inventory,
+  MaterialCategory,
   QuoteLineItem,
   ConstructionSite,
   QuoteStatus,
@@ -23,6 +24,7 @@ import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
+import { discountPercentFromNet, lineDiscountAmount, lineNetFromGross } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -41,6 +43,7 @@ import SiteSelectField from '../SiteSelectField';
 import CustomerDetailModal from './CustomerDetailModal';
 import SiteCreateModal from './SiteCreateModal';
 import ContractDetailModal from './ContractDetailModal';
+import InventoryDetailModal from './InventoryDetailModal';
 import {
   applyCreatedSiteId,
   buildSiteRequestFields,
@@ -51,6 +54,7 @@ import {
   NewSiteFormState,
   validateSiteSelection,
 } from '../../utils/siteSelection';
+import { hasMeaningfulQuoteDraftContent, isQuoteDraftStatus } from '../../utils/quoteDraft';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -119,6 +123,9 @@ export default function QuoteDetailModal({
   const [isCloning, setIsCloning] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
+  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
+  const [selectedInventoryForDetail, setSelectedInventoryForDetail] = useState<Inventory | null>(null);
+  const [showInventoryCreateModal, setShowInventoryCreateModal] = useState(false);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [selectedAuthorizedContactId, setSelectedAuthorizedContactId] = useState<number | ''>('');
   const [authorizedContacts, setAuthorizedContacts] = useState<NonNullable<Customer['AuthorizedContacts']>>([]);
@@ -138,6 +145,10 @@ export default function QuoteDetailModal({
   const [subject, setSubject] = useState('');
   const [notes, setNotes] = useState('');
   const [isBusy, setIsBusy] = useState(false);
+  const [persistedQuoteId, setPersistedQuoteId] = useState<number | null>(quote?.QuoteId ?? null);
+  const [isDirty, setIsDirty] = useState(false);
+  const skipDirtyRef = useRef(true);
+  const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
   // Hızlı merkez yetkilisi oluşturma
   const [showCreateContactModal, setShowCreateContactModal] = useState(false);
@@ -192,6 +203,11 @@ export default function QuoteDetailModal({
    * key: ItemId
    */
   const [priceOverrideInputs, setPriceOverrideInputs] = useState<Record<number, string>>({});
+  /**
+   * İskontolu satır tutarı (yeşil Toplam) taslak girişi.
+   * key: inventory → ItemId string; manual → `man-${ClientId}`
+   */
+  const [lineNetInputs, setLineNetInputs] = useState<Record<string, string>>({});
 
   // Teklif şablonu yönetimi
   const [templates, setTemplates] = useState<QuoteTemplate[]>([]);
@@ -216,8 +232,11 @@ export default function QuoteDetailModal({
   const [isContractModalOpen, setIsContractModalOpen] = useState(false);
   const [convertedContract, setConvertedContract] = useState<Contract | null>(null);
   const [isOpeningConvertedContract, setIsOpeningConvertedContract] = useState(false);
-  const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 6 } | null>(null);
+  const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 5 | 6 } | null>(null);
   const quoteGridRefs = useRef<Map<string, HTMLElement>>(new Map());
+  const [dragItemIndex, setDragItemIndex] = useState<number | null>(null);
+  const [dragOverItemIndex, setDragOverItemIndex] = useState<number | null>(null);
+  const dragItemIndexRef = useRef<number | null>(null);
   const activeQuote = fullQuote ?? quote;
   const converted = Boolean(activeQuote && isQuoteConverted(activeQuote));
 
@@ -381,6 +400,42 @@ export default function QuoteDetailModal({
   }, [isNew, startInEditMode]);
 
   useEffect(() => {
+    if (quote?.QuoteId) setPersistedQuoteId(quote.QuoteId);
+  }, [quote?.QuoteId]);
+
+  useEffect(() => {
+    skipDirtyRef.current = true;
+    setIsDirty(false);
+    const t = window.setTimeout(() => {
+      skipDirtyRef.current = false;
+    }, 400);
+    return () => window.clearTimeout(t);
+  }, [isReadOnly, quote?.QuoteId, isNew]);
+
+  useEffect(() => {
+    if (skipDirtyRef.current || isReadOnly) return;
+    setIsDirty(true);
+  }, [
+    isReadOnly,
+    selectedCustomerId,
+    selectedAuthorizedContactId,
+    selectedSiteId,
+    quoteItems,
+    subject,
+    notes,
+    quoteCode,
+    startDate,
+    plannedEndDate,
+    rentalDurationDays,
+    iskonto,
+    vatRate,
+    currency,
+    language,
+    status,
+    quoteType,
+  ]);
+
+  useEffect(() => {
     if (!quote?.QuoteId || isNew) {
       setFullQuote(null);
       return;
@@ -438,7 +493,7 @@ export default function QuoteDetailModal({
           (source as any).kdv ??
           20
       );
-      setSelectedCustomerId(source.CustomerId);
+      setSelectedCustomerId(source.CustomerId ?? '');
       setSelectedAuthorizedContactId((source as { CustomerAuthorizedContactId?: number | null }).CustomerAuthorizedContactId ?? '');
       setSelectedSiteId(source.SiteId || '');
       {
@@ -857,14 +912,16 @@ export default function QuoteDetailModal({
 
   const loadData = async () => {
     try {
-      const [custData, invData, whData] = await Promise.all([
+      const [custData, invData, whData, catData] = await Promise.all([
         customerService.getAllAsync(),
-        inventoryService.getAllAsync(),
+        inventoryService.getAllAsync(undefined, { forceRefresh: true }),
         warehouseService.getActiveAsync(),
+        inventoryService.getAllCategoriesAsync(),
       ]);
       setCustomers(custData);
       setAvailableItems(invData);
       setWarehouses(whData);
+      setInventoryCategories(catData);
     } catch (error) {
       console.error('Load data error:', error);
     }
@@ -936,12 +993,20 @@ export default function QuoteDetailModal({
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getItemIskonto = (itemId: number) => itemIskonto[itemId] ?? iskonto;
 
+  const getRowDiscountPercent = (item: QuoteLineItem) =>
+    item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto;
+
+  /** İskonto sonrası satır tutarı (yeşil Toplam). */
+  const getLineNetTotal = (item: QuoteLineItem) =>
+    lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
+
+  const lineNetInputKey = (item: QuoteLineItem) =>
+    item.kind === 'inventory' ? String(item.ItemId) : `man-${item.ClientId}`;
+
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = totalPrice;
   const discountAmount = quoteItems.reduce((sum, item) => {
-    const lineTotal = getLineTotal(item);
-    const pct = item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto;
-    return sum + lineTotal * (pct / 100);
+    return sum + lineDiscountAmount(getLineTotal(item), getRowDiscountPercent(item));
   }, 0);
   const discountedTotal = subtotal - discountAmount;
   const vatAmount = discountedTotal * (vatRate / 100);
@@ -1021,9 +1086,9 @@ export default function QuoteDetailModal({
   const handleQuoteGridKeyDown = (
     e: React.KeyboardEvent<HTMLElement>,
     row: number,
-    col: 2 | 3 | 4 | 6
+    col: 2 | 3 | 4 | 5 | 6
   ) => {
-    const colOrder: Array<2 | 3 | 4 | 6> = [2, 3, 4, 6];
+    const colOrder: Array<2 | 3 | 4 | 5 | 6> = [2, 3, 4, 5, 6];
     const colIndex = colOrder.indexOf(col);
     if (colIndex < 0 || quoteItems.length === 0) return;
 
@@ -1091,16 +1156,70 @@ export default function QuoteDetailModal({
     setQuoteItems(quoteItems.filter((i) => !(i.kind === 'manual' && i.ClientId === clientId)));
   };
 
+  const handleQuoteItemDragStart = (e: React.DragEvent, index: number) => {
+    dragItemIndexRef.current = index;
+    setDragItemIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', String(index));
+  };
+
+  const handleQuoteItemDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    if (dragOverItemIndex !== index) setDragOverItemIndex(index);
+  };
+
+  const handleQuoteItemDrop = (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault();
+    const fromIndex = dragItemIndexRef.current;
+    setDragItemIndex(null);
+    setDragOverItemIndex(null);
+    dragItemIndexRef.current = null;
+    if (fromIndex == null || fromIndex === toIndex) return;
+    setQuoteItems((prev) => {
+      if (fromIndex < 0 || fromIndex >= prev.length || toIndex < 0 || toIndex >= prev.length) return prev;
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const handleQuoteItemDragEnd = () => {
+    setDragItemIndex(null);
+    setDragOverItemIndex(null);
+    dragItemIndexRef.current = null;
+  };
+
   const updateQuoteItemQuantity = (itemId: number, newQty: number) => {
     const qty = Math.max(0, Math.floor(newQty));
     setQuoteItems((prev) =>
       prev.map((i) => (i.kind === 'inventory' && i.ItemId === itemId ? { ...i, Quantity: qty } : i))
     );
+    setLineNetInputs((prev) => {
+      const key = String(itemId);
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const updateQuoteItemIskonto = (itemId: number, value: number) => {
     const pct = Math.max(0, Math.min(100, value));
     setItemIskonto((prev) => ({ ...prev, [itemId]: pct }));
+  };
+
+  /** Yeşil Toplam (net) değişince iskonto % ters hesaplanır; mevcut % akışı bozulmaz. */
+  const applyLineNetTarget = (item: QuoteLineItem, targetNet: number) => {
+    const gross = getLineTotal(item);
+    const result = discountPercentFromNet(gross, targetNet);
+    if (item.kind === 'inventory') {
+      updateQuoteItemIskonto(item.ItemId, result.discountPercent);
+    } else {
+      setIskonto(result.discountPercent);
+    }
+    return result;
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
@@ -1113,6 +1232,7 @@ export default function QuoteDetailModal({
       });
       return next;
     });
+    setLineNetInputs({});
   };
 
   const currentUser = useAuthStore((s) => s.user);
@@ -1120,7 +1240,182 @@ export default function QuoteDetailModal({
   const canDeleteQuote = Boolean(currentUser?.permissions?.includes('quotes_delete'));
   const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
 
-  const handleSave = async () => {
+  const isDraftRecord = isNew || isQuoteDraftStatus(status);
+  const hasDraftContent = hasMeaningfulQuoteDraftContent({
+    customerId: selectedCustomerId === '' ? null : Number(selectedCustomerId),
+    itemCount: quoteItems.length,
+    subject,
+    notes,
+    quoteCode,
+  });
+
+  const buildQuoteDetailsPayload = () => {
+    const normalizeOptionalOverride = (raw: unknown): string | null => {
+      const s = typeof raw === 'string' ? raw.trim() : '';
+      return s ? s : null;
+    };
+    return quoteItems.map((item) => {
+      if (item.kind === 'manual') {
+        return {
+          is_manual: true,
+          Description: item.Description,
+          Quantity: item.Quantity,
+          DailyPrice: item.UnitPriceSnapshot,
+        };
+      }
+      const base: Record<string, unknown> = {
+        ItemId: item.ItemId,
+        Quantity: item.Quantity,
+        is_manual: false,
+        ItemNameOverride: normalizeOptionalOverride(item.ItemNameOverride),
+        ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
+      };
+      if (quoteType === 'SALE') {
+        if (item.OverrideUnitPrice != null && Number.isFinite(item.OverrideUnitPrice)) {
+          base.OverrideUnitPrice = item.OverrideUnitPrice;
+        }
+      } else if (item.OverrideMonthlyPrice != null && Number.isFinite(item.OverrideMonthlyPrice)) {
+        base.OverrideMonthlyPrice = item.OverrideMonthlyPrice;
+      }
+      return base;
+    });
+  };
+
+  const buildQuoteHeaderPayload = (targetStatus: QuoteStatus) => {
+    const requestBody: Record<string, unknown> = {
+      Status: targetStatus,
+      Subject: normalizeText(subject) ? normalizeText(subject) : null,
+      Notes: normalizeText(notes) || undefined,
+      Iskonto: iskonto,
+      VatRate: vatRate,
+      Currency: currency,
+      Language: language,
+      Type: quoteType,
+    };
+    if (selectedCustomerId !== '') {
+      requestBody.CustomerId = Number(selectedCustomerId);
+    } else if (targetStatus === QuoteStatus.Draft) {
+      requestBody.CustomerId = null;
+    }
+    if (selectedAuthorizedContactId !== '') {
+      requestBody.CustomerAuthorizedContactId = Number(selectedAuthorizedContactId);
+    }
+    if (quoteType === 'RENTAL') {
+      const useDatePair = Boolean(startDate.trim() && plannedEndDate.trim());
+      if (useDatePair) {
+        requestBody.StartDate = new Date(startDate).toISOString();
+        requestBody.PlannedEndDate = new Date(plannedEndDate).toISOString();
+        const rd = Math.floor(Number(rentalDurationDays));
+        if (Number.isFinite(rd) && rd >= 1) requestBody.RentalDurationDays = rd;
+      } else {
+        const rd = Math.floor(Number(rentalDurationDays));
+        if (Number.isFinite(rd) && rd >= 1) {
+          requestBody.RentalDurationDays = rd;
+        }
+      }
+    }
+    const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+    if (selectedCustomerId !== '') {
+      Object.assign(requestBody, siteFields);
+    }
+    if (normalizeText(quoteCode)) {
+      requestBody.QuoteCode = normalizeText(quoteCode);
+    }
+    const details = buildQuoteDetailsPayload();
+    if (details.length > 0) requestBody.details = details;
+    return requestBody;
+  };
+
+  const persistDraft = async (options?: { silent?: boolean }): Promise<number | null> => {
+    if (!hasDraftContent) return persistedQuoteId;
+    try {
+      setIsBusy(true);
+      const body = buildQuoteHeaderPayload(QuoteStatus.Draft);
+      const existingId = persistedQuoteId ?? quote?.QuoteId ?? null;
+      let quoteId = existingId;
+      if (!quoteId) {
+        const result = await quoteService.createAsync(body as any);
+        quoteId = result.QuoteId;
+        setPersistedQuoteId(quoteId);
+        if (result.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: result.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
+      } else {
+        const updateResult = await quoteService.updateAsync(quoteId, body as any);
+        if (updateResult.CreatedSiteId && selectedCustomerId) {
+          await applyCreatedSiteId({
+            customerId: Number(selectedCustomerId),
+            createdSiteId: updateResult.CreatedSiteId,
+            setSites,
+            setSelectedSiteId,
+            resetNewSiteMode,
+          });
+        }
+      }
+      setStatus(QuoteStatus.Draft);
+      setIsDirty(false);
+      if (!options?.silent) {
+        toast.success('Taslak kaydedildi.');
+      }
+      await onDataChanged?.();
+      return quoteId;
+    } catch (error) {
+      console.error('Save draft quote error:', error);
+      toast.error(getApiErrorMessage(error) || 'Taslak kaydedilemedi.');
+      return null;
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const requestClose = async () => {
+    if (isBusy) return;
+    if (isDraftRecord && !isReadOnly && isDirty && hasDraftContent) {
+      const savedId = await persistDraft({ silent: true });
+      if (!savedId) return;
+      toast.info('Taslak kaydedildi. Listeden devam edebilirsiniz.');
+      onClose();
+      return;
+    }
+    if (!isDraftRecord && !isReadOnly && isDirty && !converted) {
+      setShowUnsavedConfirm(true);
+      return;
+    }
+    onClose();
+  };
+
+  const handleSaveAsDraft = async () => {
+    if (isBusy) return;
+    if (!hasDraftContent) {
+      toast.warning('Taslak için müşteri, kalem veya not ekleyin.');
+      return;
+    }
+    const savedId = await persistDraft();
+    if (savedId) onClose();
+  };
+
+  const openProductPicker = async () => {
+    try {
+      const invData = await inventoryService.getAllAsync(undefined, { forceRefresh: true });
+      setAvailableItems(invData);
+    } catch (error) {
+      console.error('Refresh inventory for picker error:', error);
+    }
+    setShowProductPickerModal(true);
+  };
+
+  const handleSave = async (forceStatus?: QuoteStatus) => {
+    if (!forceStatus && !isNew && isQuoteDraftStatus(status)) {
+      const savedId = await persistDraft();
+      if (savedId) onClose();
+      return;
+    }
 
     const hasRentalDatePair =
       quoteType === 'RENTAL' && Boolean(startDate.trim() && plannedEndDate.trim());
@@ -1248,8 +1543,10 @@ export default function QuoteDetailModal({
         requestBody.QuoteCode = normalizeText(quoteCode);
       }
 
-      if (isNew) {
+        const existingId = persistedQuoteId ?? quote?.QuoteId ?? null;
+        if (!existingId) {
         requestBody.Type = quoteType;
+        requestBody.Status = QuoteStatus.Pending;
         const result = await quoteService.createAsync(requestBody as any);
         if (result.CreatedSiteId && selectedCustomerId) {
           await applyCreatedSiteId({
@@ -1264,9 +1561,10 @@ export default function QuoteDetailModal({
         await onDataChanged?.();
         onClose();
         return;
-      } else if (quote) {
+        }
+
         const updateBody: Record<string, unknown> = {
-          Status: status,
+          Status: forceStatus ?? status,
           Iskonto: iskonto,
           VatRate: vatRate,
           Currency: currency,
@@ -1276,12 +1574,15 @@ export default function QuoteDetailModal({
           // Kalem değişiklikleri (override fiyatlar dahil) PATCH ile de gitsin; aksi halde fiyat yeniden hesaplanmaz.
           details,
         };
-        if ((quote as { CustomerAuthorizedContactId?: number | null }).CustomerAuthorizedContactId !== Number(selectedAuthorizedContactId)) {
+        if (
+          (quote as { CustomerAuthorizedContactId?: number | null } | null)?.CustomerAuthorizedContactId !==
+          Number(selectedAuthorizedContactId)
+        ) {
           updateBody.CustomerAuthorizedContactId = Number(selectedAuthorizedContactId);
         }
         if (quoteType === 'RENTAL') {
-          const useDatePair = Boolean(startDate.trim() && plannedEndDate.trim());
-          if (useDatePair) {
+          const useUpdateDatePair = Boolean(startDate.trim() && plannedEndDate.trim());
+          if (useUpdateDatePair) {
             updateBody.StartDate = new Date(startDate).toISOString();
             updateBody.PlannedEndDate = new Date(plannedEndDate).toISOString();
             const rd = Math.floor(Number(rentalDurationDays));
@@ -1292,11 +1593,11 @@ export default function QuoteDetailModal({
             updateBody.RentalDurationDays = Math.max(1, Math.floor(Number(rentalDurationDays)) || 1);
           }
         }
-        const originalSiteId = (quote as { SiteId?: number | null }).SiteId ?? null;
-        const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
+        const originalSiteId = (quote as { SiteId?: number | null } | null)?.SiteId ?? null;
+        const updateSiteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
         if (isNewSiteMode) {
-          if (siteFields.newSite) {
-            updateBody.newSite = siteFields.newSite;
+          if (updateSiteFields.newSite) {
+            updateBody.newSite = updateSiteFields.newSite;
           }
         } else {
           const nextSiteId = selectedSiteId ? Number(selectedSiteId) : null;
@@ -1316,7 +1617,7 @@ export default function QuoteDetailModal({
           }
           updateBody.rejectionReason = reason;
         }
-        const updateResult = await quoteService.updateAsync(quote.QuoteId, updateBody as any);
+        const updateResult = await quoteService.updateAsync(existingId, updateBody as any);
         if (updateResult.CreatedSiteId && selectedCustomerId) {
           await applyCreatedSiteId({
             customerId: Number(selectedCustomerId),
@@ -1330,7 +1631,6 @@ export default function QuoteDetailModal({
         await onDataChanged?.();
         onClose();
         return;
-      }
     } catch (error) {
       console.error('Save quote error:', error);
       const fieldErrors = getApiFieldErrors(error, [
@@ -1501,6 +1801,8 @@ export default function QuoteDetailModal({
 
   useEffect(() => {
     if (!showConvertModal) return;
+    // Stok düşülmeyecekse depo stok sorgusu gerekmez.
+    if (decrementStock === false) return;
     const invItems = quoteItems.filter((i) => i.kind === 'inventory');
     if (invItems.length === 0) return;
 
@@ -1533,7 +1835,7 @@ export default function QuoteDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [showConvertModal, quoteItems, warehouses]);
+  }, [showConvertModal, quoteItems, warehouses, decrementStock]);
 
   const handleReduceConvertQuantity = (available: number) => {
     const itemName = extractFirstQuotedName(convertModalError ?? '');
@@ -1645,7 +1947,10 @@ export default function QuoteDetailModal({
       return;
     }
 
-    if (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) {
+    // Stok düşülmeyecekse depo seçimi zorunlu değil; backend'e depo bilgisi gönderilmez.
+    const needsWarehouse = effectiveDecrementStock;
+
+    if (needsWarehouse && convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) {
       if (warehouses.length === 0) {
         setConvertModalError('Sözleşmeye dönüştürmek için önce en az bir depo tanımlanmalı.');
       } else {
@@ -1669,35 +1974,37 @@ export default function QuoteDetailModal({
       }
     }
 
-    let options: { warehouseAssignments: WarehouseAssignment[] } | { defaultWarehouseId: number };
+    let options: Partial<{ warehouseAssignments: WarehouseAssignment[]; defaultWarehouseId: number }> = {};
 
-    if (convertMode === 'defaultWarehouse' && defaultWarehouseIdForConvert) {
-      options = { defaultWarehouseId: Number(defaultWarehouseIdForConvert) };
-    } else {
-      const assignments: WarehouseAssignment[] = [];
-      for (const item of quoteItems) {
-        if (item.kind !== 'inventory') continue;
-        const itemAssignments = perItemAssignments[item.ItemId] ?? [];
-        const total = itemAssignments.reduce((s, a) => s + a.Quantity, 0);
-        if (total !== item.Quantity) {
+    if (needsWarehouse) {
+      if (convertMode === 'defaultWarehouse' && defaultWarehouseIdForConvert) {
+        options = { defaultWarehouseId: Number(defaultWarehouseIdForConvert) };
+      } else {
+        const assignments: WarehouseAssignment[] = [];
+        for (const item of quoteItems) {
+          if (item.kind !== 'inventory') continue;
+          const itemAssignments = perItemAssignments[item.ItemId] ?? [];
+          const total = itemAssignments.reduce((s, a) => s + a.Quantity, 0);
+          if (total !== item.Quantity) {
+            setConvertModalError(
+              `"${formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}" için atanan toplam miktar (${total}) teklif miktarı (${item.Quantity}) ile eşleşmiyor.`
+            );
+            return;
+          }
+          for (const a of itemAssignments) {
+            if (a.Quantity > 0) {
+              assignments.push({ ItemId: item.ItemId, WarehouseId: a.WarehouseId, Quantity: a.Quantity });
+            }
+          }
+        }
+        if (assignments.length === 0) {
           setConvertModalError(
-            `"${formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}" için atanan toplam miktar (${total}) teklif miktarı (${item.Quantity}) ile eşleşmiyor.`
+            'Ürün bazlı modda her envanter kalemi için depo ve miktar ataması yapın; toplamlar teklif miktarlarıyla eşleşmeli.'
           );
           return;
         }
-        for (const a of itemAssignments) {
-          if (a.Quantity > 0) {
-            assignments.push({ ItemId: item.ItemId, WarehouseId: a.WarehouseId, Quantity: a.Quantity });
-          }
-        }
+        options = { warehouseAssignments: assignments };
       }
-      if (assignments.length === 0) {
-        setConvertModalError(
-          'Ürün bazlı modda her envanter kalemi için depo ve miktar ataması yapın; toplamlar teklif miktarlarıyla eşleşmeli.'
-        );
-        return;
-      }
-      options = { warehouseAssignments: assignments };
     }
 
     try {
@@ -2034,6 +2341,8 @@ export default function QuoteDetailModal({
       );
     }
     switch (status) {
+      case QuoteStatus.Draft:
+        return <span className="badge bg-slate-700 text-slate-100 text-[11px] px-2 py-0.5">Taslak</span>;
       case QuoteStatus.Pending:
         return <span className="badge bg-yellow-700 text-yellow-100 text-[11px] px-2 py-0.5">Beklemede</span>;
       case QuoteStatus.Accepted:
@@ -2065,7 +2374,7 @@ export default function QuoteDetailModal({
               title="Bu teklif başka bir tekliften kopyalandı. Kaydedip kullanıcıya paylaşmadan önce gerekli alanları (teklif kodu, tarihler, fiyatlar) gözden geçirin."
             >
               <CopySimpleIcon size={12} weight="bold" aria-hidden />
-              Taslak (kopya)
+              Kopya
             </span>
           )}
           <span className="hidden md:inline text-[11px] text-text-secondary truncate">
@@ -2088,7 +2397,7 @@ export default function QuoteDetailModal({
           )}
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => void requestClose()}
             className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
           >
@@ -2352,7 +2661,7 @@ export default function QuoteDetailModal({
                 </select>
               </div>
 
-              {!isNew && (
+              {!isNew && !isQuoteDraftStatus(status) && (
                 <div className="min-w-[130px] w-[150px]">
                   <label className={fieldLabel}>Durum</label>
                   <select
@@ -2526,7 +2835,7 @@ export default function QuoteDetailModal({
                 {!isReadOnly && (
                   <button
                     type="button"
-                    onClick={() => setShowProductPickerModal(true)}
+                    onClick={() => void openProductPicker()}
                     className={`btn-secondary ${compactBtn}`}
                   >
                     Ürün Ekle
@@ -2599,6 +2908,9 @@ export default function QuoteDetailModal({
               <table className="w-full text-sm border-collapse text-text-primary">
                 <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
                   <tr>
+                    {!isReadOnly && (
+                      <th className="w-8 px-1 py-1.5" aria-label="Sırala" />
+                    )}
                     <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                       Ürün Kodu
                     </th>
@@ -2614,7 +2926,10 @@ export default function QuoteDetailModal({
                     <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-20 text-xs">
                       İskonto (%)
                     </th>
-                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
+                    <th
+                      className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs"
+                      title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
+                    >
                       Toplam
                     </th>
                     <th className="text-center px-2 py-1.5 font-semibold text-text-secondary w-16 text-xs">
@@ -2626,7 +2941,7 @@ export default function QuoteDetailModal({
                   {quoteItems.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={7}
+                        colSpan={isReadOnly ? 7 : 8}
                         className="px-3 py-6 text-center text-sm text-text-secondary"
                       >
                         Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
@@ -2647,17 +2962,40 @@ export default function QuoteDetailModal({
                       const itemEnName = invItem?.ItemNameEn;
                       const canonicalItemName =
                         invItem?.ItemName ?? (item.kind === 'inventory' ? item.ItemName : '');
-                      const lineTotal = getLineTotal(item);
+                      const lineNet = getLineNetTotal(item);
+                      const netKey = lineNetInputKey(item);
                       const justAdded =
                         item.kind === 'inventory' ? lastAddedItemIds.includes(item.ItemId) : false;
                       const isRowActive = activeQuoteGridCell?.row === rowIndex;
+                      const isDragging = dragItemIndex === rowIndex;
+                      const isDragOver = dragOverItemIndex === rowIndex && dragItemIndex !== rowIndex;
                       return (
                         <tr
                           key={item.kind === 'inventory' ? `inv-${item.ItemId}` : `man-${item.ClientId}`}
+                          onDragOver={!isReadOnly ? (e) => handleQuoteItemDragOver(e, rowIndex) : undefined}
+                          onDrop={!isReadOnly ? (e) => handleQuoteItemDrop(e, rowIndex) : undefined}
                           className={`border-b border-background-border bg-background-surface hover:bg-background-hover transition-colors duration-300 ${
                             justAdded ? 'bg-green-500/20' : ''
-                          } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
+                          } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''} ${
+                            isDragging ? 'opacity-40' : ''
+                          } ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
                         >
+                          {!isReadOnly && (
+                            <td className="px-1 py-1 align-middle">
+                              <span
+                                draggable
+                                onDragStart={(e) => handleQuoteItemDragStart(e, rowIndex)}
+                                onDragEnd={handleQuoteItemDragEnd}
+                                className="cursor-grab active:cursor-grabbing touch-none inline-flex items-center justify-center p-1 rounded text-text-secondary/70 hover:text-text-primary hover:bg-background-hover select-none"
+                                title="Sürükleyerek sırala"
+                                aria-label="Sürükleyerek sırala"
+                                role="button"
+                                tabIndex={0}
+                              >
+                                <DotsSixVerticalIcon size={16} weight="bold" aria-hidden />
+                              </span>
+                            </td>
+                          )}
                           <td className="px-3 py-1 text-text-secondary">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
@@ -2718,18 +3056,25 @@ export default function QuoteDetailModal({
                           <td className="px-3 py-1 font-medium">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
-                                language === 'EN' ? (
-                                  itemEnName ? (
-                                    item.ItemNameOverride ?? itemEnName
+                                <button
+                                  type="button"
+                                  className="text-left hover:text-primary hover:underline transition-colors cursor-pointer"
+                                  title="Ürün detayını görüntüle"
+                                  onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                >
+                                  {language === 'EN' ? (
+                                    itemEnName ? (
+                                      item.ItemNameOverride ?? itemEnName
+                                    ) : (
+                                      <span>
+                                        {item.ItemNameOverride ?? canonicalItemName}{' '}
+                                        <span className="text-yellow-500 text-xs">(Bu ürünün İngilizce adı yoktur)</span>
+                                      </span>
+                                    )
                                   ) : (
-                                    <span>
-                                      {item.ItemNameOverride ?? canonicalItemName}{' '}
-                                      <span className="text-yellow-500 text-xs">(Bu ürünün İngilizce adı yoktur)</span>
-                                    </span>
-                                  )
-                                ) : (
-                                  item.ItemNameOverride ?? canonicalItemName
-                                )
+                                    item.ItemNameOverride ?? canonicalItemName
+                                  )}
+                                </button>
                               ) : (
                                 <div className="flex items-center gap-2 min-w-[280px]">
                                   <div className="flex-1 relative">
@@ -2777,6 +3122,14 @@ export default function QuoteDetailModal({
                                     title="Varsayılana dön"
                                   >
                                     Reset
+                                  </button>
+                                  <button
+                                    type="button"
+                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                    className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
+                                    title="Ürün detayını görüntüle"
+                                  >
+                                    Detay
                                   </button>
                                 </div>
                               )
@@ -2886,6 +3239,13 @@ export default function QuoteDetailModal({
                                         : x
                                     )
                                   );
+                                  setLineNetInputs((prev) => {
+                                    const key = String(item.ItemId);
+                                    if (!(key in prev)) return prev;
+                                    const next = { ...prev };
+                                    delete next[key];
+                                    return next;
+                                  });
                                 }}
                                 onBlur={() => {
                                   const raw = priceOverrideInputs[item.ItemId] ?? '';
@@ -2941,6 +3301,13 @@ export default function QuoteDetailModal({
                                         : x
                                     )
                                   );
+                                  setLineNetInputs((prev) => {
+                                    const key = String(item.ItemId);
+                                    if (!(key in prev)) return prev;
+                                    const next = { ...prev };
+                                    delete next[key];
+                                    return next;
+                                  });
                                 }}
                                 onBlur={() => {
                                   const raw = priceOverrideInputs[item.ItemId] ?? '';
@@ -2992,6 +3359,12 @@ export default function QuoteDetailModal({
                                   } else {
                                     setIskonto(Number.isFinite(v) ? v : 0);
                                   }
+                                  setLineNetInputs((prev) => {
+                                    if (!(netKey in prev)) return prev;
+                                    const next = { ...prev };
+                                    delete next[netKey];
+                                    return next;
+                                  });
                                 }}
                                 className="input w-24 text-right py-1 text-sm"
                                 aria-label="İskonto %"
@@ -2999,7 +3372,65 @@ export default function QuoteDetailModal({
                             )}
                           </td>
                           <td className="px-3 py-1 text-right font-medium text-green-500">
-                            {formatCurrency(lineTotal)}
+                            {isReadOnly ? (
+                              formatCurrency(lineNet)
+                            ) : (
+                              <input
+                                type="text"
+                                inputMode="decimal"
+                                value={lineNetInputs[netKey] ?? formatPriceInput(lineNet)}
+                                ref={(el) => {
+                                  const key = `${rowIndex}-5`;
+                                  if (el) quoteGridRefs.current.set(key, el);
+                                  else quoteGridRefs.current.delete(key);
+                                }}
+                                onFocus={(e) => {
+                                  setActiveQuoteGridCell({ row: rowIndex, col: 5 });
+                                  e.currentTarget.select();
+                                }}
+                                onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 5)}
+                                onChange={(e) => {
+                                  const raw = e.target.value;
+                                  const { masked } = normalizeMaskedDecimalTR(raw, {
+                                    maxIntDigits: 12,
+                                    maxFracDigits: 2,
+                                  });
+                                  setLineNetInputs((prev) => ({ ...prev, [netKey]: masked }));
+                                }}
+                                onBlur={(e) => {
+                                  const raw = e.currentTarget.value;
+                                  const { numeric } = normalizeMaskedDecimalTR(raw, {
+                                    maxIntDigits: 12,
+                                    maxFracDigits: 2,
+                                  });
+                                  if (numeric === null || numeric === undefined) {
+                                    if (raw.trim() !== '') {
+                                      toast.warning('Satır tutarı negatif olamaz ve sayı olmalıdır.');
+                                    }
+                                    setLineNetInputs((prev) => {
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
+                                    return;
+                                  }
+                                  const result = applyLineNetTarget(item, numeric);
+                                  if (result.reason === 'net_above_gross') {
+                                    toast.warning('Satır tutarı brüt tutarı aşamaz; iskonto %0 yapıldı.');
+                                  } else if (result.reason === 'gross_zero') {
+                                    toast.warning('Brüt tutar 0 iken iskonto hesaplanamaz.');
+                                  }
+                                  setLineNetInputs((prev) => {
+                                    const next = { ...prev };
+                                    delete next[netKey];
+                                    return next;
+                                  });
+                                }}
+                                className="input w-32 text-right py-1 text-sm font-medium text-green-500"
+                                aria-label="İskontolu satır tutarı"
+                                title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
+                              />
+                            )}
                           </td>
                           <td className="px-2 py-1 text-center">
                             {!isReadOnly && (
@@ -3131,21 +3562,42 @@ export default function QuoteDetailModal({
                       Sil
                     </button>
                   )}
-                  <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  <button type="button" onClick={() => void requestClose()} className={`btn-secondary ${compactBtn}`}>
                     İptal
                   </button>
+                  {isNew && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSaveAsDraft()}
+                      disabled={isBusy}
+                      className={`btn-secondary ${compactBtn}`}
+                      title="Eksik kalsa da taslak olarak kaydeder; listeden devam edebilirsiniz"
+                    >
+                      Taslak olarak kaydet
+                    </button>
+                  )}
+                  {!isNew && isQuoteDraftStatus(status) && (
+                    <button
+                      type="button"
+                      onClick={() => void handleSave(QuoteStatus.Pending)}
+                      disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
+                      className={`btn-success ${compactBtn}`}
+                    >
+                      {isBusy ? 'Kaydediliyor...' : 'Teklifi oluştur'}
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={handleSave}
+                    onClick={() => void handleSave()}
                     disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
                     className={`btn-primary ${compactBtn}`}
                   >
-                    {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                    {isBusy ? 'Kaydediliyor...' : isQuoteDraftStatus(status) ? 'Taslağı kaydet' : 'Kaydet'}
                   </button>
                 </>
               )}
               {isReadOnly && (
-                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                <button type="button" onClick={() => void requestClose()} className={`btn-secondary ${compactBtn}`}>
                   Kapat
                 </button>
               )}
@@ -3285,14 +3737,31 @@ export default function QuoteDetailModal({
         title="Teklifi Kopyala"
         message={
           activeQuote?.QuoteCode
-            ? `"${activeQuote.QuoteCode}" teklifini yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Beklemede" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.`
-            : 'Bu teklifi yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Beklemede" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.'
+            ? `"${activeQuote.QuoteCode}" teklifini yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Taslak" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.`
+            : 'Bu teklifi yeni bir taslak teklif olarak kopyalamak istiyor musunuz?\n\nYeni teklifin durumu "Taslak" olur, teklif kodu boş gelir; tüm fiyatlar ve kalemler aynen kopyalanır.'
         }
         confirmLabel="Kopyala"
         cancelLabel="Vazgeç"
         loading={isCloning}
         onConfirm={handleCloneQuoteConfirm}
         onCancel={handleCloneQuoteCancel}
+      />
+
+      <ConfirmModal
+        open={showUnsavedConfirm}
+        title="Kaydedilmemiş değişiklikler"
+        message={
+          'Resmi teklifteki değişiklikler sayfa değişince taslak olarak saklanmaz.\nKaydetmek için geri dönüp Kaydet’e basın, veya değişiklikleri atın.'
+        }
+        confirmLabel="Kaydetmeden kapat"
+        cancelLabel="Geri dön"
+        variant="danger"
+        onConfirm={() => {
+          setShowUnsavedConfirm(false);
+          setIsDirty(false);
+          onClose();
+        }}
+        onCancel={() => setShowUnsavedConfirm(false)}
       />
 
       {/* Sözleşmeye Dönüştür - Depo Atama Modal */}
@@ -3302,7 +3771,9 @@ export default function QuoteDetailModal({
             <h3 className="text-xl font-bold mb-4">Sözleşmeye Dönüştür – Stok / Depo</h3>
             <p className="text-sm text-text-secondary mb-4">
               {quoteType === 'SALE'
-                ? 'Satış teklifinde envanter çıkışı seçtiğiniz depodan düşülür. Tüm kalemler için tek depo seçin veya ürün bazlı depo/miktar dağıtımı yapın.'
+                ? decrementStock === false
+                  ? 'Stok düşülmeyecek. Envanter miktarları bu dönüşümden etkilenmez.'
+                  : 'Satış teklifinde envanter çıkışı seçtiğiniz depodan düşülür. Tüm kalemler için tek depo seçin veya ürün bazlı depo/miktar dağıtımı yapın.'
                 : 'Kiralama sözleşmesine dönüşümde stok depodan rezerve edilir. Tek depo (varsayılan) veya ürün bazlı atama zorunludur; global envanter seçeneği kullanılmaz.'}
             </p>
 
@@ -3391,85 +3862,88 @@ export default function QuoteDetailModal({
               </p>
             )}
 
-            <div className="space-y-3 mb-4">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="radio"
-                  name="convertMode"
-                  checked={convertMode === 'defaultWarehouse'}
-                  onChange={() => {
-                    setConvertModalError(null);
-                    setConvertMode('defaultWarehouse');
-                  }}
-                  className="rounded-full"
-                  disabled={isBusy}
-                />
-                <span className="text-sm">Tüm kalemler tek depodan çıksın (varsayılan depo)</span>
-              </label>
-              {convertMode === 'defaultWarehouse' && (
-                <div className="ml-6 space-y-2">
-                  <select
-                    value={defaultWarehouseIdForConvert}
-                    onChange={(e) => {
-                      setDefaultWarehouseIdForConvert(Number(e.target.value) || '');
-                      setConvertModalError(null);
-                    }}
-                    className="input w-full max-w-xs"
-                    disabled={isBusy}
-                  >
-                    <option value="">Depo seçin</option>
-                    {warehouses.map((wh) => (
-                      <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                        {wh.WarehouseName}
-                      </option>
-                    ))}
-                  </select>
-                  {defaultWarehouseIdForConvert &&
-                    quoteItems
-                      .filter((i) => i.kind === 'inventory')
-                      .map((item) => {
-                        const stock = getConvertStockForWarehouse(
-                          item.ItemId,
-                          Number(defaultWarehouseIdForConvert)
-                        );
-                        if (stock == null) return null;
-                        const label = formatInventoryLineBilingualLabel(
-                          item.ItemName,
-                          item.ItemNameEn,
-                          item.Item
-                        );
-                        const insufficient = item.Quantity > stock;
-                        return (
-                          <p
-                            key={item.ItemId}
-                            className={`text-xs ${insufficient ? 'text-amber-400' : 'text-text-secondary'}`}
-                          >
-                            {label}: seçili depoda {stock} adet
-                            {insufficient ? ` — talep ${item.Quantity} adet (yetersiz)` : ''}
-                          </p>
-                        );
-                      })}
-                </div>
-              )}
-              {quoteItems.some((i) => i.kind === 'inventory') && (
+            {/* Stok düşülmeyecekse depo seçimi gerekmez */}
+            {decrementStock !== false && (
+              <div className="space-y-3 mb-4">
                 <label className="flex items-center gap-2 cursor-pointer">
                   <input
                     type="radio"
                     name="convertMode"
-                    checked={convertMode === 'perItem'}
+                    checked={convertMode === 'defaultWarehouse'}
                     onChange={() => {
                       setConvertModalError(null);
-                      setConvertMode('perItem');
+                      setConvertMode('defaultWarehouse');
                     }}
                     className="rounded-full"
                     disabled={isBusy}
                   />
-                  <span className="text-sm">Ürün bazlı depo ataması yap</span>
+                  <span className="text-sm">Tüm kalemler tek depodan çıksın (varsayılan depo)</span>
                 </label>
-              )}
-            </div>
+                {convertMode === 'defaultWarehouse' && (
+                  <div className="ml-6 space-y-2">
+                    <select
+                      value={defaultWarehouseIdForConvert}
+                      onChange={(e) => {
+                        setDefaultWarehouseIdForConvert(Number(e.target.value) || '');
+                        setConvertModalError(null);
+                      }}
+                      className="input w-full max-w-xs"
+                      disabled={isBusy}
+                    >
+                      <option value="">Depo seçin</option>
+                      {warehouses.map((wh) => (
+                        <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                          {wh.WarehouseName}
+                        </option>
+                      ))}
+                    </select>
+                    {defaultWarehouseIdForConvert &&
+                      quoteItems
+                        .filter((i) => i.kind === 'inventory')
+                        .map((item) => {
+                          const stock = getConvertStockForWarehouse(
+                            item.ItemId,
+                            Number(defaultWarehouseIdForConvert)
+                          );
+                          if (stock == null) return null;
+                          const label = formatInventoryLineBilingualLabel(
+                            item.ItemName,
+                            item.ItemNameEn,
+                            item.Item
+                          );
+                          const insufficient = item.Quantity > stock;
+                          return (
+                            <p
+                              key={item.ItemId}
+                              className={`text-xs ${insufficient ? 'text-amber-400' : 'text-text-secondary'}`}
+                            >
+                              {label}: seçili depoda {stock} adet
+                              {insufficient ? ` — talep ${item.Quantity} adet (yetersiz)` : ''}
+                            </p>
+                          );
+                        })}
+                  </div>
+                )}
+                {quoteItems.some((i) => i.kind === 'inventory') && (
+                  <label className="flex items-center gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="convertMode"
+                      checked={convertMode === 'perItem'}
+                      onChange={() => {
+                        setConvertModalError(null);
+                        setConvertMode('perItem');
+                      }}
+                      className="rounded-full"
+                      disabled={isBusy}
+                    />
+                    <span className="text-sm">Ürün bazlı depo ataması yap</span>
+                  </label>
+                )}
+              </div>
+            )}
 
-            {convertMode === 'perItem' && (
+            {decrementStock !== false && convertMode === 'perItem' && (
               <div className="space-y-4 mb-6">
                 {quoteItems.filter((i) => i.kind === 'inventory').map((item) => {
                   const assignments = perItemAssignments[item.ItemId] ?? [];
@@ -3598,8 +4072,9 @@ export default function QuoteDetailModal({
                 disabled={
                   isBusy ||
                   (quoteType === 'SALE' && decrementStock == null) ||
-                  (convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) ||
-                  (convertMode === 'perItem' &&
+                  // Depo seçimi yalnızca stok düşümü yapılacaksa zorunlu
+                  (decrementStock !== false && convertMode === 'defaultWarehouse' && !defaultWarehouseIdForConvert) ||
+                  (decrementStock !== false && convertMode === 'perItem' &&
                     quoteItems
                       .filter((q) => q.kind === 'inventory')
                       .some((q) => getAssignmentTotalForItem(q.ItemId) !== q.Quantity)) ||
@@ -3626,6 +4101,7 @@ export default function QuoteDetailModal({
         quotePricing={quoteType === 'SALE' ? 'sale' : 'rental'}
         currency={currency}
         pickedItemIds={pickerPickedItemIds}
+        onAddNewItem={() => setShowInventoryCreateModal(true)}
       />
       <ManualLineItemModal
         open={showManualLineModal}
@@ -3678,7 +4154,7 @@ export default function QuoteDetailModal({
                   <input
                     type="text"
                     value={newContactPhone}
-                    onChange={(e) => setNewContactPhone(e.target.value.replace(/\D/g, '').slice(0, 11))}
+                    onChange={(e) => setNewContactPhone(e.target.value.replace(/\D/g, '').slice(0, 15))}
                     className="input w-full text-sm py-1.5"
                     placeholder="Telefon"
                     maxLength={11}
@@ -3786,6 +4262,30 @@ export default function QuoteDetailModal({
           }}
         />
       )}
+      {selectedInventoryForDetail && (
+        <InventoryDetailModal
+          item={selectedInventoryForDetail}
+          categories={inventoryCategories}
+          isNew={false}
+          onClose={() => setSelectedInventoryForDetail(null)}
+        />
+      )}
+      {showInventoryCreateModal && (
+        <InventoryDetailModal
+          item={null}
+          categories={inventoryCategories}
+          isNew={true}
+          onClose={async () => {
+            setShowInventoryCreateModal(false);
+            try {
+              const invData = await inventoryService.getAllAsync(undefined, { forceRefresh: true });
+              setAvailableItems(invData);
+            } catch {
+              // sessizce devam et
+            }
+          }}
+        />
+      )}
       {showCreatePackageModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70]">
           <div className="bg-background-panel rounded-panel w-full max-w-lg p-6">
@@ -3812,15 +4312,29 @@ export default function QuoteDetailModal({
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-text-primary mb-1">Varsayılan İskonto (%)</label>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  className="input w-full"
-                  value={newPackageDiscount}
-                  onChange={(e) => setNewPackageDiscount(Number(e.target.value) || 0)}
-                />
+                <label htmlFor="new-package-discount" className="block text-xs font-medium text-text-primary mb-1">
+                  Varsayılan iskonto (%)
+                </label>
+                <div className="relative">
+                  <input
+                    id="new-package-discount"
+                    type="number"
+                    min={0}
+                    max={100}
+                    step={0.01}
+                    className="input w-full pr-8"
+                    placeholder="0"
+                    title="Bu paket bir teklife uygulandığında genel iskonto olarak yazılır"
+                    value={newPackageDiscount}
+                    onChange={(e) => setNewPackageDiscount(Number(e.target.value) || 0)}
+                  />
+                  <span className="pointer-events-none absolute inset-y-0 right-2.5 flex items-center text-sm text-text-secondary">
+                    %
+                  </span>
+                </div>
+                <p className="mt-1 text-[11px] text-text-secondary">
+                  Paketi sonraki tekliflere uygularken bu yüzde otomatik iskonto olarak gelir. İndirim yoksa 0 bırakın.
+                </p>
               </div>
               <p className="text-xs text-text-secondary">
                 Not: Sadece envanter ürünleri pakete eklenir, manuel kalemler eklenmez.

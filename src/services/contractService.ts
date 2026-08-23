@@ -10,6 +10,12 @@ import {
   SettleNonReturnRequest,
 } from '../models';
 import { CreateSiteRequest } from './siteService';
+import {
+  DEFAULT_PAGE_LIMIT,
+  fetchAllPaginatedPages,
+  normalizePaginatedResponse,
+  type PaginatedResponse,
+} from '../utils/paginatedResponse';
 
 export interface CreateContractDetailRequest {
   ItemId: number;
@@ -179,6 +185,8 @@ export interface ContractListQuery {
   type?: ContractQuoteType;
   search?: string;
   includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
 }
 
 export interface ArchiveContractResponse {
@@ -194,9 +202,36 @@ export interface UnarchiveContractResponse {
   ContractId: number;
 }
 
+function buildContractsEndpoint(query?: ContractListQuery): string {
+  const sp = new URLSearchParams();
+  if (query?.status) sp.set('status', query.status);
+  if (query?.type) sp.set('type', query.type);
+  const s = query?.search?.trim();
+  if (s) sp.set('search', s);
+  if (query?.includeArchived) sp.set('includeArchived', 'true');
+  if (query?.limit != null) sp.set('limit', String(query.limit));
+  if (query?.offset != null) sp.set('offset', String(query.offset));
+  const qs = sp.toString();
+  return qs ? `/contracts?${qs}` : '/contracts';
+}
+
 export const contractService = {
+  async getPageAsync(query?: ContractListQuery): Promise<PaginatedResponse<Contract>> {
+    const raw = await apiClient.get<Contract[] | PaginatedResponse<Contract>>(
+      buildContractsEndpoint(query)
+    );
+    return normalizePaginatedResponse(
+      raw,
+      query?.limit ?? DEFAULT_PAGE_LIMIT,
+      query?.offset ?? 0
+    );
+  },
+
   async getAllAsync(): Promise<Contract[]> {
-    return apiClient.get<Contract[]>('/contracts');
+    const page = await fetchAllPaginatedPages<Contract>((limit, offset) =>
+      this.getPageAsync({ limit, offset })
+    );
+    return page.items;
   },
 
   async getByIdAsync(id: number): Promise<Contract> {
@@ -204,14 +239,10 @@ export const contractService = {
   },
 
   async listAsync(query: ContractListQuery): Promise<Contract[]> {
-    const sp = new URLSearchParams();
-    if (query.status) sp.set('status', query.status);
-    if (query.type) sp.set('type', query.type);
-    const s = query.search?.trim();
-    if (s) sp.set('search', s);
-    if (query.includeArchived) sp.set('includeArchived', 'true');
-    const qs = sp.toString();
-    return apiClient.get<Contract[]>(qs ? `/contracts?${qs}` : '/contracts');
+    const page = await fetchAllPaginatedPages<Contract>((limit, offset) =>
+      this.getPageAsync({ ...query, limit, offset })
+    );
+    return page.items;
   },
 
   async getActiveContractsAsync(quoteType?: ContractQuoteType): Promise<Contract[]> {

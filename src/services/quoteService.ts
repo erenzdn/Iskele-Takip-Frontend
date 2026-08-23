@@ -1,6 +1,7 @@
 import { apiClient } from './apiClient';
 import { ContractQuoteType, Quote, QuoteDetail, QuoteStatus } from '../models';
 import { CreateSiteRequest } from './siteService';
+import { normalizePaginatedResponse, unwrapListItems, type PaginatedResponse } from '../utils/paginatedResponse';
 
 export interface CreateQuoteDetailRequest {
   ItemId: number;
@@ -26,8 +27,8 @@ export interface CreateQuoteDetailRequest {
 export interface CreateQuoteRequest {
   QuoteCode?: string;
   Subject?: string | null;
-  CustomerId: number;
-  CustomerAuthorizedContactId: number;
+  CustomerId?: number | null;
+  CustomerAuthorizedContactId?: number | null;
   SiteId?: number;
   newSite?: CreateSiteRequest;
   StartDate?: string; // ISO 8601 (RENTAL için opsiyonel; boşsa gönderilmez)
@@ -48,7 +49,8 @@ export interface CreateQuoteRequest {
 export interface UpdateQuoteRequest {
   QuoteCode?: string;
   Subject?: string | null;
-  CustomerAuthorizedContactId?: number;
+  CustomerId?: number | null;
+  CustomerAuthorizedContactId?: number | null;
   SiteId?: number;
   newSite?: CreateSiteRequest;
   /** RENTAL */
@@ -181,8 +183,13 @@ function normalizeQuote(raw: any): Quote {
 }
 
 function normalizeQuoteList(raw: unknown): Quote[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((item) => normalizeQuote(item));
+  const list = unwrapListItems<Quote>(raw);
+  return list.map((item) => normalizeQuote(item));
+}
+
+async function fetchQuotesPage(url: string): Promise<PaginatedResponse<Quote>> {
+  const raw = await apiClient.get<Quote[] | PaginatedResponse<Quote>>(url);
+  return normalizePaginatedResponse(raw);
 }
 
 export const quoteService = {
@@ -194,8 +201,8 @@ export const quoteService = {
     const query = parseQuoteListArg(arg);
     const url = buildQuotesListPath(query);
     try {
-      const rows = await apiClient.get<Quote[]>(url);
-      return normalizeQuoteList(rows);
+      const page = await fetchQuotesPage(url);
+      return normalizeQuoteList(page);
     } catch (error) {
       // Bazı backend sürümlerinde /quotes (parametresiz) 500 dönebilir.
       // status, type veya includeConverted ile filtre varsa birleştirme denemesi yapılmaz.
@@ -203,32 +210,37 @@ export const quoteService = {
       const failures: unknown[] = [];
       const s = query?.search?.trim();
       const base: QuoteListQuery = s ? { search: s } : {};
-      const [pending, accepted, rejected] = await Promise.all([
-        apiClient
-          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Pending }))
+      const [pending, accepted, rejected, draft] = await Promise.all([
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Pending }))
+          .then((page) => normalizeQuoteList(page))
           .catch((e) => {
             failures.push(e);
             return [];
           }),
-        apiClient
-          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Accepted }))
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Accepted }))
+          .then((page) => normalizeQuoteList(page))
           .catch((e) => {
             failures.push(e);
             return [];
           }),
-        apiClient
-          .get<Quote[]>(buildQuotesListPath({ ...base, status: QuoteStatus.Rejected }))
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Rejected }))
+          .then((page) => normalizeQuoteList(page))
+          .catch((e) => {
+            failures.push(e);
+            return [];
+          }),
+        fetchQuotesPage(buildQuotesListPath({ ...base, status: QuoteStatus.Draft }))
+          .then((page) => normalizeQuoteList(page))
           .catch((e) => {
             failures.push(e);
             return [];
           }),
       ]);
       const map = new Map<number, Quote>();
-      [...pending, ...accepted, ...rejected]
-        .map((q) => normalizeQuote(q))
+      [...draft, ...pending, ...accepted, ...rejected]
         .forEach((q) => map.set(q.QuoteId, q));
       const merged = Array.from(map.values()).sort((a, b) => b.QuoteId - a.QuoteId);
-      if (merged.length === 0 && failures.length >= 3) {
+      if (merged.length === 0 && failures.length >= 4) {
         throw (failures[0] ?? error);
       }
       return merged;
@@ -241,13 +253,13 @@ export const quoteService = {
   },
 
   async getPendingQuotesAsync(): Promise<Quote[]> {
-    const rows = await apiClient.get<Quote[]>('/quotes?status=pending');
-    return normalizeQuoteList(rows);
+    const page = await fetchQuotesPage('/quotes?status=pending');
+    return normalizeQuoteList(page);
   },
 
   async getAcceptedQuotesAsync(): Promise<Quote[]> {
-    const rows = await apiClient.get<Quote[]>('/quotes?status=accepted');
-    return normalizeQuoteList(rows);
+    const page = await fetchQuotesPage('/quotes?status=accepted');
+    return normalizeQuoteList(page);
   },
 
   async getRejectedQuotesAsync(): Promise<Quote[]> {
@@ -273,6 +285,15 @@ export const quoteService = {
     } else {
       payload.RentalDurationDays = Math.floor(rd);
     }
+    if (data.CustomerId == null || !Number.isFinite(Number(data.CustomerId))) {
+      delete payload.CustomerId;
+    }
+    if (
+      data.CustomerAuthorizedContactId == null ||
+      !Number.isFinite(Number(data.CustomerAuthorizedContactId))
+    ) {
+      delete payload.CustomerAuthorizedContactId;
+    }
     if (qType === 'SALE') {
       delete payload.StartDate;
       delete payload.PlannedEndDate;
@@ -284,6 +305,17 @@ export const quoteService = {
   async updateAsync(id: number, data: UpdateQuoteRequest): Promise<Quote & UpdateQuoteResponse> {
     const payload: Record<string, unknown> = { ...data };
     const qType = String((data as any).Type ?? '').toUpperCase();
+    if (data.CustomerId == null || !Number.isFinite(Number(data.CustomerId))) {
+      delete payload.CustomerId;
+    } else {
+      payload.CustomerId = Number(data.CustomerId);
+    }
+    if (
+      data.CustomerAuthorizedContactId == null ||
+      !Number.isFinite(Number(data.CustomerAuthorizedContactId))
+    ) {
+      delete payload.CustomerAuthorizedContactId;
+    }
     // Type gönderilmese bile, SALE akışında tarih/saha gibi alanları göndermemek güvenli.
     if (qType === 'SALE') {
       delete payload.StartDate;
@@ -318,7 +350,9 @@ export const quoteService = {
   },
 
   /**
-   * Late binding: gövdede `defaultWarehouseId` veya `warehouseAssignments` zorunlu (boş gövde gönderilmez).
+   * Teklifi sözleşmeye dönüştürür.
+   * decrementStock: false ise depo alanları gönderilmez; backend stok işlemi yapmaz.
+   * decrementStock: true ise defaultWarehouseId veya warehouseAssignments zorunludur.
    */
   async convertToContractAsync(
     id: number,
@@ -327,20 +361,22 @@ export const quoteService = {
     const body: ConvertQuoteRequest = {
       decrementStock: options.decrementStock,
     };
-    if (options.defaultWarehouseId != null) {
-      body.defaultWarehouseId = options.defaultWarehouseId;
-    }
-    if (options.warehouseAssignments != null && options.warehouseAssignments.length > 0) {
-      body.warehouseAssignments = options.warehouseAssignments;
+    if (options.decrementStock) {
+      if (options.defaultWarehouseId != null) {
+        body.defaultWarehouseId = options.defaultWarehouseId;
+      }
+      if (options.warehouseAssignments != null && options.warehouseAssignments.length > 0) {
+        body.warehouseAssignments = options.warehouseAssignments;
+      }
+      if (body.defaultWarehouseId == null && (body.warehouseAssignments == null || body.warehouseAssignments.length === 0)) {
+        throw new Error('Stok düşümü için defaultWarehouseId veya warehouseAssignments gerekli.');
+      }
     }
     if (options.StartDate != null && String(options.StartDate).trim()) {
       body.StartDate = options.StartDate;
     }
     if (options.PlannedEndDate != null && String(options.PlannedEndDate).trim()) {
       body.PlannedEndDate = options.PlannedEndDate;
-    }
-    if (body.defaultWarehouseId == null && (body.warehouseAssignments == null || body.warehouseAssignments.length === 0)) {
-      throw new Error('Dönüşüm için defaultWarehouseId veya warehouseAssignments gerekli.');
     }
     return apiClient.post<ConvertQuoteResponse>(`/quotes/${id}/convert`, body);
   },

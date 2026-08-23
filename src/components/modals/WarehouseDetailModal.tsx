@@ -262,9 +262,10 @@ export default function WarehouseDetailModal({
   };
 
   const handleSaveEditStock = async (stockItem: WarehouseStock) => {
-    const qty = Math.max(0, parseInt(editingQuantityStr, 10) || 0);
-    if (!warehouse || qty < 0) {
-      toast.warning('Geçerli bir miktar girin');
+    const parsed = parseInt(editingQuantityStr, 10);
+    const qty = Number.isFinite(parsed) ? Math.max(0, parsed) : 0;
+    if (!warehouse || editingQuantityStr.trim() === '' || isNaN(parsed) || qty <= 0) {
+      toast.warning('Geçerli bir miktar girin (0\'dan büyük olmalı)');
       return;
     }
 
@@ -278,7 +279,7 @@ export default function WarehouseDetailModal({
       await loadStock();
     } catch (error) {
       console.error('Update stock error:', error);
-      toast.error('Stok güncelleme hatası');
+      toast.error(getUserFacingApiErrorMessage(error, 'generic'));
     } finally {
       setIsBusy(false);
     }

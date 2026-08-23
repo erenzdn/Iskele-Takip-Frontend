@@ -107,6 +107,9 @@ export interface Inventory {
   UnitName?: string | null;
   Categories?: MaterialCategory[];
   SubCategories?: SubCategory[];
+  /** Lean liste DTO — GET /inventory */
+  CategoryIds?: number[];
+  SubCategoryIds?: number[];
   CreatedAt?: string;
   CreatedByUserFullName?: string;
   CreatedByUserName?: string;
@@ -802,6 +805,7 @@ export interface WarehouseMovementsResponse {
 
 // Teklif (Quote) Modelleri
 export enum QuoteStatus {
+  Draft = 'draft',
   Pending = 'pending',
   Accepted = 'accepted',
   Rejected = 'rejected',
@@ -812,7 +816,7 @@ export interface Quote {
   QuoteCode?: string;
   /** Teklif konusu (backend: Subject, nullable, max 255) */
   Subject?: string | null;
-  CustomerId: number;
+  CustomerId: number | null;
   CustomerAuthorizedContactId?: number | null;
   SiteId?: number;
   /** Kiralama: ISO 8601; gün-only teklifte API null dönebilir */
@@ -1293,4 +1297,53 @@ export interface ListTransactionsResponse {
   total: number;
   limit: number;
   offset: number;
+}
+
+// --- Sözleşme Zeyilname (Ek Protokol) ---
+
+export type AddendumStatus = 'draft' | 'pending' | 'approved' | 'rejected';
+
+export type ChangeType = 'ADD' | 'INCREASE' | 'DECREASE' | 'PRICE_CHANGE';
+
+export interface AddendumDetail {
+  DetailId: number;
+  AddendumId: number;
+  ChangeType: ChangeType;
+  ContractDetailId?: number | null;
+  ItemId?: number | null;
+  WarehouseId?: number | null;
+  IsManual?: boolean;
+  Description?: string | null;
+  QuantityChange?: number | null;
+  NewUnitPrice?: number | null;
+  NewMonthlyOverride?: number | null;
+  /** Liste/detay zenginleştirmeleri (backend opsiyonel) */
+  ItemName?: string | null;
+  ItemCode?: string | null;
+  WarehouseName?: string | null;
+  ContractDetailDescription?: string | null;
+}
+
+export interface Addendum {
+  AddendumId: number;
+  ContractId: number;
+  AddendumNo?: number | null;
+  AddendumCode?: string | null;
+  Status: AddendumStatus;
+  EffectiveDate: string;
+  Reason?: string | null;
+  RejectionReason?: string | null;
+  CreatedAt?: string;
+  UpdatedAt?: string;
+  SubmittedAt?: string | null;
+  ApprovedAt?: string | null;
+  RejectedAt?: string | null;
+  CreatedByUserId?: number | null;
+  CreatedByName?: string | null;
+  ApprovedByUserId?: number | null;
+  ApprovedByName?: string | null;
+  RejectedByUserId?: number | null;
+  RejectedByName?: string | null;
+  details?: AddendumDetail[];
+  Details?: AddendumDetail[];
 }
