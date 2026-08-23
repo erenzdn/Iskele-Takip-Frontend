@@ -28,6 +28,7 @@ import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 import { useTableColumnPreferencesStore } from '../store/tableColumnPreferencesStore';
 import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
+import type { LiveExchangeRatesResult } from '../types/electron';
 import { useUpdateStore } from '../store/updateStore';
 import { toast } from '../hooks/useToast';
 import { unitService } from '../services/unitService';
@@ -368,6 +369,7 @@ export default function SystemSettingsPage() {
   const [lastAutoBackupAt, setLastAutoBackupAt] = useState<string | null>(
     () => localStorage.getItem(LAST_AUTO_BACKUP_AT_KEY)
   );
+  const [backupStatusError, setBackupStatusError] = useState<string | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
 
   const [usdRate, setUsdRate] = useState<number | ''>('');
@@ -423,6 +425,7 @@ export default function SystemSettingsPage() {
     let mounted = true;
     const fetchBackupStatus = async () => {
       try {
+        setBackupStatusError(null);
         const statusInfo = await adminService.getSystemBackupStatusAsync();
         if (!mounted || !statusInfo) return;
 
@@ -436,6 +439,13 @@ export default function SystemSettingsPage() {
         }
       } catch (err) {
         console.warn('Backup status alınamadı:', err);
+        if (!mounted) return;
+        const statusCode = (err as { status?: number })?.status;
+        if (statusCode === 403) {
+          setBackupStatusError('Yedek durumu yalnızca admin yetkisiyle görüntülenebilir.');
+        } else {
+          setBackupStatusError('Son yedek bilgisi sunucudan alınamadı.');
+        }
       }
     };
     fetchBackupStatus();
@@ -1349,6 +1359,12 @@ export default function SystemSettingsPage() {
                   <WarningIcon size={15} className="mt-0.5 shrink-0" />
                   <span>Saatte en fazla 1 kez manuel yedek alabilirsiniz.</span>
                 </div>
+                {backupStatusError ? (
+                  <div className="mb-4 flex items-start gap-2 rounded-xl border border-error/25 bg-error/10 px-3.5 py-2.5 text-xs text-error">
+                    <WarningIcon size={15} className="mt-0.5 shrink-0" />
+                    <span>{backupStatusError}</span>
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <MetaChip label="Son manuel yedek" value={formatTrDateTime(lastBackupAt)} />
                   <MetaChip label="Son otomatik yedek" value={formatTrDateTime(lastAutoBackupAt)} />

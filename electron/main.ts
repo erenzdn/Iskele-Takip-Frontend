@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { createRequire } from 'module';
+import fs from 'fs/promises';
 const require = createRequire(import.meta.url);
 
 const { autoUpdater } = require('electron-updater');
@@ -297,6 +298,20 @@ app.whenReady().then(() => {
       log.error('Güncel kur alınamadı:', err);
       return { ok: false as const, error: message };
     }
+  });
+
+  // Dosya kaydetme diyalogu ve yazma işlemleri (Syncfusion Document Editor için)
+  ipcMain.handle('save-file-dialog', async (_, options) => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: options.defaultPath,
+      filters: options.filters || [{ name: 'Word Belgesi', extensions: ['docx'] }],
+    });
+    return result.canceled ? null : result.filePath;
+  });
+
+  ipcMain.handle('write-file', async (_, filePath: string, data: ArrayBuffer) => {
+    await fs.writeFile(filePath, Buffer.from(data));
+    return true;
   });
   // --- End Auto-updater Section ---
 

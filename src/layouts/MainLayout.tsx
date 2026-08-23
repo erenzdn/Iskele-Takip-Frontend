@@ -6,6 +6,7 @@ import {
   ChartLineIcon,
   ClipboardIcon,
   CurrencyCircleDollarIcon,
+  FileDocIcon,
   GearIcon,
   ListIcon,
   MagnifyingGlassIcon,
@@ -75,6 +76,7 @@ const administrationMenuItems: MenuItem[] = [
   { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: <GearIcon {...iconProps} />, requiredPermission: 'pricingRules_view' },
   { path: '/users', label: 'Kullanıcılar', icon: <UserIcon {...iconProps} />, requiredPermission: 'users_view' },
   { path: '/audit-logs', label: 'Audit Logları', icon: <ScrollIcon {...iconProps} />, requiredPermission: 'auditLogs_view' },
+  { path: '/document-templates', label: 'Belge Şablonları', icon: <FileDocIcon {...iconProps} /> },
   { path: '/system-settings', label: 'Sistem Ayarları', icon: <ShieldCheckIcon {...iconProps} /> },
 ];
 
@@ -254,6 +256,7 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
       '/pricing-rules': 'Fiyatlama kuralları ve koşul tanımları',
       '/users': 'Kullanıcı hesapları ve yetki yönetimi',
       '/audit-logs': 'Sistem işlem geçmişi ve denetim kayıtları',
+      '/document-templates': 'Word benzeri belge şablonları oluşturma ve düzenleme',
       '/reports/rental-movement': 'Kiralama hareket raporları ve analiz ekranı',
       '/system-settings': 'Genel sistem ayarları ve yönetim tercihleri',
     };
