@@ -2142,6 +2142,7 @@ export default function ContractDetailModal({
             contractLines={contractItems}
             items={availableItems}
             warehouses={warehouses}
+            currency={currency}
             templateId={selectedTemplateId}
             canView={canViewContracts}
             canUpdate={canUpdateContracts}

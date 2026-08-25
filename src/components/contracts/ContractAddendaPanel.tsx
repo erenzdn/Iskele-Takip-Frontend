@@ -3,6 +3,7 @@ import type {
   Addendum,
   ContractLineItem,
   ContractQuoteType,
+  CurrencyCode,
   Inventory,
   Warehouse,
 } from '../../models';
@@ -24,6 +25,7 @@ interface ContractAddendaPanelProps {
   contractLines: ContractLineItem[];
   items: Inventory[];
   warehouses: Warehouse[];
+  currency?: CurrencyCode;
   templateId?: number | '';
   canView: boolean;
   canUpdate: boolean;
@@ -43,6 +45,7 @@ export default function ContractAddendaPanel({
   contractLines,
   items,
   warehouses,
+  currency = 'TRY',
   templateId = '',
   canView,
   canUpdate,
@@ -356,6 +359,7 @@ export default function ContractAddendaPanel({
         contractLines={contractLines}
         items={items}
         warehouses={warehouses}
+        currency={currency}
         templateId={templateId}
         canUpdate={canUpdate}
         canDelete={canDelete}

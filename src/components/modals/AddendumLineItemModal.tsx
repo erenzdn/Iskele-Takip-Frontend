@@ -36,6 +36,8 @@ interface AddendumLineItemModalProps {
   warehouses: Warehouse[];
   /** Düzenleme modu */
   editingDetail?: AddendumDetail | null;
+  /** Yeni kalemde başlangıç tipi (örn. mevcut kalem değiştir → INCREASE) */
+  initialChangeType?: ChangeType;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
   zIndexClass?: string;
@@ -127,6 +129,7 @@ export default function AddendumLineItemModal({
   items,
   warehouses,
   editingDetail = null,
+  initialChangeType = 'INCREASE',
   onClose,
   onSaved,
   zIndexClass = 'z-[70]',
@@ -225,7 +228,7 @@ export default function AddendumLineItemModal({
           : ''
       );
     } else {
-      setChangeType('ADD');
+      setChangeType(initialChangeType);
       setAddKind('inventory');
       setSelectedItemId('');
       setSelectedWarehouseId('');
@@ -235,7 +238,7 @@ export default function AddendumLineItemModal({
       setUnitPriceStr('');
       setMonthlyOverrideStr('');
     }
-  }, [open, editingDetail]);
+  }, [open, editingDetail, initialChangeType]);
 
   useEffect(() => {
     if (!open || changeType !== 'ADD' || addKind !== 'inventory' || !selectedItemId) {

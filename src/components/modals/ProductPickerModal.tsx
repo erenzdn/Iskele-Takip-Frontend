@@ -26,6 +26,7 @@ interface ProductPickerModalProps {
   pickedItemIds?: ReadonlySet<number>;
   /** Tanımlıysa başlık alanında "Yeni Ürün Ekle" butonu gösterilir. */
   onAddNewItem?: () => void;
+  zIndexClass?: string;
 }
 
 function normalizePickResult(raw: ProductPickResult): 'added' | 'removed' | null {
@@ -75,6 +76,7 @@ export default function ProductPickerModal({
   currency = 'TRY',
   pickedItemIds,
   onAddNewItem,
+  zIndexClass = 'z-[60]',
 }: ProductPickerModalProps) {
   const [highlightedItemIds, setHighlightedItemIds] = useState<Set<number>>(() => new Set());
   const [toast, setToast] = useState<{ message: string; kind: 'added' | 'removed' } | null>(null);
@@ -159,7 +161,7 @@ export default function ProductPickerModal({
 
   return (
     <div
-      className="fixed inset-0 z-[60] flex flex-col bg-black/60"
+      className={`fixed inset-0 ${zIndexClass} flex flex-col bg-black/60`}
       aria-modal="true"
       role="dialog"
     >
