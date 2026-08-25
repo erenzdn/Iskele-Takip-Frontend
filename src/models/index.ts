@@ -398,7 +398,7 @@ export interface LoginUserDto {
 }
 
 export interface LoginResponse {
-  token: string;
+  accessToken: string;
   user: LoginUserDto;
 }
 

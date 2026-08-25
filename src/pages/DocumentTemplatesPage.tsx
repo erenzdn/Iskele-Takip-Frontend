@@ -121,11 +121,31 @@ export default function DocumentTemplatesPage() {
           onChange={handleImport}
           className="hidden"
         />
-        <EmptyState
-          title="Henüz belge şablonu oluşturulmamış"
-          description="Yeni bir şablon oluşturun veya mevcut bir Word dosyasını yükleyin"
-          icon={<PencilIcon size={48} className="text-text-secondary opacity-50" />}
-        />
+        <div className="flex flex-col items-center gap-4">
+          <EmptyState
+            title="Henüz belge şablonu oluşturulmamış"
+            description="Yeni bir şablon oluşturun veya mevcut bir Word dosyasını yükleyin"
+            icon={<PencilIcon size={48} className="text-text-secondary opacity-50" />}
+          />
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleImportClick}
+              className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"
+            >
+              <UploadIcon size={16} />
+              Dosyadan Yükle
+            </button>
+            <button
+              type="button"
+              onClick={handleAddNew}
+              className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1.5"
+            >
+              <PlusIcon size={16} />
+              Yeni Şablon
+            </button>
+          </div>
+        </div>
       </>
     );
   }

@@ -3304,6 +3304,10 @@ export default function ContractDetailModal({
           item={selectedInventoryForDetail}
           categories={inventoryCategories}
           isNew={false}
+          stackAboveParent
+          onCategoriesChanged={() => {
+            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
+          }}
           onClose={() => setSelectedInventoryForDetail(null)}
         />
       )}

@@ -4101,7 +4101,9 @@ export default function QuoteDetailModal({
         quotePricing={quoteType === 'SALE' ? 'sale' : 'rental'}
         currency={currency}
         pickedItemIds={pickerPickedItemIds}
-        onAddNewItem={() => setShowInventoryCreateModal(true)}
+        onAddNewItem={() => {
+          setShowInventoryCreateModal(true);
+        }}
       />
       <ManualLineItemModal
         open={showManualLineModal}
@@ -4267,6 +4269,10 @@ export default function QuoteDetailModal({
           item={selectedInventoryForDetail}
           categories={inventoryCategories}
           isNew={false}
+          stackAboveParent
+          onCategoriesChanged={() => {
+            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
+          }}
           onClose={() => setSelectedInventoryForDetail(null)}
         />
       )}
@@ -4275,6 +4281,10 @@ export default function QuoteDetailModal({
           item={null}
           categories={inventoryCategories}
           isNew={true}
+          stackAboveParent
+          onCategoriesChanged={() => {
+            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
+          }}
           onClose={async () => {
             setShowInventoryCreateModal(false);
             try {

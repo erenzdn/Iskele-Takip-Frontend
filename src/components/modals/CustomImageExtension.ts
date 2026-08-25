@@ -26,10 +26,10 @@ export const CustomImage = ImageResize.extend({
 
           if (attributes.src.startsWith('image:')) {
             const imageId = attributes.src.replace('image:', '');
-            // Zustand store'dan token al (memory-only)
-            const token = useAuthStore.getState().token;
-            const imageUrl = token
-              ? `${BASE_URL}/template-images/${imageId}?token=${encodeURIComponent(token)}`
+            // Zustand store'dan accessToken al (memory-only)
+            const accessToken = useAuthStore.getState().accessToken;
+            const imageUrl = accessToken
+              ? `${BASE_URL}/template-images/${imageId}?token=${encodeURIComponent(accessToken)}`
               : `${BASE_URL}/template-images/${imageId}`;
             
             return {

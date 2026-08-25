@@ -141,7 +141,9 @@
 }
 
 .ProseMirror p {
-  margin-bottom: 0.5rem;
+  margin-top: 0;
+  margin-bottom: 0.15rem;
+  line-height: 1.15;
 }
 
 .ProseMirror h1 {
@@ -227,7 +229,7 @@
   font-weight: 600;
 }
 
-/* Sınırları Gizlenmiş (Borderless) Tablo Izgara Layoutu */
+/* Sınırları Gizlenmiş (Borderless) Tablo — editörde çizgi yok */
 .ProseMirror table.border-none,
 .ProseMirror table.border-none td,
 .ProseMirror table.border-none th,
@@ -237,20 +239,28 @@
   border: none !important;
 }
 
-/* Editör içinde sınırları gizlenmiş hücrelerin yerini görebilmek için hafif noktalı çerçeve */
+.ProseMirror table.border-none,
+.ProseMirror table[data-no-border="true"] {
+  border-style: none !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  box-shadow: none !important;
+}
+
 .ProseMirror table.border-none td,
 .ProseMirror table.border-none th,
 .ProseMirror table[data-no-border="true"] td,
 .ProseMirror table[data-no-border="true"] th {
-  outline: 1px dotted rgba(156, 163, 175, 0.4) !important;
+  border-style: none !important;
+  box-shadow: none !important;
 }
 
-/* Kılavuz çizgileri gizlendiğinde outline'ı kaldır */
-.hide-gridlines .ProseMirror table.border-none td,
-.hide-gridlines .ProseMirror table.border-none th,
-.hide-gridlines .ProseMirror table[data-no-border="true"] td,
-.hide-gridlines .ProseMirror table[data-no-border="true"] th {
-  outline: none !important;
+/* Kılavuz modu açıkken: hücre sınırlarını noktalı göster (sadece editör) */
+.show-gridlines .ProseMirror table.border-none td,
+.show-gridlines .ProseMirror table.border-none th,
+.show-gridlines .ProseMirror table[data-no-border="true"] td,
+.show-gridlines .ProseMirror table[data-no-border="true"] th {
+  outline: 1px dotted rgba(156, 163, 175, 0.4) !important;
 }
 
 /* Görsel Konumlandırma ve Hizalama (Float ve Blok Kontrolleri) */
@@ -294,7 +304,9 @@
 
 /* A4 şablon editörü – sayfa kılavuz çizgileri ve sayfa aralığı */
 .template-editor-workspace {
-  background-color: var(--color-bg-elevated);
+  background:
+    radial-gradient(ellipse at top, color-mix(in srgb, var(--color-primary) 6%, transparent), transparent 55%),
+    var(--color-bg-elevated);
 }
 
 .template-editor-paper {
@@ -305,15 +317,21 @@
   box-sizing: border-box;
   background: var(--color-bg-panel);
   box-shadow:
-    0 10px 15px -3px rgba(0, 0, 0, 0.12),
-    0 4px 6px -4px rgba(0, 0, 0, 0.12);
-  border: 1px solid var(--color-background-border, var(--color-bg-border));
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 28px -8px rgba(15, 23, 42, 0.14),
+    0 0 0 1px color-mix(in srgb, var(--color-border) 70%, transparent);
+  border: none;
+  border-radius: 2px;
   flex-shrink: 0;
   align-self: flex-start;
 }
 
 .template-editor-paper .ProseMirror {
   min-height: calc(29.7cm - 3cm);
+}
+
+/* A4 sayfa kılavuz çizgileri — yalnızca kılavuz modu açıkken */
+.show-gridlines .template-editor-paper .ProseMirror {
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -477,5 +495,46 @@
 
 .e-de-ctn-content::-webkit-scrollbar-thumb:hover {
   background: var(--color-border-strong);
+}
+
+/* Belge şablon editörü — alan paneli */
+.template-editor-fields {
+  box-shadow: inset -1px 0 0 transparent;
+}
+
+.template-editor-fields::-webkit-scrollbar,
+.template-editor-fields *::-webkit-scrollbar {
+  width: 6px;
+}
+
+.template-editor-fields *::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+
+/* Belge şablon editörü — tam yükseklik sarmalayıcı */
+.template-editor-sf-wrap {
+  min-height: 0;
+}
+
+.template-editor-sf-wrap .e-documenteditorcontainer,
+.template-editor-sf-wrap .e-de-ctn {
+  height: 100% !important;
+  border-top-left-radius: 0;
+  border-top-right-radius: 0;
+}
+
+/* Tam ekran Word görünümü */
+.template-editor-sf-fullscreen .e-documenteditorcontainer {
+  border: none !important;
+  border-radius: 0 !important;
+}
+
+.template-editor-sf-fullscreen .e-de-ctn-content {
+  background: #c5c5c5 !important;
+}
+
+[data-theme='dark'] .template-editor-sf-fullscreen .e-de-ctn-content {
+  background: var(--color-bg-main) !important;
 }
 
