@@ -131,7 +131,8 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
+      // Must be .cjs: package.json has "type": "module", so .js preload is treated as ESM and fails to load.
+      preload: path.join(__dirname, 'preload.cjs'),
     },
     titleBarStyle: 'default',
   });
@@ -148,11 +149,52 @@ function createWindow() {
   }
 }
 
+function registerIpcHandlers() {
+  ipcMain.on('get-app-version', (event) => {
+    if (isDev) {
+      try {
+        const pkg = require('../package.json');
+        event.returnValue = pkg.version;
+      } catch (e) {
+        event.returnValue = app.getVersion();
+      }
+    } else {
+      event.returnValue = app.getVersion();
+    }
+  });
+
+  ipcMain.handle('get-live-exchange-rates', async () => {
+    try {
+      return await fetchLiveExchangeRates();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Güncel kur alınamadı.';
+      log.error('Güncel kur alınamadı:', err);
+      return { ok: false as const, error: message };
+    }
+  });
+
+  ipcMain.handle('save-file-dialog', async (_, options) => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: options.defaultPath,
+      filters: options.filters || [{ name: 'Word Belgesi', extensions: ['docx'] }],
+    });
+    return result.canceled ? null : result.filePath;
+  });
+
+  ipcMain.handle('write-file', async (_, filePath: string, data: ArrayBuffer) => {
+    await fs.writeFile(filePath, Buffer.from(data));
+    return true;
+  });
+}
+
 app.whenReady().then(() => {
   // Windows için AppID set etmek şart (Bildirimler ve Updater için)
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.iskeletakip.app');
   }
+
+  // Preload sendSync('/get-app-version') için handler pencere açılmadan önce hazır olmalı
+  registerIpcHandlers();
 
   // Content Security Policy ayarları
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -280,43 +322,6 @@ app.whenReady().then(() => {
         });
       });
     }
-  });
-
-  ipcMain.on('get-app-version', (event) => {
-    if (isDev) {
-      try {
-        const pkg = require('../package.json');
-        event.returnValue = pkg.version;
-      } catch (e) {
-        event.returnValue = app.getVersion();
-      }
-    } else {
-      event.returnValue = app.getVersion();
-    }
-  });
-
-  ipcMain.handle('get-live-exchange-rates', async () => {
-    try {
-      return await fetchLiveExchangeRates();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Güncel kur alınamadı.';
-      log.error('Güncel kur alınamadı:', err);
-      return { ok: false as const, error: message };
-    }
-  });
-
-  // Dosya kaydetme diyalogu ve yazma işlemleri (Syncfusion Document Editor için)
-  ipcMain.handle('save-file-dialog', async (_, options) => {
-    const result = await dialog.showSaveDialog({
-      defaultPath: options.defaultPath,
-      filters: options.filters || [{ name: 'Word Belgesi', extensions: ['docx'] }],
-    });
-    return result.canceled ? null : result.filePath;
-  });
-
-  ipcMain.handle('write-file', async (_, filePath: string, data: ArrayBuffer) => {
-    await fs.writeFile(filePath, Buffer.from(data));
-    return true;
   });
   // --- End Auto-updater Section ---
 
