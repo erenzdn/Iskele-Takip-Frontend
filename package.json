@@ -21,7 +21,7 @@
     "publish": "npm run release:github",
     "release:build": "npm run build:electron && electron-builder --config electron-builder.config.js --win --publish never && node scripts/inject-icon.mjs",
     "release:github": "node scripts/publish-github.mjs",
-    "release": "npm version patch && npm run release:build && npm run release:github"
+    "release": "npm run release:build && npm run release:github"
   },
   "keywords": [
     "electron",

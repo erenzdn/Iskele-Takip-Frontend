@@ -588,10 +588,12 @@ export default function SystemSettingsPage() {
   };
 
   const handleCheckUpdates = () => {
-    if (window.electron) {
-      toast.info('Güncelleme kontrol ediliyor...');
-      window.electron.updates.checkForUpdates();
+    if (!window.electron) {
+      toast.error('Güncelleme yalnızca kurulu masaüstü uygulamasında kullanılabilir.');
+      return;
     }
+    toast.info('Güncelleme kontrol ediliyor...');
+    window.electron.updates.checkForUpdates();
   };
 
   const handleDownload = () => {
@@ -1205,7 +1207,7 @@ export default function SystemSettingsPage() {
               <SettingsSection
                 icon={<ArrowClockwiseIcon size={18} weight="duotone" />}
                 title="Yazılım Güncelleme"
-                description={`Mevcut sürüm: v${window.electron?.appVersion || '1.4.5'}`}
+                description={`Mevcut sürüm: v${window.electron?.appVersion || 'bilinmiyor'}`}
                 className={
                   updateNeedsAttention
                     ? 'border-error/40 ring-1 ring-error/15'
