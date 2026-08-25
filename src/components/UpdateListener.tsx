@@ -7,10 +7,7 @@ export default function UpdateListener() {
   const isInitialCheck = useRef(true);
 
   useEffect(() => {
-    if (!window.electron) {
-      setError('Güncelleme yalnızca kurulu masaüstü uygulamasında kullanılabilir.');
-      return;
-    }
+    if (!window.electron) return;
 
     const unsubs = [
       window.electron.updates.onUpdateChecking(() => {
