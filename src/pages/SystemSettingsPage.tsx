@@ -41,6 +41,7 @@ import {
   type InventoryColumnKey,
   type TableColumnMeta,
 } from '../constants/tableColumns';
+import packageJson from '../../package.json';
 
 type InventoryMockRow = Record<InventoryColumnKey, ReactNode>;
 type CustomerMockRow = Record<CustomerColumnKey, ReactNode>;
@@ -1205,7 +1206,7 @@ export default function SystemSettingsPage() {
               <SettingsSection
                 icon={<ArrowClockwiseIcon size={18} weight="duotone" />}
                 title="Yazılım Güncelleme"
-                description={`Mevcut sürüm: v${window.electron?.appVersion || '1.4.5'}`}
+                description={`Mevcut sürüm: v${window.electron?.appVersion || packageJson.version}`}
                 className={
                   updateNeedsAttention
                     ? 'border-error/40 ring-1 ring-error/15'
