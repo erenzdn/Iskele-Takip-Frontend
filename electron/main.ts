@@ -273,7 +273,12 @@ app.whenReady().then(() => {
         });
       }, 1500);
     } else {
-      autoUpdater.checkForUpdates();
+      autoUpdater.checkForUpdates().catch((err: Error) => {
+        log.error('Güncelleme kontrolü başlatılamadı:', err);
+        BrowserWindow.getAllWindows().forEach(win => {
+          win.webContents.send('update-error', err.message);
+        });
+      });
     }
   });
 

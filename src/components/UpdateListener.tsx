@@ -26,8 +26,9 @@ export default function UpdateListener() {
       }),
       window.electron.updates.onUpdateError((err: string) => {
         setError(err);
+        // Başlangıç kontrolündeki hataları da gizleme: kullanıcı durumu görsün
         if (!isInitialCheck.current) {
-          toast.error('Güncelleme kontrolü sırasında bir hata oluştu.');
+          toast.error(err || 'Güncelleme kontrolü sırasında bir hata oluştu.');
         }
         isInitialCheck.current = false;
       }),

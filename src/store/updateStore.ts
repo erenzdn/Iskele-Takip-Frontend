@@ -27,22 +27,28 @@ export const useUpdateStore = create<UpdateState>((set) => ({
 
   setUpdateAvailable: (available, info) => set({ 
     isUpdateAvailable: available, 
-    updateInfo: info || null,
+    updateInfo: available ? (info || null) : null,
     isDownloading: false,
     isDownloaded: false,
-    isChecking: false
+    isChecking: false,
+    error: null,
   }),
-  setChecking: (checking) => set({ isChecking: checking }),
+  setChecking: (checking) => set({
+    isChecking: checking,
+    ...(checking ? { error: null } : {}),
+  }),
   setDownloading: (downloading, progress) => set({ 
     isDownloading: downloading, 
     progress: progress ?? 0,
-    isChecking: false
+    isChecking: false,
+    error: null,
   }),
   setDownloaded: (downloaded, info) => set({ 
     isDownloaded: downloaded, 
     updateInfo: info || null,
     isDownloading: false,
-    isChecking: false
+    isChecking: false,
+    error: null,
   }),
   setError: (error) => set({ error, isChecking: false }),
 }));

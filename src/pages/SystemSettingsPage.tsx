@@ -589,10 +589,13 @@ export default function SystemSettingsPage() {
   };
 
   const handleCheckUpdates = () => {
-    if (window.electron) {
-      toast.info('Güncelleme kontrol ediliyor...');
-      window.electron.updates.checkForUpdates();
+    if (!window.electron?.updates) {
+      toast.error('Güncelleme yalnızca kurulu masaüstü uygulamasında çalışır.');
+      return;
     }
+    useUpdateStore.getState().setChecking(true);
+    toast.info('Güncelleme kontrol ediliyor...');
+    window.electron.updates.checkForUpdates();
   };
 
   const handleDownload = () => {
