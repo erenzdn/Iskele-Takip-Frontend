@@ -2,6 +2,7 @@ import {
   useCallback,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ChangeEvent,
   type ReactNode,
@@ -162,14 +163,22 @@ export default function TipTapTemplateEditorLayout({
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [fieldSearch, setFieldSearch] = useState('');
   const [, setEditorTick] = useState(0);
+  const [fontSizeInput, setFontSizeInput] = useState('');
+  const fontSizeInputFocused = useRef(false);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(placeholderGroups.map((g, i) => [g.id, i < 2]))
   );
 
   useEffect(() => {
-    const refreshToolbar = () => setEditorTick((tick) => tick + 1);
+    const refreshToolbar = () => {
+      setEditorTick((tick) => tick + 1);
+      if (!fontSizeInputFocused.current) {
+        setFontSizeInput(getActiveFontSize(editor).replace('px', ''));
+      }
+    };
     editor.on('selectionUpdate', refreshToolbar);
     editor.on('transaction', refreshToolbar);
+    refreshToolbar();
     return () => {
       editor.off('selectionUpdate', refreshToolbar);
       editor.off('transaction', refreshToolbar);
@@ -442,11 +451,27 @@ export default function TipTapTemplateEditorLayout({
               min="8"
               max="72"
               step="1"
-              value={activeFontSize.replace('px', '')}
+              value={fontSizeInput || activeFontSize.replace('px', '')}
               onChange={(e) => {
-                const value = Number(e.target.value);
+                setFontSizeInput(e.target.value);
+              }}
+              onFocus={() => {
+                fontSizeInputFocused.current = true;
+                setFontSizeInput(activeFontSize.replace('px', ''));
+              }}
+              onBlur={() => {
+                fontSizeInputFocused.current = false;
+                const value = Number(fontSizeInput);
                 if (value >= 8 && value <= 72) {
                   editor.chain().focus().setFontSize(`${value}px`).run();
+                } else {
+                  setFontSizeInput(activeFontSize.replace('px', ''));
+                }
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  e.currentTarget.blur();
                 }
               }}
               className="h-full w-[92px] bg-transparent px-2 text-center text-xs text-text-primary outline-none"
