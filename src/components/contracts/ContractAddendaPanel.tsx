@@ -265,7 +265,16 @@ export default function ContractAddendaPanel({
               {list.map((row) => (
                 <tr
                   key={row.AddendumId}
-                  className="border-b border-background-border/60 hover:bg-background-hover/40"
+                  className="border-b border-background-border/60 hover:bg-background-hover/40 cursor-pointer"
+                  title="Zeyilname detayını aç"
+                  onClick={() => openDetail(row.AddendumId)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      openDetail(row.AddendumId);
+                    }
+                  }}
+                  tabIndex={0}
                 >
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {row.AddendumNo ?? row.AddendumId}
@@ -295,7 +304,10 @@ export default function ContractAddendaPanel({
                         type="button"
                         className="btn-secondary text-xs px-2 py-1"
                         disabled={isBusy}
-                        onClick={() => openDetail(row.AddendumId)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          openDetail(row.AddendumId);
+                        }}
                       >
                         Detay
                       </button>
@@ -303,7 +315,10 @@ export default function ContractAddendaPanel({
                         type="button"
                         className="btn-secondary text-xs px-2 py-1"
                         disabled={isBusy}
-                        onClick={() => void handlePreview(row)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handlePreview(row);
+                        }}
                       >
                         PDF
                       </button>
@@ -311,7 +326,10 @@ export default function ContractAddendaPanel({
                         type="button"
                         className="btn-secondary text-xs px-2 py-1"
                         disabled={isBusy}
-                        onClick={() => void handleDownload(row)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDownload(row);
+                        }}
                       >
                         İndir
                       </button>
