@@ -4,7 +4,6 @@ import App from './App';
 import './styles/index.css';
 import { applyInitialTheme } from './store/themeStore';
 import { apiClient } from './services/apiClient';
-import { registerLicense } from '@syncfusion/ej2-base';
 
 // react-pdf / pdf.js bazı ortamlarda URL.parse kullanır.
 // Electron/Chromium sürümüne göre bu API olmayabilir; basit polyfill.
@@ -45,12 +44,6 @@ if (!(URL as any).canParse) {
 }
 
 applyInitialTheme();
-
-// Syncfusion license kaydı (env'den oku, hardcode etme)
-const sfLicenseKey = import.meta.env.VITE_SYNCFUSION_LICENSE_KEY;
-if (sfLicenseKey) {
-  registerLicense(sfLicenseKey);
-}
 
 if (import.meta.env.DEV) {
   const metricsApi = {

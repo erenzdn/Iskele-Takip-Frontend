@@ -80,6 +80,8 @@ type TipTapTemplateEditorLayoutProps = {
   documentNumberLabel: string;
   showMaterialTable?: boolean;
   onInsertMaterialTable?: () => void;
+  showReturnTable?: boolean;
+  onInsertReturnTable?: () => void;
   images: TemplateImage[];
   uploadingImage: boolean;
   onImageUpload: (event: ChangeEvent<HTMLInputElement>) => void;
@@ -149,6 +151,8 @@ export default function TipTapTemplateEditorLayout({
   documentNumberLabel,
   showMaterialTable = true,
   onInsertMaterialTable,
+  showReturnTable = false,
+  onInsertReturnTable,
   images,
   uploadingImage,
   onImageUpload,
@@ -790,6 +794,26 @@ export default function TipTapTemplateEditorLayout({
                     </span>
                     <span className="block truncate font-mono text-[10px] text-text-secondary">
                       {'{{malzemeTablosu}}'}
+                    </span>
+                  </span>
+                </button>
+              )}
+
+              {showReturnTable && onInsertReturnTable && (
+                <button
+                  type="button"
+                  onClick={onInsertReturnTable}
+                  className="flex w-full items-center gap-2.5 rounded-xl border border-amber-500/25 bg-amber-500/5 px-3 py-2.5 text-left transition-colors hover:bg-amber-500/10"
+                >
+                  <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-amber-500/15 text-amber-400">
+                    <TableIcon size={16} weight="duotone" />
+                  </span>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-semibold text-text-primary">
+                      İade tablosu
+                    </span>
+                    <span className="block truncate font-mono text-[10px] text-text-secondary">
+                      {'{{iadeTablosu}}'}
                     </span>
                   </span>
                 </button>

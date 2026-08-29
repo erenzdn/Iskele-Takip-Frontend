@@ -30,6 +30,11 @@ import {
   withPageMargins,
   type PageMargins,
 } from './PageMargins';
+import {
+  DOCUMENT_TEMPLATE_PLACEHOLDERS,
+  MATERIAL_TABLE_PLACEHOLDER,
+  RETURN_TABLE_PLACEHOLDER,
+} from '../../constants/documentTemplatePlaceholders';
 
 interface ContractTemplateEditorModalProps {
   template: ContractTemplate | null;
@@ -39,51 +44,10 @@ interface ContractTemplateEditorModalProps {
 }
 
 const PLACEHOLDER_GROUPS: TipTapPlaceholderGroup[] = [
-  {
-    id: 'musteri',
-    title: 'MÃ¼ÅŸteri',
-    items: [
-      { key: 'musteriAdi', label: 'MÃ¼ÅŸteri AdÄ±' },
-      { key: 'musteriAdres', label: 'MÃ¼ÅŸteri Adres' },
-      { key: 'musteriTelefon', label: 'MÃ¼ÅŸteri Telefon' },
-      { key: 'musteriEmail', label: 'MÃ¼ÅŸteri Email' },
-      { key: 'musteriVergiNo', label: 'MÃ¼ÅŸteri Vergi No' },
-    ],
-  },
-  {
-    id: 'santiye',
-    title: 'Åantiye',
-    items: [
-      { key: 'santiyeAdi', label: 'Åantiye AdÄ±' },
-      { key: 'santiyeAdres', label: 'Åantiye Adres' },
-    ],
-  },
-  {
-    id: 'sozlesme',
-    title: 'SÃ¶zleÅŸme',
-    items: [
-      { key: 'sozlesmeNo', label: 'SÃ¶zleÅŸme No' },
-      { key: 'baslangicTarihi', label: 'BaÅŸlangÄ±Ã§ Tarihi' },
-      { key: 'bitisTarihi', label: 'BitiÅŸ Tarihi' },
-      { key: 'gercekBitisTarihi', label: 'GerÃ§ek BitiÅŸ Tarihi' },
-      { key: 'toplamTutar', label: 'Toplam Tutar' },
-      { key: 'hesaplananTutar', label: 'Hesaplanan Tutar' },
-      { key: 'bugunTarihi', label: 'BugÃ¼nÃ¼n Tarihi' },
-    ],
-  },
-  {
-    id: 'cek',
-    title: 'Ã‡ek',
-    items: [
-      { key: 'Check.BankName', label: 'Ã‡ek Banka AdÄ±' },
-      { key: 'Check.CheckNumber', label: 'Ã‡ek NumarasÄ±' },
-      { key: 'Check.AmountFormatted', label: 'Ã‡ek TutarÄ± (formatlÄ±)' },
-      { key: 'Check.IssueDateFormatted', label: 'Keside Tarihi (formatlÄ±)' },
-      { key: 'Check.DueDateFormatted', label: 'Vade Tarihi (formatlÄ±)' },
-      { key: 'Check.StatusLabel', label: 'Ã‡ek Durumu' },
-      { key: 'Check.CustomerName', label: 'MÃ¼ÅŸteri AdÄ±' },
-    ],
-  },
+  { id: 'musteri', title: 'Müşteri', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.musteri },
+  { id: 'santiye', title: 'Şantiye', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.santiye },
+  { id: 'sozlesme', title: 'Sözleşme', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.sozlesme },
+  { id: 'cek', title: 'Çek', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.cek },
 ];
 
 type ImageCommandOptions = {
@@ -132,6 +96,7 @@ export default function ContractTemplateEditorModal({
       type: 'doc',
       content: [],
     },
+    editable: true,
     editorProps: {
       attributes: {
         class: 'focus:outline-none',
@@ -248,7 +213,12 @@ export default function ContractTemplateEditorModal({
 
   const insertMaterialTable = () => {
     if (!editor) return;
-    editor.chain().focus().insertContent('{{malzemeTablosu}}').run();
+    editor.chain().focus().insertContent(`{{${MATERIAL_TABLE_PLACEHOLDER}}}`).run();
+  };
+
+  const insertReturnTable = () => {
+    if (!editor) return;
+    editor.chain().focus().insertContent(`{{${RETURN_TABLE_PLACEHOLDER}}}`).run();
   };
 
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -258,13 +228,10 @@ export default function ContractTemplateEditorModal({
     try {
       setUploadingImage(true);
       const response = await templateImageService.uploadAsync(file);
-      
-      // GÃ¶rseli listeye ekle
+
       await loadImages();
-      
-      // EditÃ¶re ekle
+
       if (editor) {
-        // Node selection varsa Ã¼zerine yazmamak iÃ§in imleci sonrasÄ±na al
         const { selection } = editor.state;
         if (selection && 'node' in selection) {
           editor.commands.setTextSelection(selection.to);
@@ -280,11 +247,10 @@ export default function ContractTemplateEditorModal({
         }
       }
 
-      // File input'u temizle
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast.error(getApiErrorMessage(error));
     } finally {
       setUploadingImage(false);
@@ -293,8 +259,7 @@ export default function ContractTemplateEditorModal({
 
   const insertImage = async (imageId: number) => {
     if (!editor) return;
-    
-    // Node selection varsa Ã¼zerine yazmamak iÃ§in imleci sonrasÄ±na al
+
     const { selection } = editor.state;
     if (selection && 'node' in selection) {
       editor.commands.setTextSelection(selection.to);
@@ -335,13 +300,13 @@ export default function ContractTemplateEditorModal({
         if (onSave) {
           onSave(response.TemplateId);
         }
-        toast.success('Şablon başarıyla oluşturuldu!');
+        toast.success('Sözleşme şablonu başarıyla oluşturuldu!');
       } else if (template) {
         await contractTemplateService.updateAsync(template.TemplateId, {
           TemplateName: templateName,
           Content: clonedContent,
         });
-        toast.success('Şablon başarıyla güncellendi!');
+        toast.success('Sözleşme şablonu başarıyla güncellendi!');
       }
 
       onClose();
@@ -423,6 +388,8 @@ export default function ContractTemplateEditorModal({
       documentNumberLabel="Sözleşme No"
       showMaterialTable
       onInsertMaterialTable={insertMaterialTable}
+      showReturnTable
+      onInsertReturnTable={insertReturnTable}
       images={images}
       uploadingImage={uploadingImage}
       onImageUpload={handleImageUpload}

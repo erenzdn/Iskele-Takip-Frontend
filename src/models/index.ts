@@ -536,6 +536,9 @@ export interface InventoryContractLineItem {
   PriceSource: PriceSource;
   /** Backend'den gelirse UI'da gösterilir (ISO 8601) */
   EffectiveStartDate?: string;
+  /** Onaylı zeyilname ile eklenen kalem (backend opsiyonel) */
+  SourceAddendumId?: number | null;
+  SourceAddendumNo?: number | null;
   ItemName: string;
   ItemNameEn?: string | null;
   /** Backend'den gelen çözümlenmiş kod (override dahil) */
@@ -549,6 +552,9 @@ export interface ManualContractLineItem {
   /** UI için benzersiz anahtar (backend DetailId yoksa) */
   ClientId: string;
   DetailId?: number;
+  /** Onaylı zeyilname ile eklenen kalem (backend opsiyonel) */
+  SourceAddendumId?: number | null;
+  SourceAddendumNo?: number | null;
   IsManual: true;
   Description: string;
   RentedQuantity: number;

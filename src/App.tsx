@@ -27,9 +27,7 @@ const CashPage = lazy(() => import('./pages/CashPage'));
 const CashAccountDetailPage = lazy(() => import('./pages/CashAccountDetailPage'));
 const SystemSettingsPage = lazy(() => import('./pages/SystemSettingsPage'));
 const OfferManagementPage = lazy(() => import('./pages/OfferManagementPage'));
-const DocumentTemplatesPage = lazy(() => import('./pages/DocumentTemplatesPage'));
-const TemplateEditorPage = lazy(() => import('./pages/TemplateEditorPage'));
-
+const ContractManagementPage = lazy(() => import('./pages/ContractManagementPage'));
 function App() {
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -66,12 +64,10 @@ function App() {
             <Route path="/users" element={<Suspense fallback={<PageLoader />}><UsersPage /></Suspense>} />
             <Route path="/audit-logs" element={<Suspense fallback={<PageLoader />}><AuditLogsPage /></Suspense>} />
             <Route path="/reports/rental-movement" element={<Suspense fallback={<PageLoader />}><RentalMovementReportPage /></Suspense>} />
-            <Route path="/document-templates" element={<Suspense fallback={<PageLoader />}><DocumentTemplatesPage /></Suspense>} />
-            <Route path="/document-templates/new" element={<Suspense fallback={<PageLoader />}><TemplateEditorPage /></Suspense>} />
-            <Route path="/document-templates/:id/edit" element={<Suspense fallback={<PageLoader />}><TemplateEditorPage /></Suspense>} />
           </Route>
           <Route element={<ProtectedRoute requiredPermission="contracts_view"><MainLayout /></ProtectedRoute>}>
             <Route path="/offer-management" element={<Suspense fallback={<PageLoader />}><OfferManagementPage /></Suspense>} />
+            <Route path="/contract-management" element={<Suspense fallback={<PageLoader />}><ContractManagementPage /></Suspense>} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

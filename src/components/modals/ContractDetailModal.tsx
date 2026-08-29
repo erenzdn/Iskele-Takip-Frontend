@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckIcon, ClipboardIcon, ClockIcon, XIcon, ArrowsOut, ArrowsIn } from '@phosphor-icons/react';
+import { CheckIcon, ClipboardIcon, ClockIcon, XIcon } from '@phosphor-icons/react';
 import { useNavigate } from 'react-router-dom';
 import {
   AuditLog,
@@ -50,6 +50,8 @@ import SiteSelectField from '../SiteSelectField';
 import SettleNonReturnModal from './SettleNonReturnModal';
 import InventoryDetailModal from './InventoryDetailModal';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
+import { addendumService } from '../../services/addendumService';
+import { buildContractItemDisplayEntries, type AddendumLineSource } from '../../utils/addendum';
 import {
   applyCreatedSiteId,
   buildSiteRequestFields,
@@ -107,7 +109,8 @@ export default function ContractDetailModal({
   stackAboveParent = false,
 }: ContractDetailModalProps) {
   const navigate = useNavigate();
-  const [isFullScreen, setIsFullScreen] = useState(Boolean(initiallyFullScreen));
+  const [isFullScreen] = useState(Boolean(initiallyFullScreen));
+  void isFullScreen; // tam ekran düğmesi kaldırıldı; prop uyumluluğu için state korunuyor
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
@@ -202,7 +205,11 @@ export default function ContractDetailModal({
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
+  const [isEnsuringExtresiTemplate, setIsEnsuringExtresiTemplate] = useState(false);
   const [isAddingMaterialTable, setIsAddingMaterialTable] = useState(false);
+  const [addendumLineSources, setAddendumLineSources] = useState<Map<number, AddendumLineSource>>(
+    () => new Map()
+  );
   const [showManualLineModal, setShowManualLineModal] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
   const canViewContracts = Boolean(currentUser?.permissions?.includes('contracts_view'));
@@ -343,6 +350,22 @@ export default function ContractDetailModal({
     if (!contract?.ContractId) return;
     const full = await contractService.getByIdAsync(contract.ContractId);
     setFullContract(full);
+    await loadAddendumLineSources(contract.ContractId);
+  };
+
+  const loadAddendumLineSources = async (contractId?: number) => {
+    const id = contractId ?? contract?.ContractId;
+    if (!id || isNew || !canViewContracts) {
+      setAddendumLineSources(new Map());
+      return;
+    }
+    try {
+      const sources = await addendumService.loadAddedLineSourcesAsync(id);
+      setAddendumLineSources(sources);
+    } catch (error) {
+      console.error('Load addendum line sources error:', error);
+      setAddendumLineSources(new Map());
+    }
   };
 
   useEffect(() => {
@@ -399,11 +422,13 @@ export default function ContractDetailModal({
     if (contract?.ContractId && !isNew) {
       loadContractLogs();
       loadContractReturns();
+      void loadAddendumLineSources(contract.ContractId);
     } else {
       setContractLogs([]);
       setContractReturns([]);
+      setAddendumLineSources(new Map());
     }
-  }, [contract?.ContractId, isNew, isRentalContract]);
+  }, [contract?.ContractId, isNew, isRentalContract, canViewContracts]);
 
   const loadTemplates = async () => {
     try {
@@ -411,6 +436,21 @@ export default function ContractDetailModal({
       setTemplates(templateList);
     } catch (error) {
       console.error('Load templates error:', error);
+    }
+  };
+
+  const handleEnsureKullanimExtresiTemplate = async () => {
+    try {
+      setIsEnsuringExtresiTemplate(true);
+      const template = await contractTemplateService.ensureKullanimExtresiTemplateAsync();
+      await loadTemplates();
+      setSelectedTemplateId(template.TemplateId);
+      toast.success(`"${template.TemplateName}" şablonu güncellendi ve seçildi`);
+    } catch (error) {
+      console.error('Kullanım Extresi şablon hatası:', error);
+      toast.error(getApiErrorMessage(error) || 'Kullanım Extresi şablonu oluşturulamadı');
+    } finally {
+      setIsEnsuringExtresiTemplate(false);
     }
   };
 
@@ -450,6 +490,18 @@ export default function ContractDetailModal({
               kind: 'manual',
               ClientId: `manual-${detail.DetailId ?? crypto.randomUUID()}`,
               DetailId: detail.DetailId,
+              SourceAddendumId:
+                (detail.AddendumId ??
+                  detail.addendumId ??
+                  detail.SourceAddendumId ??
+                  detail.sourceAddendumId ??
+                  null) as number | null,
+              SourceAddendumNo:
+                (detail.AddendumNo ??
+                  detail.addendumNo ??
+                  detail.SourceAddendumNo ??
+                  detail.sourceAddendumNo ??
+                  null) as number | null,
               IsManual: true,
               Description: String(detail.Description ?? detail.description ?? '').trim() || 'Manuel Kalem',
               RentedQuantity: Number(detail.RentedQuantity ?? 1) || 1,
@@ -475,6 +527,18 @@ export default function ContractDetailModal({
                 : undefined,
             PriceSource: (detail.PriceSource ?? detail.priceSource ?? 'INVENTORY') as any,
             EffectiveStartDate: detail.EffectiveStartDate ?? detail.effectiveStartDate ?? undefined,
+            SourceAddendumId:
+              (detail.AddendumId ??
+                detail.addendumId ??
+                detail.SourceAddendumId ??
+                detail.sourceAddendumId ??
+                null) as number | null,
+            SourceAddendumNo:
+              (detail.AddendumNo ??
+                detail.addendumNo ??
+                detail.SourceAddendumNo ??
+                detail.sourceAddendumNo ??
+                null) as number | null,
             Item: undefined,
             ItemName: detail.ItemName ?? '',
             ItemNameEn: detail.ItemNameEn ?? detail.itemNameEn ?? undefined,
@@ -685,6 +749,23 @@ export default function ContractDetailModal({
   };
 
   const initialTotalPrice = contractItems.reduce((sum, item) => sum + getLineTotal(item), 0);
+
+  const contractItemDisplayEntries = useMemo(
+    () =>
+      buildContractItemDisplayEntries(
+        contractItems,
+        addendumLineSources,
+        !isNew && canViewContracts
+      ),
+    [contractItems, addendumLineSources, isNew, canViewContracts]
+  );
+
+  const addendumItemCount = useMemo(
+    () => contractItemDisplayEntries.filter((entry) => entry.kind === 'row' && entry.isAddendumRow).length,
+    [contractItemDisplayEntries]
+  );
+
+  const baseContractItemCount = contractItems.length - addendumItemCount;
 
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getItemIskonto = (itemId: number, warehouseId: number) =>
@@ -1647,19 +1728,21 @@ export default function ContractDetailModal({
     navigate(path, { replace: false, state: { openQuoteId: sourceQuoteId } });
   };
 
+  const compactBtn = '!py-1.5 !px-3 text-xs';
+  const fieldLabel = 'block text-[11px] font-medium text-text-secondary mb-0.5';
+
   const modalTree = (
-    <div className={`fixed inset-0 flex flex-col bg-background-main ${stackAboveParent ? 'z-[60]' : 'z-50'}`}>
-      {/* Üst başlık çubuğu - sistem penceresi görünümü */}
-      <header className="shrink-0 flex items-center justify-between px-6 py-4 bg-background-panel border-b border-background-border shadow-sm gap-3">
-        <div className="flex items-center gap-3 min-w-0 flex-wrap">
-          <h1 className="text-xl font-semibold text-text-primary tracking-tight truncate">
+    <div className={`fixed inset-0 flex flex-col overflow-hidden bg-background-main ${stackAboveParent ? 'z-[60]' : 'z-50'}`}>
+      <header className="shrink-0 flex items-center justify-between px-3 py-2 bg-background-panel border-b border-background-border gap-2">
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
+          <h1 className="text-base font-semibold text-text-primary tracking-tight truncate">
             {isNew ? 'Yeni Sözleşme' : `Sözleşme #${contract?.ContractId ?? ''} Detayı`}
           </h1>
-          <span className="text-sm font-medium text-text-secondary shrink-0">
-            {contractType === 'SALE' ? 'Satış Sözleşmesi' : 'Kiralama Sözleşmesi'}
+          <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
+            {contractType === 'SALE' ? 'Satış' : 'Kiralama'}
           </span>
           {!isNew && cancelled && (
-            <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-xs font-semibold text-amber-100 shrink-0">
+            <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-[11px] font-semibold text-amber-100 shrink-0">
               İptal Edildi
               {effectiveContract?.CancelledAt
                 ? ` • ${formatShortDateTime(effectiveContract.CancelledAt)}`
@@ -1667,38 +1750,36 @@ export default function ContractDetailModal({
             </span>
           )}
           {!isNew && completed && !cancelled && !archived && (
-            <span className="rounded border border-green-700/50 bg-green-900/30 px-2 py-0.5 text-xs font-semibold text-green-100 shrink-0">
+            <span className="rounded border border-green-700/50 bg-green-900/30 px-2 py-0.5 text-[11px] font-semibold text-green-100 shrink-0">
               Tamamlandı
             </span>
           )}
           {!isNew && archived && (
-            <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-xs font-semibold text-amber-100 shrink-0">
+            <span className="rounded border border-amber-600/50 bg-amber-900/30 px-2 py-0.5 text-[11px] font-semibold text-amber-100 shrink-0">
               Arşivlenmiş{archivedAtLabel ? ` • ${archivedAtLabel}` : ''}
             </span>
           )}
           {!isNew && active && (
-            <span className="rounded border border-blue-700/50 bg-blue-900/30 px-2 py-0.5 text-xs font-semibold text-blue-100 shrink-0">
+            <span className="rounded border border-blue-700/50 bg-blue-900/30 px-2 py-0.5 text-[11px] font-semibold text-blue-100 shrink-0">
               Aktif
             </span>
           )}
+          <span className="hidden md:inline text-[11px] text-text-secondary truncate">
+            {currentUser?.fullName || currentUser?.username || ''}
+          </span>
         </div>
-        <div className="flex items-center gap-2 shrink-0 flex-wrap justify-end">
+        <div className="flex items-center gap-1.5 shrink-0 flex-wrap justify-end">
           {!isNew && hasSourceQuote && (
             <button
               type="button"
               onClick={handleOpenSourceQuote}
               disabled={isBusy}
-              className="btn-secondary text-sm py-1.5 px-3"
+              className={`btn-secondary ${compactBtn}`}
               title="Bu sözleşmenin kaynak teklifini açar"
             >
               {sourceQuoteCode
-                ? `Kaynak teklife git (${sourceQuoteCode})`
+                ? `Kaynak teklif (${sourceQuoteCode})`
                 : 'Kaynak teklife git'}
-            </button>
-          )}
-          {!isNew && isReadOnly && active && (
-            <button type="button" onClick={() => setIsReadOnly(false)} className="btn-primary text-sm py-1.5 px-3" disabled={isBusy}>
-              Düzenle
             </button>
           )}
           {archivable && (
@@ -1706,7 +1787,7 @@ export default function ContractDetailModal({
               type="button"
               onClick={handleArchiveClick}
               disabled={isBusy || !canArchiveContract}
-              className={`btn-danger text-sm py-1.5 px-3 ${!canArchiveContract ? 'opacity-60 cursor-not-allowed' : ''}`}
+              className={`btn-danger ${compactBtn} ${!canArchiveContract ? 'opacity-60 cursor-not-allowed' : ''}`}
               title={
                 canArchiveContract
                   ? 'Sözleşmeyi listeden kaldırır; kayıt silinmez'
@@ -1721,7 +1802,7 @@ export default function ContractDetailModal({
               type="button"
               onClick={() => setShowUnarchiveConfirm(true)}
               disabled={isBusy}
-              className="btn-primary text-sm py-1.5 px-3"
+              className={`btn-primary ${compactBtn}`}
               title="Sözleşmeyi arşivden geri getirir"
             >
               Geri Getir
@@ -1732,7 +1813,7 @@ export default function ContractDetailModal({
               type="button"
               onClick={handleCancelClick}
               disabled={isBusy}
-              className={`btn-danger text-sm py-1.5 px-3 ${!canCancelContract ? 'opacity-60' : ''}`}
+              className={`btn-danger ${compactBtn} ${!canCancelContract ? 'opacity-60' : ''}`}
               title={
                 canCancelContract
                   ? 'Sözleşmeyi iptal eder; kaynak teklif varsa aktif tekliflere geri döner'
@@ -1747,7 +1828,7 @@ export default function ContractDetailModal({
               type="button"
               onClick={handleRevertClick}
               disabled={isBusy}
-              className={`btn-danger text-sm py-1.5 px-3 ${!canRevertToQuote ? 'opacity-60' : ''}`}
+              className={`btn-danger ${compactBtn} ${!canRevertToQuote ? 'opacity-60' : ''}`}
               title={
                 canRevertToQuote
                   ? 'Sözleşmeyi kaldırır ve kaynak teklifi beklemede duruma alır'
@@ -1762,154 +1843,138 @@ export default function ContractDetailModal({
               type="button"
               onClick={() => setShowCompleteConfirm(true)}
               disabled={isBusy}
-              className="btn-success text-sm py-1.5 px-3"
+              className={`btn-success ${compactBtn}`}
             >
               Tamamla
             </button>
           )}
           <button
             type="button"
-            onClick={() => setIsFullScreen(prev => !prev)}
-            className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors flex items-center gap-1.5 text-xs font-medium"
-            title={isFullScreen ? 'Daralt' : 'Tam Ekran'}
-          >
-            {isFullScreen ? (
-              <>
-                <ArrowsIn size={18} weight="regular" />
-                <span className="hidden sm:inline">Daralt</span>
-              </>
-            ) : (
-              <>
-                <ArrowsOut size={18} weight="regular" />
-                <span className="hidden sm:inline">Tam Ekran</span>
-              </>
-            )}
-          </button>
-          <button
-            type="button"
             onClick={onClose}
-            className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+            className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
             title="Kapat"
           >
-            <XIcon size={22} weight="regular" />
+            <XIcon size={20} weight="regular" />
           </button>
         </div>
       </header>
 
-      <div className="flex-1 overflow-auto">
-        <div className={`w-full mx-auto p-6 transition-all duration-200 ${isFullScreen ? 'max-w-none px-8' : 'max-w-6xl'}`}>
-        {!isNew && archivable && (
-          <section className="mb-4 rounded-xl border border-green-800/40 bg-green-950/20 px-4 py-3 text-sm text-green-100">
-            Bu sözleşme {cancelled ? 'iptal edilmiş' : 'tamamlanmış'}; bilgiler salt okunurdur. Listeden kaldırmak için{' '}
-            <span className="font-medium">Arşivle</span> kullanın.
-          </section>
-        )}
-        {!isNew && archived && (
-          <section className="mb-4 rounded-xl border border-amber-700/40 bg-amber-900/15 px-4 py-3 text-sm text-amber-100">
-            Bu kayıt arşivlenmiştir; düzenleme, iptal ve iade yapılamaz. Bilgiler salt okunurdur.
-            {effectiveContract?.ArchiveReason?.trim() ? (
-              <span className="block mt-1 text-amber-200/90">
-                Arşiv notu: {effectiveContract.ArchiveReason.trim()}
-              </span>
-            ) : null}
-          </section>
-        )}
-        {!isNew && cancelled && !archived && (
-          <section className="mb-4 rounded-xl border border-amber-700/40 bg-amber-900/15 px-4 py-3 text-sm text-amber-100">
-            Bu sözleşme iptal edilmiş; tekrar iptal edilemez.
-          </section>
-        )}
-        {!isNew && !active && !cancelled && !completed && effectiveContract && (
-          <section className="mb-4 rounded-xl border border-background-border bg-background-panel px-4 py-3 text-sm text-text-secondary">
-            Sözleşme durumu belirlenemedi. Sayfayı yenileyip tekrar deneyin.
-          </section>
-        )}
-        {!isNew && active && !canCancelContract && (
-          <section className="mb-4 rounded-xl border border-amber-700/40 bg-amber-900/15 px-4 py-3 text-sm text-amber-100">
-            Bu sözleşmeyi iptal etmek için yetkiniz bulunmuyor. Eski &quot;Sil&quot; işlemi kaldırıldı;
-            bağlı teklifi serbest bırakmak için <span className="font-medium">sözleşme iptal</span> yetkisi gerekir.
-          </section>
-        )}
-        {!isNew && (
-          <div className="flex gap-2 mb-4 border-b border-background-border pb-2">
-            <button
-              onClick={() => setActiveTab('info')}
-              className={`px-4 py-2 font-medium transition-colors ${
-                activeTab === 'info'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
-            >
-              Bilgiler
-            </button>
-            {isRentalContract && active && (fullContract ?? contract) && (
+      {!isNew && archivable && (
+        <section className="shrink-0 px-3 py-1.5 border-b border-green-800/40 bg-green-950/20 text-xs text-green-100">
+          Bu sözleşme {cancelled ? 'iptal edilmiş' : 'tamamlanmış'}; bilgiler salt okunurdur. Listeden kaldırmak için{' '}
+          <span className="font-medium">Arşivle</span> kullanın.
+        </section>
+      )}
+      {!isNew && archived && (
+        <section className="shrink-0 px-3 py-1.5 border-b border-amber-700/40 bg-amber-900/15 text-xs text-amber-100">
+          Bu kayıt arşivlenmiştir; düzenleme, iptal ve iade yapılamaz. Bilgiler salt okunurdur.
+          {effectiveContract?.ArchiveReason?.trim() ? (
+            <span className="ml-1 text-amber-200/90">
+              Arşiv notu: {effectiveContract.ArchiveReason.trim()}
+            </span>
+          ) : null}
+        </section>
+      )}
+      {!isNew && cancelled && !archived && (
+        <section className="shrink-0 px-3 py-1.5 border-b border-amber-700/40 bg-amber-900/15 text-xs text-amber-100">
+          Bu sözleşme iptal edilmiş; tekrar iptal edilemez.
+        </section>
+      )}
+      {!isNew && !active && !cancelled && !completed && effectiveContract && (
+        <section className="shrink-0 px-3 py-1.5 border-b border-background-border bg-background-panel text-xs text-text-secondary">
+          Sözleşme durumu belirlenemedi. Sayfayı yenileyip tekrar deneyin.
+        </section>
+      )}
+      {!isNew && active && !canCancelContract && (
+        <section className="shrink-0 px-3 py-1.5 border-b border-amber-700/40 bg-amber-900/15 text-xs text-amber-100">
+          Bu sözleşmeyi iptal etmek için yetkiniz bulunmuyor. Eski &quot;Sil&quot; işlemi kaldırıldı;
+          bağlı teklifi serbest bırakmak için <span className="font-medium">sözleşme iptal</span> yetkisi gerekir.
+        </section>
+      )}
+
+      {!isNew && (
+        <div className="shrink-0 flex gap-1 px-3 border-b border-background-border bg-background-panel">
+          <button
+            type="button"
+            onClick={() => setActiveTab('info')}
+            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === 'info'
+                ? 'text-accent border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Bilgiler
+          </button>
+          {isRentalContract && active && (fullContract ?? contract) && (
             <button
               type="button"
               onClick={() => {
                 setIsReturning(false);
                 setActiveTab('return');
               }}
-              className={`px-4 py-2 font-medium transition-colors ${
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
                 activeTab === 'return'
                   ? 'text-accent border-b-2 border-accent'
                   : 'text-text-secondary hover:text-text-primary'
               }`}
             >
-                İade Al
-                {contractItems.some(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0) && (
-                  <span className="ml-1.5 bg-green-600/30 text-green-400 text-xs px-1.5 py-0.5 rounded-full">
-                    {contractItems.filter(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0).length}
-                  </span>
-                )}
-              </button>
-            )}
-            {isRentalContract && (
-              <button
-                onClick={() => setActiveTab('returns')}
-                className={`px-4 py-2 font-medium transition-colors ${
-                  activeTab === 'returns'
-                    ? 'text-accent border-b-2 border-accent'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                İade Geçmişi
-                {contractReturns.length > 0 && (
-                  <span className="ml-1.5 bg-accent/20 text-accent text-xs px-1.5 py-0.5 rounded-full">
-                    {contractReturns.length}
-                  </span>
-                )}
-              </button>
-            )}
+              İade Al
+              {contractItems.some(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0) && (
+                <span className="ml-1.5 bg-green-600/30 text-green-400 text-xs px-1.5 py-0.5 rounded-full">
+                  {contractItems.filter(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0).length}
+                </span>
+              )}
+            </button>
+          )}
+          {isRentalContract && (
             <button
-              onClick={() => setActiveTab('history')}
-              className={`px-4 py-2 font-medium transition-colors ${
-                activeTab === 'history'
+              type="button"
+              onClick={() => setActiveTab('returns')}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                activeTab === 'returns'
                   ? 'text-accent border-b-2 border-accent'
                   : 'text-text-secondary hover:text-text-primary'
               }`}
             >
-              Geçmiş
+              İade Geçmişi
+              {contractReturns.length > 0 && (
+                <span className="ml-1.5 bg-accent/20 text-accent text-xs px-1.5 py-0.5 rounded-full">
+                  {contractReturns.length}
+                </span>
+              )}
             </button>
-            {canViewContracts && (
-              <button
-                type="button"
-                onClick={() => setActiveTab('addenda')}
-                className={`px-4 py-2 font-medium transition-colors ${
-                  activeTab === 'addenda'
-                    ? 'text-accent border-b-2 border-accent'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                Zeyilnameler
-              </button>
-            )}
-          </div>
-        )}
+          )}
+          <button
+            type="button"
+            onClick={() => setActiveTab('history')}
+            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+              activeTab === 'history'
+                ? 'text-accent border-b-2 border-accent'
+                : 'text-text-secondary hover:text-text-primary'
+            }`}
+          >
+            Geçmiş
+          </button>
+          {canViewContracts && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('addenda')}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                activeTab === 'addenda'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Zeyilnameler
+            </button>
+          )}
+        </div>
+      )}
 
-        {isRentalContract && activeTab === 'return' && !isNew && (
-          <>
-            <h3 className="text-lg font-semibold mb-3">Ürün İade Al</h3>
+      {isRentalContract && activeTab === 'return' && !isNew && (
+        <div className="flex-1 overflow-auto p-3">
+          <h3 className="text-lg font-semibold mb-3">Ürün İade Al</h3>
             <p className="text-sm text-text-secondary mb-4">
               Müşteriden gelen ürünleri iade almak için aşağıdaki listeden ürün seçin, miktar ve tarih girin.
             </p>
@@ -2038,11 +2103,11 @@ export default function ContractDetailModal({
                 Kapat
               </button>
             </div>
-          </>
-        )}
+        </div>
+      )}
 
-        {isRentalContract && activeTab === 'returns' && !isNew && (
-          <>
+      {isRentalContract && activeTab === 'returns' && !isNew && (
+        <div className="flex-1 overflow-auto p-3">
             <h3 className="text-lg font-semibold mb-3">İade Geçmişi</h3>
             {returnsLoading ? (
               <div className="text-center py-8 text-text-secondary">Yükleniyor...</div>
@@ -2119,11 +2184,11 @@ export default function ContractDetailModal({
                 Kapat
               </button>
             </div>
-          </>
-        )}
+        </div>
+      )}
 
-        {activeTab === 'history' && !isNew && (
-          <>
+      {activeTab === 'history' && !isNew && (
+        <div className="flex-1 overflow-auto p-3">
             <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
             <AuditLogTimeline logs={contractLogs} loading={contractLogsLoading} />
             <div className="flex gap-3 mt-6">
@@ -2131,10 +2196,11 @@ export default function ContractDetailModal({
                 Kapat
               </button>
             </div>
-          </>
-        )}
+        </div>
+      )}
 
-        {activeTab === 'addenda' && !isNew && contract?.ContractId && canViewContracts && (
+      {activeTab === 'addenda' && !isNew && contract?.ContractId && canViewContracts && (
+        <div className="flex-1 overflow-auto p-3">
           <ContractAddendaPanel
             contractId={contract.ContractId}
             contractType={contractType}
@@ -2155,15 +2221,15 @@ export default function ContractDetailModal({
             }}
             onClose={onClose}
           />
-        )}
+        </div>
+      )}
 
-        {(activeTab === 'info' || isNew) && (
-        <>
-        <div className="space-y-4">
+      {(activeTab === 'info' || isNew) && (
+        <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
           {cancelled && effectiveContract && (
-            <section className="rounded-xl border border-amber-700/50 bg-amber-900/20 p-4 shadow-sm">
-              <h3 className="text-sm font-semibold text-amber-100 mb-2">İptal Bilgileri</h3>
-              <div className="text-sm text-amber-50/90 space-y-1">
+            <section className="shrink-0 rounded-lg border border-amber-700/50 bg-amber-900/20 px-3 py-2">
+              <h3 className="text-xs font-semibold text-amber-100 mb-1">İptal Bilgileri</h3>
+              <div className="text-xs text-amber-50/90 flex flex-wrap gap-x-4 gap-y-1">
                 <p>
                   <span className="font-medium">İptal Tarihi:</span>{' '}
                   {effectiveContract.CancelledAt
@@ -2185,31 +2251,15 @@ export default function ContractDetailModal({
               onDismiss={() => setSaveStockError(null)}
             />
           )}
-          {/* Üst: Genel Bilgiler - teklif ekranı gibi yatay grid */}
-          <section className="rounded-xl border border-background-border bg-background-panel p-3 shadow-sm">
-            <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-2 pb-1.5 border-b border-background-border">
-              Genel Bilgiler
-            </h3>
-            <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Sözleşme Kodu (Opsiyonel)</label>
-                <input
-                  type="text"
-                  value={contractCode}
-                  onChange={(e) => setContractCode(e.target.value)}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                  placeholder="Örn: SZ-2026-001"
-                  maxLength={50}
-                />
-              </div>
 
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary" htmlFor="contract-customer-search">
-                  Müşteri Seçimi *
+          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2">
+            <div className={`grid gap-x-2.5 gap-y-1.5 ${selectedCustomerId ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
+              <div className="min-w-0">
+                <label className={fieldLabel} htmlFor="contract-customer-search">
+                  Müşteri *
                 </label>
                 <CustomerSearchField
-                  key={`${contract?.ContractId ?? 'new'}-${isNew}`}
+                  key={`${contract?.ContractId ?? 'new'}-${isNew}-${selectedCustomerId || 'none'}`}
                   id="contract-customer-search"
                   customers={customers}
                   value={selectedCustomerId}
@@ -2219,12 +2269,12 @@ export default function ContractDetailModal({
               </div>
 
               {selectedCustomerId && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">
+                <div className="min-w-0 overflow-hidden">
+                  <label className={fieldLabel}>
                     Merkez Yetkili *
                   </label>
                   {authorizedContactsLoading ? (
-                    <div className="input w-full text-text-secondary text-sm py-2">Yükleniyor...</div>
+                    <div className="input w-full min-w-0 text-text-secondary text-sm py-1.5">Yükleniyor...</div>
                   ) : authorizedContacts.length > 0 ? (
                     <select
                       value={selectedAuthorizedContactId}
@@ -2233,7 +2283,7 @@ export default function ContractDetailModal({
                         setAuthorizedContactError(null);
                       }}
                       disabled={isReadOnly}
-                      className="input w-full text-sm py-1.5"
+                      className="input min-w-0 w-full text-sm py-1.5"
                     >
                       <option value="">Yetkili seçin</option>
                       {authorizedContacts.map((contact) => (
@@ -2246,179 +2296,51 @@ export default function ContractDetailModal({
                       ))}
                     </select>
                   ) : (
-                    <div className="input w-full text-red-300 bg-background-secondary text-sm py-2">
+                    <div className="input min-w-0 w-full text-red-300 bg-background-secondary text-sm py-1.5 truncate">
                       Bu müşteri için yetkili tanımlı değil
                     </div>
                   )}
                   {authorizedContactError && (
-                    <p className="text-xs text-red-300">{authorizedContactError}</p>
+                    <p className="text-xs text-red-300 truncate">{authorizedContactError}</p>
                   )}
                 </div>
               )}
 
-              {!isReadOnly && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">Sözleşme Şablonu (Opsiyonel)</label>
-                  <div className="flex gap-2">
-                    <select
-                      value={selectedTemplateId}
-                      onChange={(e) => setSelectedTemplateId(Number(e.target.value) || '')}
-                      className="input w-full text-sm py-1.5"
-                    >
-                      <option value="">Şablon seçin</option>
-                      {templates.map((t) => (
-                        <option key={t.TemplateId} value={t.TemplateId}>
-                          {t.TemplateName} {t.IsDefault ? '(Varsayılan)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    {selectedTemplateId && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
-                          if (!template) return;
-                          try {
-                            setLoadingTemplate(true);
-                            const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
-                            setEditingTemplate(fullTemplate);
-                            setIsNewTemplate(false);
-                            setIsTemplateEditorOpen(true);
-                          } catch (error) {
-                            console.error('Şablon yükleme hatası:', error);
-                            toast.error(getApiErrorMessage(error));
-                          } finally {
-                            setLoadingTemplate(false);
-                          }
-                        }}
-                        disabled={loadingTemplate}
-                        className="btn-secondary text-sm shrink-0"
-                      >
-                        {loadingTemplate ? 'Yükleniyor...' : 'Düzenle'}
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingTemplate(null);
-                        setIsNewTemplate(true);
-                        setIsTemplateEditorOpen(true);
-                      }}
-                      className="btn-secondary text-sm shrink-0"
-                    >
-                      Yeni
-                    </button>
-                  </div>
-                </div>
-              )}
-
               {selectedCustomerId && (
-                <SiteSelectField
-                  sites={sites}
-                  sitesLoading={sitesLoading}
-                  selectedSiteId={selectedSiteId}
-                  isNewSiteMode={isNewSiteMode}
-                  newSiteForm={newSiteForm}
-                  onSelectSite={handleSiteSelect}
-                  onNewSiteFormChange={handleNewSiteFormChange}
-                  onCancelNewSite={resetNewSiteMode}
-                  required={sites.length > 0}
-                  disabled={isReadOnly}
-                />
-              )}
-
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Başlangıç Tarihi</label>
-                <input
-                  type="date"
-                  value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                />
-              </div>
-              {isRentalContract && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">Planlanan Bitiş</label>
-                  <input
-                    type="date"
-                    value={plannedEndDate}
-                    onChange={(e) => setPlannedEndDate(e.target.value)}
+                <div className="min-w-0 overflow-hidden">
+                  <SiteSelectField
+                    sites={sites}
+                    sitesLoading={sitesLoading}
+                    selectedSiteId={selectedSiteId}
+                    isNewSiteMode={isNewSiteMode}
+                    newSiteForm={newSiteForm}
+                    onSelectSite={handleSiteSelect}
+                    onNewSiteFormChange={handleNewSiteFormChange}
+                    onCancelNewSite={resetNewSiteMode}
+                    required={sites.length > 0}
                     disabled={isReadOnly}
-                    className="input w-full text-sm py-1.5"
+                    label="Şantiye"
                   />
-                  <p className="text-[11px] text-text-secondary leading-snug">
-                    Başlangıç veya planlanan bitişi değiştirdiğinizde sunucu planlanan tutarı (InitialTotalPrice)
-                    güncel tarih aralığına göre yeniden hesaplar.
-                  </p>
                 </div>
               )}
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Sözleşme Sahibi</label>
-                <div className="input w-full bg-background-secondary text-text-secondary py-1.5 px-2 text-xs rounded-lg border border-background-border">
-                  {currentUser?.fullName || currentUser?.username || '—'}
-                </div>
-              </div>
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">İskonto (%)</label>
+            </div>
+
+            <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5">
+              <div className="min-w-[120px] w-[150px]">
+                <label className={fieldLabel}>Sözleşme Kodu</label>
                 <input
-                  type="number"
-                  value={Number(iskonto) || 0}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
-                  }}
-                  disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={0.01}
-                  className="input w-20 text-sm py-1.5"
-                  placeholder="0"
-                  title="Tüm satırlara uygulanır"
-                />
-              </div>
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">KDV (%)</label>
-                <input
-                  type="number"
-                  value={vatRate}
-                  onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
-                  disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={1}
-                  className="input w-20 text-sm py-1.5"
-                  placeholder="20"
-                />
-              </div>
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Para Birimi</label>
-                <select
-                  value={currency}
-                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
+                  type="text"
+                  value={contractCode}
+                  onChange={(e) => setContractCode(e.target.value)}
                   disabled={isReadOnly}
                   className="input w-full text-sm py-1.5"
-                >
-                  <option value="TRY">TRY (TL)</option>
-                  <option value="EUR">EUR (€)</option>
-                  <option value="USD">USD ($)</option>
-                </select>
+                  placeholder="Örn: SZ-2026-001"
+                  maxLength={50}
+                />
               </div>
 
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Dil</label>
-                <select
-                  value={language}
-                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
-                  disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
-                >
-                  <option value="TR">Türkçe</option>
-                  <option value="EN">English</option>
-                </select>
-              </div>
-              <div className="space-y-0.5">
-                <label className="block text-xs font-medium text-text-primary">Sözleşme Tipi</label>
+              <div className="min-w-[120px] w-[140px]">
+                <label className={fieldLabel}>Sözleşme Tipi</label>
                 {isNew ? (
                   lockNewContractType ? (
                     <div className="input w-full bg-background-secondary text-text-secondary text-sm py-1.5 px-2 rounded-lg border border-background-border">
@@ -2440,9 +2362,104 @@ export default function ContractDetailModal({
                   </div>
                 )}
               </div>
+
+              <div className="min-w-[120px] w-[140px]">
+                <label className={fieldLabel}>Başlangıç</label>
+                <input
+                  type="date"
+                  value={startDate}
+                  onChange={(e) => setStartDate(e.target.value)}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                />
+              </div>
+
+              {isRentalContract && (
+                <div className="min-w-[120px] w-[140px]">
+                  <label className={fieldLabel} title="Başlangıç veya planlanan bitişi değiştirdiğinizde sunucu planlanan tutarı güncel tarih aralığına göre yeniden hesaplar.">
+                    Planlanan Bitiş
+                  </label>
+                  <input
+                    type="date"
+                    value={plannedEndDate}
+                    onChange={(e) => setPlannedEndDate(e.target.value)}
+                    disabled={isReadOnly}
+                    className="input w-full text-sm py-1.5"
+                  />
+                </div>
+              )}
+
+              <div className="min-w-[100px] w-[120px]">
+                <label className={fieldLabel}>Sözleşme Sahibi</label>
+                <div className="input w-full bg-background-secondary text-text-secondary py-1.5 px-2 text-xs rounded-lg border border-background-border truncate">
+                  {currentUser?.fullName || currentUser?.username || '—'}
+                </div>
+              </div>
+
+              <div className="min-w-[72px] w-[88px]">
+                <label className={fieldLabel} title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz">İskonto %</label>
+                <input
+                  type="number"
+                  value={Number(iskonto) || 0}
+                  onChange={(e) => {
+                    const v = parseFloat(e.target.value);
+                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
+                  }}
+                  disabled={isReadOnly}
+                  min={0}
+                  max={100}
+                  step={0.01}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="0"
+                  title="Tüm satırlara uygulanır"
+                />
+              </div>
+
+              <div className="min-w-[72px] w-[88px]">
+                <label className={fieldLabel}>KDV %</label>
+                <input
+                  type="number"
+                  value={vatRate}
+                  onChange={(e) => setVatRate(parseFloat(e.target.value) || 0)}
+                  disabled={isReadOnly}
+                  min={0}
+                  max={100}
+                  step={1}
+                  className="input w-full text-sm py-1.5"
+                  placeholder="20"
+                />
+              </div>
+
+              <div className="min-w-[110px] w-[130px]">
+                <label className={fieldLabel}>Para Birimi</label>
+                <select
+                  value={currency}
+                  onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TRY">TRY (TL)</option>
+                  <option value="EUR">EUR (€)</option>
+                  <option value="USD">USD ($)</option>
+                </select>
+              </div>
+
+              <div className="min-w-[100px] w-[120px]">
+                <label className={fieldLabel}>Dil</label>
+                <select
+                  value={language}
+                  onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
+                  disabled={isReadOnly}
+                  className="input w-full text-sm py-1.5"
+                >
+                  <option value="TR">Türkçe</option>
+                  <option value="EN">English</option>
+                </select>
+              </div>
+
               {!isReadOnly && (
-                <div className="space-y-0.5">
-                  <label className="block text-xs font-medium text-text-primary">Varsayılan depo *</label>
+                <div className="min-w-[140px] w-[170px]">
+                  <label className={fieldLabel}>Varsayılan depo *</label>
                   <select
                     value={selectedWarehouseId}
                     onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || '')}
@@ -2456,37 +2473,96 @@ export default function ContractDetailModal({
                     ))}
                   </select>
                   {!selectedWarehouseId && (
-                    <span className="text-xs text-amber-400">Ürün eklemek için depo seçin.</span>
+                    <span className="text-[10px] text-amber-400">Ürün eklemek için depo seçin.</span>
                   )}
                 </div>
               )}
-            </div>
 
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-t border-background-border pt-2">
-              <div className="flex flex-wrap items-center gap-4 text-xs text-text-secondary">
-                {contractType === 'RENTAL' && (
-                  <>
-                    <span><span className="font-medium text-text-primary">Planlanan Süre:</span> {plannedDays} gün</span>
-                    {actualDays > 0 && (
-                      <span><span className="font-medium text-text-primary">Gerçekleşen Süre:</span> {actualDays} gün</span>
-                    )}
-                  </>
-                )}
-                {contractType === 'SALE' && (
-                  <span className="text-text-secondary/90">Satış sözleşmesinde tutarlar birim satış fiyatı × miktar; kiralama süresi çarpanı uygulanmaz.</span>
-                )}
-                <span>
-                  <span className="font-medium text-text-primary">Durum:</span>{' '}
-                  {cancelled ? 'İptal Edildi' : completed ? 'Tamamlandı' : 'Aktif'}
-                </span>
+              <div className="min-w-[220px] flex-[1.3]">
+                <label className={fieldLabel}>Şablon</label>
+                <div className="flex gap-1">
+                  <select
+                    value={selectedTemplateId}
+                    onChange={(e) => setSelectedTemplateId(Number(e.target.value) || '')}
+                    className="input w-full text-sm py-1.5"
+                  >
+                    <option value="">Şablon seçin</option>
+                    {templates.map((t) => (
+                      <option key={t.TemplateId} value={t.TemplateId}>
+                        {t.TemplateName} {t.IsDefault ? '(Varsayılan)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  {selectedTemplateId && (
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
+                        if (!template) return;
+                        try {
+                          setLoadingTemplate(true);
+                          const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
+                          setEditingTemplate(fullTemplate);
+                          setIsNewTemplate(false);
+                          setIsTemplateEditorOpen(true);
+                        } catch (error) {
+                          console.error('Şablon yükleme hatası:', error);
+                          toast.error(getApiErrorMessage(error));
+                        } finally {
+                          setLoadingTemplate(false);
+                        }
+                      }}
+                      disabled={loadingTemplate}
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
+                    >
+                      {loadingTemplate ? '...' : 'Düzenle'}
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingTemplate(null);
+                      setIsNewTemplate(true);
+                      setIsTemplateEditorOpen(true);
+                    }}
+                    className={`btn-secondary shrink-0 ${compactBtn}`}
+                  >
+                    Yeni
+                  </button>
+                  {isRentalContract && (
+                    <button
+                      type="button"
+                      onClick={handleEnsureKullanimExtresiTemplate}
+                      disabled={isEnsuringExtresiTemplate}
+                      className={`btn-secondary shrink-0 ${compactBtn}`}
+                      title="BERKA tarzı Kullanım Extresi şablonunu oluşturur veya seçer"
+                    >
+                      {isEnsuringExtresiTemplate ? '...' : 'Kullanım Extresi'}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="flex flex-wrap gap-2">
-                {/* Mevcut sözleşmede kalem değişikliği Zeyilname / Ek Protokol üzerinden yapılır. */}
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-background-border bg-background-panel flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 border-b border-background-border">
+              <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                {contractType === 'SALE' ? 'Satış Kalemleri' : 'Kiralanan Malzemeler'}
+                {contractItems.length > 0 && (
+                  <span className="ml-1.5 font-normal normal-case tracking-normal text-text-secondary/80">
+                    {addendumItemCount > 0
+                      ? `(${baseContractItemCount} + ${addendumItemCount} zeyilname)`
+                      : `(${contractItems.length})`}
+                  </span>
+                )}
+              </h3>
+              <div className="flex flex-wrap items-center gap-1.5">
                 {isNew && !isReadOnly && (
                   <button
                     type="button"
                     onClick={() => setShowProductPickerModal(true)}
-                    className="btn-secondary"
+                    className={`btn-secondary ${compactBtn}`}
                   >
                     Ürün Ekle
                   </button>
@@ -2495,9 +2571,9 @@ export default function ContractDetailModal({
                   <button
                     type="button"
                     onClick={() => setShowManualLineModal(true)}
-                    className="btn-secondary"
+                    className={`btn-secondary ${compactBtn}`}
                   >
-                    Manuel Kalem Ekle
+                    Manuel Kalem
                   </button>
                 )}
                 {!isReadOnly && selectedTemplateId && contractItems.length > 0 && (
@@ -2534,10 +2610,11 @@ export default function ContractDetailModal({
                       }
                     }}
                     disabled={isAddingMaterialTable}
-                    className="btn-secondary text-sm"
+                    className={`btn-secondary ${compactBtn}`}
+                    title="Seçili şablona malzeme tablosu yer tutucusu ekler"
                   >
-                    <ClipboardIcon size={16} weight="regular" className="inline mr-1" aria-hidden />
-                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Tabloyu Şablona Ekle'}
+                    <ClipboardIcon size={14} weight="regular" className="inline mr-1" aria-hidden />
+                    {isAddingMaterialTable ? 'Ekleniyor...' : 'Şablona Tablo'}
                   </button>
                 )}
                 {!isNew && contract && active && canViewContracts && (
@@ -2549,79 +2626,81 @@ export default function ContractDetailModal({
                         setPendingOpenAddendumCreate(true);
                       }
                     }}
-                    className="btn-secondary"
+                    className={`btn-secondary ${compactBtn}`}
                     title="Kalem ekleme / miktar-fiyat değişikliği zeyilname ile yapılır"
                   >
-                    Zeyilname / Ek Protokol
+                    Zeyilname
                   </button>
                 )}
                 {!isNew && contract && selectedTemplateId && (
                   <>
-                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className="btn-primary text-sm">
+                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className={`btn-primary ${compactBtn}`}>
                       {isBusy ? 'Yükleniyor...' : 'Önizle'}
                     </button>
-                    <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className="btn-secondary text-sm">PDF İndir</button>
-                    <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className="btn-secondary text-sm">Word İndir</button>
+                    <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>PDF</button>
+                    <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>Word</button>
                   </>
-                )}
-                {!isReadOnly && !completed && (
-                  <>
-                    <button type="button" onClick={onClose} className="btn-secondary">İptal</button>
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
-                      className="btn-primary"
-                    >
-                      {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
-                    </button>
-                  </>
-                )}
-                {isReadOnly && !isNew && (
-                  <button type="button" onClick={onClose} className="btn-secondary">Kapat</button>
                 )}
               </div>
             </div>
-          </section>
-
-          {/* Kiralanan Malzemeler tablosu - tam genişlik */}
-          <section className="rounded-xl border border-background-border bg-background-panel shadow-sm flex-1 min-h-[260px] flex flex-col overflow-hidden">
-            <h3 className="text-sm font-semibold text-text-secondary uppercase tracking-wider px-4 pt-4 pb-2 border-b border-background-border shrink-0">
-              {contractType === 'SALE' ? 'Satış Kalemleri' : 'Kiralanan Malzemeler'}
-            </h3>
-            <div className="border-0 rounded-b-xl overflow-auto flex-1 min-h-0">
+            <div className="overflow-auto flex-1 min-h-0">
                 <table className="w-full text-sm border-collapse text-text-primary">
                   <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
                     <tr>
-                      <th className="text-left px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">Ürün Kodu</th>
-                      <th className="text-left px-3 py-2 font-semibold text-text-secondary">Ürün Adı</th>
-                      <th className="text-left px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">Depo</th>
-                      {isNew && <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">Müsait Stok</th>}
-                      <th className="text-right px-3 py-2 font-semibold text-text-secondary w-24">Miktar</th>
-                      <th className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap">
+                      <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">Ürün Kodu</th>
+                      <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">Ürün Adı</th>
+                      <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">Depo</th>
+                      {isNew && <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">Müsait Stok</th>}
+                      <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-24 text-xs">Miktar</th>
+                      <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
                         {contractType === 'SALE' ? 'Birim Fiyat' : 'Günlük Fiyat'}
                       </th>
-                      <th className="text-right px-3 py-2 font-semibold text-text-secondary w-20">İskonto (%)</th>
+                      <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-20 text-xs">İskonto (%)</th>
                       <th
-                        className="text-right px-3 py-2 font-semibold text-text-secondary whitespace-nowrap"
+                        className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs"
                         title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
                       >
                         Toplam
                       </th>
-                      <th className="text-center px-2 py-2 font-semibold text-text-secondary w-20">İşlem</th>
+                      <th className="text-center px-2 py-1.5 font-semibold text-text-secondary w-20 text-xs">İşlem</th>
                     </tr>
                   </thead>
                   <tbody>
                     {contractItems.length === 0 ? (
                       <tr>
                         <td colSpan={isNew ? 9 : 8} className="px-3 py-6 text-center text-sm text-text-secondary">
-                          Henüz malzeme eklenmedi. Üst kısımdan &quot;Ürün Ekle&quot; butonu ile malzeme seçebilirsiniz.
+                          Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
                         </td>
                       </tr>
                     ) : (
-                    contractItems.map((item, rowIndex) => {
+                    contractItemDisplayEntries.map((entry, rowIndex) => {
+                      if (entry.kind === 'separator') {
+                        return (
+                          <tr key="addendum-separator" className="bg-background-panel">
+                            <td colSpan={isNew ? 9 : 8} className="px-3 py-2.5">
+                              <div className="flex items-center gap-3">
+                                <div className="flex-1 border-t-2 border-dashed border-amber-500/40" />
+                                <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400/90 whitespace-nowrap">
+                                  Zeyilname ile Eklenen Kalemler
+                                </span>
+                                <div className="flex-1 border-t-2 border-dashed border-amber-500/40" />
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      }
+
+                      const { item, isAddendumRow, addendumNo } = entry;
                       const remainingOnRent = item.kind === 'inventory' ? item.RentedQuantity - item.ReturnedQuantity : 0;
+                      // İskonto / iade formu için ürün+depo anahtarı (iş kuralı)
                       const itemKey = item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : item.ClientId;
+                      // Liste satırı: aynı ürün zeyilname ile yeniden eklenebildiği için DetailId zorunlu
+                      const rowKey =
+                        item.kind === 'inventory'
+                          ? item.DetailId != null
+                            ? `d-${item.DetailId}`
+                            : `${item.ItemId}-${item.WarehouseId}-r${rowIndex}`
+                          : item.ClientId;
                       const isReturnFormOpen = item.kind === 'inventory' ? returnDetailKey === itemKey : false;
                       const invItem =
                         item.kind === 'inventory'
@@ -2639,7 +2718,7 @@ export default function ContractDetailModal({
                       const justAdded = item.kind === 'inventory' ? lastAddedKeys.includes(itemKey) : false;
                       const isRowActive = activeItemsGridCell?.row === rowIndex;
                       return (
-                        <Fragment key={itemKey}>
+                        <Fragment key={rowKey}>
                           <tr
                             className={`border-b border-background-border bg-background-surface hover:bg-background-hover transition-colors duration-300 ${
                               justAdded ? 'bg-green-500/20' : ''
@@ -2708,6 +2787,14 @@ export default function ContractDetailModal({
                             </td>
                             <td className="px-3 py-2">
                               <div className="font-medium">
+                                {isAddendumRow && (
+                                  <span
+                                    className="inline-flex items-center mr-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30"
+                                    title="Bu kalem onaylı zeyilname ile sözleşmeye eklenmiştir"
+                                  >
+                                    Zeyilname{addendumNo != null ? ` #${addendumNo}` : ''}
+                                  </span>
+                                )}
                                 {item.kind === 'inventory' ? (
                                   <button
                                     type="button"
@@ -2948,95 +3035,108 @@ export default function ContractDetailModal({
             </div>
           </section>
 
-          {/* Alt: Finansal özet (teklif ekranı gibi) */}
-          <section className="rounded-xl border border-background-border bg-background-panel p-4 shadow-sm shrink-0">
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5 text-sm">
+          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
+            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
               <div>
-                <div className="text-text-secondary mb-1">Ara Toplam</div>
-                <div className="font-semibold text-text-primary">{formatCurrency(subtotal)}</div>
+                <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
+                <span className="font-semibold text-text-primary">{formatCurrency(subtotal)}</span>
               </div>
               {totalSettlementCharge > 0 && (
-                <div className="bg-red-500/10 p-2 rounded-lg border border-red-500/20">
-                  <div className="text-text-secondary mb-1 flex items-center gap-1" title="Sözleşmedeki zayi, hurda veya iade satışlarından kaynaklanan kesinti / borç tutarı genel toplama eklenmiştir.">
-                    <span>Sanal İade / Zayi Borcu</span>
-                    <span className="cursor-help text-xs bg-red-400/20 text-red-300 px-1 rounded">?</span>
-                  </div>
-                  <div className="font-semibold text-red-400">+{formatCurrency(totalSettlementCharge)}</div>
+                <div title="Sözleşmedeki zayi, hurda veya iade satışlarından kaynaklanan kesinti / borç tutarı genel toplama eklenmiştir.">
+                  <span className="text-[11px] text-text-secondary mr-1.5">Zayi Borcu</span>
+                  <span className="font-semibold text-red-400">+{formatCurrency(totalSettlementCharge)}</span>
                 </div>
               )}
               <div>
-                <div className="text-text-secondary mb-1">Toplam İskonto</div>
-                <div className="font-semibold text-red-300">-{formatCurrency(discountAmount)}</div>
+                <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
+                <span className="font-semibold text-red-300">-{formatCurrency(discountAmount)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">İskontolu Toplam</div>
-                <div className="font-semibold text-text-primary">{formatCurrency(discountedTotal)}</div>
+                <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
+                <span className="font-semibold text-text-primary">{formatCurrency(discountedTotal)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">KDV Toplam ({vatRate || 0}%)</div>
-                <div className="font-semibold text-yellow-300">{formatCurrency(vatAmount)}</div>
+                <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
+                <span className="font-semibold text-yellow-300">{formatCurrency(vatAmount)}</span>
               </div>
               <div>
-                <div className="text-text-secondary mb-1">Genel Toplam</div>
-                <div className="text-2xl font-bold text-green-400">{formatCurrency(grandTotal)}</div>
+                <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
+                <span className="text-lg font-bold text-green-400">{formatCurrency(grandTotal)}</span>
               </div>
-            </div>
-            {contractType === 'RENTAL' && (
-              <div className="mt-2 text-xs text-text-secondary">
-                (Planlanan süre üzerinden hesaplanmıştır)
-              </div>
-            )}
-
-            {contract?.FinalCalculatedPrice && (
-              <div className="mt-3 pt-3 border-t border-background-border">
-                <div className="text-xs text-text-secondary mb-1">Final Tutar</div>
-                <div className="text-lg font-bold text-green-200">{formatCurrency(contract.FinalCalculatedPrice)}</div>
-                <div className="text-[11px] text-text-secondary">(Gerçekleşen süre üzerinden)</div>
-              </div>
-            )}
-
-            {!isNew && contract && active && (
-              <div className="mt-3 pt-3 border-t border-background-border">
-                <div className="flex items-center justify-between mb-2">
-                  <div>
-                    <div className="font-semibold text-sm">Fiyat Hesaplama</div>
-                    <div className="text-xs text-text-secondary">Temel ücret ve gecikme ücretleri kırılımı</div>
-                  </div>
-                  <button
-                    onClick={handleCalculatePrice}
-                    disabled={isCalculating}
-                    className="btn-primary text-sm px-4 py-2"
-                  >
-                    {isCalculating ? 'Hesaplanıyor...' : 'Fiyat Hesapla'}
-                  </button>
+              {contractType === 'RENTAL' && (
+                <span className="text-[11px] text-text-secondary">
+                  {plannedDays} gün
+                  {actualDays > 0 ? ` · gerçekleşen ${actualDays} gün` : ''}
+                  {' · '}planlanan süre üzerinden
+                </span>
+              )}
+              {contractType === 'SALE' && (
+                <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
+              )}
+              {contract?.FinalCalculatedPrice != null && (
+                <div>
+                  <span className="text-[11px] text-text-secondary mr-1.5">Final Tutar</span>
+                  <span className="font-semibold text-green-200">{formatCurrency(contract.FinalCalculatedPrice)}</span>
                 </div>
-                {priceCalculation && (
-                  <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
-                    {contractType === 'RENTAL' && (
-                    <div className="rounded-lg bg-blue-900/30 p-2">
-                      <span className="text-text-secondary">Planlanan:</span> {priceCalculation.plannedDays} gün
-                    </div>
-                    )}
-                    <div className="rounded-lg bg-blue-900/30 p-2">
-                      <span className="text-text-secondary">Temel Ücret:</span> {formatCurrency(priceCalculation.basePrice)}
-                    </div>
-                    {priceCalculation.totalLateFee > 0 && (
-                      <div className="col-span-2 rounded-lg bg-orange-900/30 p-2">
-                        <span className="text-text-secondary">Gecikme Ücreti:</span> {formatCurrency(priceCalculation.totalLateFee)}
-                      </div>
-                    )}
-                    <div className="col-span-2 rounded-lg bg-green-900 p-2 font-bold">
-                      Final Fiyat: {formatCurrency(priceCalculation.finalPrice)}
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
+              {!isNew && contract && active && priceCalculation && (
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+                  {contractType === 'RENTAL' && (
+                    <span className="text-text-secondary">Planlanan: {priceCalculation.plannedDays} gün</span>
+                  )}
+                  <span className="text-text-secondary">Temel: {formatCurrency(priceCalculation.basePrice)}</span>
+                  {priceCalculation.totalLateFee > 0 && (
+                    <span className="text-orange-300">Gecikme: {formatCurrency(priceCalculation.totalLateFee)}</span>
+                  )}
+                  <span className="font-semibold text-green-300">Final: {formatCurrency(priceCalculation.finalPrice)}</span>
+                </div>
+              )}
+            </div>
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              {!isNew && contract && active && (
+                <button
+                  type="button"
+                  onClick={handleCalculatePrice}
+                  disabled={isCalculating}
+                  className={`btn-secondary ${compactBtn}`}
+                >
+                  {isCalculating ? 'Hesaplanıyor...' : 'Fiyat Hesapla'}
+                </button>
+              )}
+              {!isNew && isReadOnly && active && (
+                <button
+                  type="button"
+                  onClick={() => setIsReadOnly(false)}
+                  disabled={isBusy}
+                  className={`btn-primary ${compactBtn}`}
+                >
+                  Düzenle
+                </button>
+              )}
+              {!isReadOnly && !completed && (
+                <>
+                  <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                    İptal
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    disabled={isBusy || isSaveBlockedByNewSite(isNewSiteMode, newSiteForm.SiteName)}
+                    className={`btn-primary ${compactBtn}`}
+                  >
+                    {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
+                  </button>
+                </>
+              )}
+              {isReadOnly && (
+                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  Kapat
+                </button>
+              )}
+            </div>
           </section>
         </div>
-        </>
-        )}
-      </div>
+      )}
 
       {showCancelReasonModal && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
@@ -3312,7 +3412,6 @@ export default function ContractDetailModal({
           onClose={() => setSelectedInventoryForDetail(null)}
         />
       )}
-      </div>
     </div>
   );
 

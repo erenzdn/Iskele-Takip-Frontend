@@ -808,8 +808,8 @@ export default function SystemSettingsPage() {
 
               <SettingsSection
                 icon={<FileTextIcon size={18} weight="duotone" />}
-                title="Teklif ve Kategori"
-                description="Şablon ve kategori yönetimine hızlı erişim."
+                title="Teklif ve Sözleşme"
+                description="Teklif ve sözleşme şablon yönetimine hızlı erişim."
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Link
@@ -823,6 +823,21 @@ export default function SystemSettingsPage() {
                       <span>
                         <span className="block text-sm font-medium text-text-primary">Teklif Yönetimi</span>
                         <span className="block text-xs text-text-secondary mt-0.5">Şablonlar ve teklif ayarları</span>
+                      </span>
+                    </span>
+                    <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </Link>
+                  <Link
+                    to="/contract-management"
+                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                        <FileTextIcon size={18} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-medium text-text-primary">Sözleşme Şablonları</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Sözleşme belge şablonlarını yönetin</span>
                       </span>
                     </span>
                     <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />

@@ -51,8 +51,6 @@
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
-    "@syncfusion/ej2-base": "^34.2.4",
-    "@syncfusion/ej2-react-documenteditor": "^34.2.4",
     "@tiptap/extension-image": "^3.17.1",
     "@tiptap/extension-table": "^3.17.1",
     "@tiptap/extension-table-cell": "^3.17.1",

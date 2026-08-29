@@ -6,7 +6,6 @@ import {
   ChartLineIcon,
   ClipboardIcon,
   CurrencyCircleDollarIcon,
-  FileDocIcon,
   GearIcon,
   ListIcon,
   MagnifyingGlassIcon,
@@ -76,7 +75,6 @@ const administrationMenuItems: MenuItem[] = [
   { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: <GearIcon {...iconProps} />, requiredPermission: 'pricingRules_view' },
   { path: '/users', label: 'Kullanıcılar', icon: <UserIcon {...iconProps} />, requiredPermission: 'users_view' },
   { path: '/audit-logs', label: 'Audit Logları', icon: <ScrollIcon {...iconProps} />, requiredPermission: 'auditLogs_view' },
-  { path: '/document-templates', label: 'Belge Şablonları', icon: <FileDocIcon {...iconProps} /> },
   { path: '/system-settings', label: 'Sistem Ayarları', icon: <ShieldCheckIcon {...iconProps} /> },
 ];
 
@@ -236,6 +234,9 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
   }, [normalizedQuery, visibleAdministrationBase]);
 
   const pageTitle = useMemo(() => {
+    if (location.pathname === '/contract-management' || location.pathname.startsWith('/contract-management/')) {
+      return 'Sözleşme Şablonları';
+    }
     const allItems = [...mainMenuItems, ...reportingMenuItems, ...administrationMenuItems];
     return allItems.find((item) => isPathActive(location.pathname, item.path))?.label ?? 'Panel';
   }, [location.pathname]);
@@ -248,6 +249,7 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
       '/contracts/rental': 'Kiralama teklifleri, sözleşmeler ve kapalı kayıtlar',
       '/contracts/sale': 'Satış teklifleri, sözleşmeler ve kapalı kayıtlar',
       '/offer-management': 'Kategori, şablon ve paket işlemlerini tek merkezden yönetin',
+      '/contract-management': 'Sözleşme belge şablonlarını oluşturun, düzenleyin ve yönetin',
       '/purchase-invoices': 'Alış faturaları ve mali kayıt süreçleri',
       '/stock-receipts': 'Stok giriş, çıkış ve transfer fişleri',
       '/checks': 'Çek portföyü, tahsilat ve iade takibi',
@@ -256,7 +258,6 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
       '/pricing-rules': 'Fiyatlama kuralları ve koşul tanımları',
       '/users': 'Kullanıcı hesapları ve yetki yönetimi',
       '/audit-logs': 'Sistem işlem geçmişi ve denetim kayıtları',
-      '/document-templates': 'Word benzeri belge şablonları oluşturma ve düzenleme',
       '/reports/rental-movement': 'Kiralama hareket raporları ve analiz ekranı',
       '/system-settings': 'Genel sistem ayarları ve yönetim tercihleri',
     };

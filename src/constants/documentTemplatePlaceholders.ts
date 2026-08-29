@@ -3,6 +3,9 @@ export type DocumentPlaceholder = {
   label: string;
 };
 
+export const MATERIAL_TABLE_PLACEHOLDER = 'malzemeTablosu';
+export const RETURN_TABLE_PLACEHOLDER = 'iadeTablosu';
+
 export const DOCUMENT_TEMPLATE_PLACEHOLDERS = {
   musteri: [
     { key: 'musteriAdi', label: 'Müşteri Adı' },
@@ -10,6 +13,8 @@ export const DOCUMENT_TEMPLATE_PLACEHOLDERS = {
     { key: 'musteriTelefon', label: 'Müşteri Telefon' },
     { key: 'musteriEmail', label: 'Müşteri Email' },
     { key: 'musteriVergiNo', label: 'Müşteri Vergi No' },
+    { key: 'musteriMerkezYetkili', label: 'Merkez Yetkili' },
+    { key: 'musteriMerkezYetkiliTelefon', label: 'Merkez Yetkili Telefon' },
   ] as DocumentPlaceholder[],
   santiye: [
     { key: 'santiyeAdi', label: 'Şantiye Adı' },
@@ -33,9 +38,11 @@ export const DOCUMENT_TEMPLATE_PLACEHOLDERS = {
     { key: 'baslangicTarihi', label: 'Başlangıç Tarihi' },
     { key: 'bitisTarihi', label: 'Bitiş Tarihi' },
     { key: 'gercekBitisTarihi', label: 'Gerçek Bitiş Tarihi' },
+    { key: 'iskonto', label: 'İskonto' },
     { key: 'toplamTutar', label: 'Toplam Tutar' },
     { key: 'hesaplananTutar', label: 'Hesaplanan Tutar' },
     { key: 'bugunTarihi', label: 'Bugünün Tarihi' },
+    { key: RETURN_TABLE_PLACEHOLDER, label: 'İade Tablosu' },
   ] as DocumentPlaceholder[],
   cek: [
     { key: 'Check.BankName', label: 'Çek Banka Adı' },
@@ -47,5 +54,3 @@ export const DOCUMENT_TEMPLATE_PLACEHOLDERS = {
     { key: 'Check.CustomerName', label: 'Müşteri Adı' },
   ] as DocumentPlaceholder[],
 };
-
-export const MATERIAL_TABLE_PLACEHOLDER = 'malzemeTablosu';
