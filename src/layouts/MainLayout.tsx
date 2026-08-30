@@ -234,8 +234,11 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
   }, [normalizedQuery, visibleAdministrationBase]);
 
   const pageTitle = useMemo(() => {
+    if (location.pathname === '/document-templates' || location.pathname.startsWith('/document-templates/')) {
+      return 'Belge Şablonları';
+    }
     if (location.pathname === '/contract-management' || location.pathname.startsWith('/contract-management/')) {
-      return 'Sözleşme Şablonları';
+      return 'Belge Şablonları';
     }
     const allItems = [...mainMenuItems, ...reportingMenuItems, ...administrationMenuItems];
     return allItems.find((item) => isPathActive(location.pathname, item.path))?.label ?? 'Panel';
@@ -248,8 +251,9 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
       '/warehouses': 'Depo listesi, depo bazlı stok ve hareket yönetimi',
       '/contracts/rental': 'Kiralama teklifleri, sözleşmeler ve kapalı kayıtlar',
       '/contracts/sale': 'Satış teklifleri, sözleşmeler ve kapalı kayıtlar',
-      '/offer-management': 'Kategori, şablon ve paket işlemlerini tek merkezden yönetin',
-      '/contract-management': 'Sözleşme belge şablonlarını oluşturun, düzenleyin ve yönetin',
+      '/offer-management': 'Kategori ve teklif paketi ayarlarını yönetin',
+      '/document-templates': 'Teklif, sözleşme ve kullanım extresi şablonlarını yönetin',
+      '/contract-management': 'Teklif, sözleşme ve kullanım extresi şablonlarını yönetin',
       '/purchase-invoices': 'Alış faturaları ve mali kayıt süreçleri',
       '/stock-receipts': 'Stok giriş, çıkış ve transfer fişleri',
       '/checks': 'Çek portföyü, tahsilat ve iade takibi',

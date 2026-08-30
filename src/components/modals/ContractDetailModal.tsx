@@ -53,6 +53,12 @@ import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import { addendumService } from '../../services/addendumService';
 import { buildContractItemDisplayEntries, type AddendumLineSource } from '../../utils/addendum';
 import {
+  filterContractTemplatesByKind,
+  partitionContractTemplates,
+  pickDefaultTemplateId,
+  type ContractDocumentKind,
+} from '../../utils/documentTemplates';
+import {
   applyCreatedSiteId,
   buildSiteRequestFields,
   EMPTY_NEW_SITE_FORM,
@@ -159,7 +165,9 @@ export default function ContractDetailModal({
 
   // Şablon yönetimi state'leri
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
-  const [selectedTemplateId, setSelectedTemplateId] = useState<number | ''>('');
+  const [documentKind, setDocumentKind] = useState<ContractDocumentKind>('contract');
+  const [selectedContractTemplateId, setSelectedContractTemplateId] = useState<number | ''>('');
+  const [selectedExtreTemplateId, setSelectedExtreTemplateId] = useState<number | ''>('');
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ContractTemplate | null>(null);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
@@ -194,6 +202,23 @@ export default function ContractDetailModal({
   const [contractType, setContractType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
   const [language, setLanguage] = useState<'TR' | 'EN'>('TR');
   const isRentalContract = contractType === 'RENTAL';
+
+  const { extreTemplates } = useMemo(() => partitionContractTemplates(templates), [templates]);
+
+  const visibleTemplates = useMemo(
+    () => filterContractTemplatesByKind(templates, documentKind),
+    [documentKind, templates]
+  );
+
+  const activeTemplateId = documentKind === 'extre' ? selectedExtreTemplateId : selectedContractTemplateId;
+
+  const setActiveTemplateId = (templateId: number | '') => {
+    if (documentKind === 'extre') {
+      setSelectedExtreTemplateId(templateId);
+      return;
+    }
+    setSelectedContractTemplateId(templateId);
+  };
 
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
   const [lastAddedKeys, setLastAddedKeys] = useState<string[]>([]);
@@ -434,21 +459,35 @@ export default function ContractDetailModal({
     try {
       const templateList = await contractTemplateService.getAllAsync();
       setTemplates(templateList);
+      const partitioned = partitionContractTemplates(templateList);
+      setSelectedContractTemplateId((prev) => prev || pickDefaultTemplateId(partitioned.contractTemplates));
+      setSelectedExtreTemplateId((prev) => prev || pickDefaultTemplateId(partitioned.extreTemplates));
     } catch (error) {
       console.error('Load templates error:', error);
     }
   };
 
-  const handleEnsureKullanimExtresiTemplate = async () => {
+  const handleDocumentKindChange = async (nextKind: ContractDocumentKind) => {
+    setDocumentKind(nextKind);
+    if (nextKind !== 'extre') return;
+
+    const partitioned = partitionContractTemplates(templates);
+    if (partitioned.extreTemplates.length > 0) {
+      if (!selectedExtreTemplateId) {
+        setSelectedExtreTemplateId(pickDefaultTemplateId(partitioned.extreTemplates));
+      }
+      return;
+    }
+
     try {
       setIsEnsuringExtresiTemplate(true);
       const template = await contractTemplateService.ensureKullanimExtresiTemplateAsync();
       await loadTemplates();
-      setSelectedTemplateId(template.TemplateId);
-      toast.success(`"${template.TemplateName}" şablonu güncellendi ve seçildi`);
+      setSelectedExtreTemplateId(template.TemplateId);
     } catch (error) {
       console.error('Kullanım Extresi şablon hatası:', error);
       toast.error(getApiErrorMessage(error) || 'Kullanım Extresi şablonu oluşturulamadı');
+      setDocumentKind('contract');
     } finally {
       setIsEnsuringExtresiTemplate(false);
     }
@@ -1633,7 +1672,7 @@ export default function ContractDetailModal({
   };
 
   const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
-    if (!contract || !selectedTemplateId) {
+    if (!contract || !activeTemplateId) {
       toast.warning('Döküman oluşturmak için bir şablon seçmelisiniz');
       return;
     }
@@ -1642,7 +1681,7 @@ export default function ContractDetailModal({
       setIsBusy(true);
       const blob = await contractService.generateDocumentAsync(
         contract.ContractId,
-        Number(selectedTemplateId),
+        Number(activeTemplateId),
         format
       );
 
@@ -1666,7 +1705,7 @@ export default function ContractDetailModal({
   };
 
   const handlePreviewDocument = async () => {
-    if (!contract || !selectedTemplateId) {
+    if (!contract || !activeTemplateId) {
       toast.warning('Önizleme için bir şablon seçmelisiniz');
       return;
     }
@@ -1675,7 +1714,7 @@ export default function ContractDetailModal({
       setIsBusy(true);
       const blob = await contractService.previewDocumentAsync(
         contract.ContractId,
-        Number(selectedTemplateId)
+        Number(activeTemplateId)
       );
       // Backend tanı: gelen yanıtın tipi ve boyutu (konsolda kontrol edin)
       console.log('[PDF Önizleme] Blob:', { size: blob.size, type: blob.type });
@@ -2209,7 +2248,7 @@ export default function ContractDetailModal({
             items={availableItems}
             warehouses={warehouses}
             currency={currency}
-            templateId={selectedTemplateId}
+            templateId={selectedContractTemplateId}
             canView={canViewContracts}
             canUpdate={canUpdateContracts}
             canDelete={canDeleteContracts}
@@ -2478,67 +2517,106 @@ export default function ContractDetailModal({
                 </div>
               )}
 
-              <div className="min-w-[220px] flex-[1.3]">
-                <label className={fieldLabel}>Şablon</label>
-                <div className="flex gap-1">
-                  <select
-                    value={selectedTemplateId}
-                    onChange={(e) => setSelectedTemplateId(Number(e.target.value) || '')}
-                    className="input w-full text-sm py-1.5"
-                  >
-                    <option value="">Şablon seçin</option>
-                    {templates.map((t) => (
-                      <option key={t.TemplateId} value={t.TemplateId}>
-                        {t.TemplateName} {t.IsDefault ? '(Varsayılan)' : ''}
+              <div className="min-w-[260px] flex-[1.4] space-y-2">
+                {isRentalContract && (
+                  <div>
+                    <label className={fieldLabel}>Belge türü</label>
+                    <div className="flex gap-1">
+                      <button
+                        type="button"
+                        onClick={() => void handleDocumentKindChange('contract')}
+                        disabled={isEnsuringExtresiTemplate}
+                        className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                          documentKind === 'contract'
+                            ? 'bg-primary text-white'
+                            : 'bg-background-hover text-text-secondary hover:text-text-primary'
+                        }`}
+                      >
+                        Sözleşme
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void handleDocumentKindChange('extre')}
+                        disabled={isEnsuringExtresiTemplate}
+                        className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+                          documentKind === 'extre'
+                            ? 'bg-warning text-white'
+                            : 'bg-background-hover text-text-secondary hover:text-text-primary'
+                        }`}
+                      >
+                        {isEnsuringExtresiTemplate ? 'Hazırlanıyor...' : 'Kullanım Extresi'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+                <div>
+                  <div className="flex items-center justify-between gap-2">
+                    <label className={fieldLabel}>Şablon</label>
+                    <button
+                      type="button"
+                      onClick={() => navigate('/document-templates?tab=contract')}
+                      className="text-[10px] text-primary hover:underline"
+                    >
+                      Şablonları yönet
+                    </button>
+                  </div>
+                  <div className="flex gap-1">
+                    <select
+                      value={activeTemplateId}
+                      onChange={(e) => setActiveTemplateId(Number(e.target.value) || '')}
+                      className="input w-full text-sm py-1.5"
+                      disabled={isEnsuringExtresiTemplate || visibleTemplates.length === 0}
+                    >
+                      <option value="">
+                        {visibleTemplates.length === 0 ? 'Bu tür için şablon yok' : 'Şablon seçin'}
                       </option>
-                    ))}
-                  </select>
-                  {selectedTemplateId && (
+                      {visibleTemplates.map((t) => (
+                        <option key={t.TemplateId} value={t.TemplateId}>
+                          {t.TemplateName} {t.IsDefault ? '(Varsayılan)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    {activeTemplateId && (
+                      <button
+                        type="button"
+                        onClick={async () => {
+                          const template = visibleTemplates.find((t) => t.TemplateId === Number(activeTemplateId));
+                          if (!template) return;
+                          try {
+                            setLoadingTemplate(true);
+                            const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
+                            setEditingTemplate(fullTemplate);
+                            setIsNewTemplate(false);
+                            setIsTemplateEditorOpen(true);
+                          } catch (error) {
+                            console.error('Şablon yükleme hatası:', error);
+                            toast.error(getApiErrorMessage(error));
+                          } finally {
+                            setLoadingTemplate(false);
+                          }
+                        }}
+                        disabled={loadingTemplate}
+                        className={`btn-secondary shrink-0 ${compactBtn}`}
+                      >
+                        {loadingTemplate ? '...' : 'Düzenle'}
+                      </button>
+                    )}
                     <button
                       type="button"
-                      onClick={async () => {
-                        const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
-                        if (!template) return;
-                        try {
-                          setLoadingTemplate(true);
-                          const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
-                          setEditingTemplate(fullTemplate);
-                          setIsNewTemplate(false);
-                          setIsTemplateEditorOpen(true);
-                        } catch (error) {
-                          console.error('Şablon yükleme hatası:', error);
-                          toast.error(getApiErrorMessage(error));
-                        } finally {
-                          setLoadingTemplate(false);
-                        }
+                      onClick={() => {
+                        setEditingTemplate(null);
+                        setIsNewTemplate(true);
+                        setIsTemplateEditorOpen(true);
                       }}
-                      disabled={loadingTemplate}
                       className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
-                      {loadingTemplate ? '...' : 'Düzenle'}
+                      Yeni
                     </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setEditingTemplate(null);
-                      setIsNewTemplate(true);
-                      setIsTemplateEditorOpen(true);
-                    }}
-                    className={`btn-secondary shrink-0 ${compactBtn}`}
-                  >
-                    Yeni
-                  </button>
-                  {isRentalContract && (
-                    <button
-                      type="button"
-                      onClick={handleEnsureKullanimExtresiTemplate}
-                      disabled={isEnsuringExtresiTemplate}
-                      className={`btn-secondary shrink-0 ${compactBtn}`}
-                      title="BERKA tarzı Kullanım Extresi şablonunu oluşturur veya seçer"
-                    >
-                      {isEnsuringExtresiTemplate ? '...' : 'Kullanım Extresi'}
-                    </button>
+                  </div>
+                  {documentKind === 'extre' && extreTemplates.length === 0 && !isEnsuringExtresiTemplate && (
+                    <span className="text-[10px] text-amber-400 mt-1 block">
+                      Extre şablonu seçildiğinde otomatik oluşturulur.
+                    </span>
                   )}
                 </div>
               </div>
@@ -2576,13 +2654,13 @@ export default function ContractDetailModal({
                     Manuel Kalem
                   </button>
                 )}
-                {!isReadOnly && selectedTemplateId && contractItems.length > 0 && (
+                {!isReadOnly && activeTemplateId && contractItems.length > 0 && (
                   <button
                     type="button"
                     onClick={async () => {
                       try {
                         setIsAddingMaterialTable(true);
-                        const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
+                        const template = visibleTemplates.find((t) => t.TemplateId === Number(activeTemplateId));
                         if (!template) return;
                         const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
                         const content = JSON.parse(JSON.stringify(fullTemplate.Content || { type: 'doc', content: [] }));
@@ -2632,7 +2710,7 @@ export default function ContractDetailModal({
                     Zeyilname
                   </button>
                 )}
-                {!isNew && contract && selectedTemplateId && (
+                {!isNew && contract && activeTemplateId && (
                   <>
                     <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className={`btn-primary ${compactBtn}`}>
                       {isBusy ? 'Yükleniyor...' : 'Önizle'}
@@ -3342,7 +3420,7 @@ export default function ContractDetailModal({
             loadTemplates();
           }}
           onSave={(templateId) => {
-            setSelectedTemplateId(templateId);
+            setActiveTemplateId(templateId);
             setIsTemplateEditorOpen(false);
             setEditingTemplate(null);
             loadTemplates();

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PackageIcon } from '@phosphor-icons/react';
 import { packageService } from '../services/packageService';
 import { quoteService } from '../services/quoteService';
 import { inventoryService } from '../services/inventoryService';
@@ -13,7 +14,12 @@ interface ManualItemState {
   quantity: number;
 }
 
-export default function QuotePackagesPage() {
+interface QuotePackagesPageProps {
+  embedded?: boolean;
+  onPackageCountChange?: (count: number) => void;
+}
+
+export default function QuotePackagesPage({ embedded = false, onPackageCountChange }: QuotePackagesPageProps) {
   const [packages, setPackages] = useState<QuotePackage[]>([]);
   const [selectedPackage, setSelectedPackage] = useState<QuotePackageDetail | null>(null);
   const [quotes, setQuotes] = useState<Quote[]>([]);
@@ -44,6 +50,7 @@ export default function QuotePackagesPage() {
       setPackages(packageData);
       setQuotes(quoteData);
       setInventoryItems(itemData);
+      onPackageCountChange?.(packageData.length);
     } catch (error) {
       toast.error(getApiErrorMessage(error));
     } finally {
@@ -130,15 +137,20 @@ export default function QuotePackagesPage() {
   };
 
   return (
-    <div className="space-y-3">
-      <div className="flex items-center justify-end">
-        <button type="button" className="btn-secondary py-1.5 px-3 text-sm" onClick={loadData} disabled={loading}>
-          Yenile
-        </button>
-      </div>
+    <div className={embedded ? 'space-y-4' : 'space-y-3'}>
+      {!embedded && (
+        <div className="flex items-center justify-end">
+          <button type="button" className="btn-secondary py-1.5 px-3 text-sm" onClick={loadData} disabled={loading}>
+            Yenile
+          </button>
+        </div>
+      )}
 
-      <section className="card p-4 space-y-3">
-        <h2 className="text-sm font-semibold text-text-primary">Yeni Paket Oluştur</h2>
+      <section className={`${embedded ? '' : 'card '}p-0 space-y-3`}>
+        <div className="flex items-center gap-2">
+          <PackageIcon size={16} className="text-info" />
+          <h2 className="text-sm font-semibold text-text-primary">Yeni Paket Oluştur</h2>
+        </div>
         <div className="grid md:grid-cols-2 gap-3">
           <div className="space-y-1">
             <label htmlFor="package-name" className="block text-xs font-medium text-text-primary">
@@ -274,13 +286,15 @@ export default function QuotePackagesPage() {
         </div>
       </section>
 
-      <section className="grid md:grid-cols-2 gap-4">
-        <div className="card p-4">
+      <section className={`grid md:grid-cols-2 gap-4 ${embedded ? '' : 'mt-0'}`}>
+        <div className={`${embedded ? 'rounded-lg border border-background-border bg-background-panel' : 'card'} p-4`}>
           <h2 className="text-sm font-semibold text-text-primary mb-3">Paket Listesi</h2>
           {loading ? (
             <div className="text-text-secondary">Yükleniyor...</div>
           ) : packages.length === 0 ? (
-            <div className="text-text-secondary">Kayıtlı paket yok.</div>
+            <div className="rounded-xl border border-dashed border-background-border px-4 py-6 text-center text-sm text-text-secondary">
+              Kayıtlı paket yok. Yukarıdaki formdan ilk paketinizi oluşturun.
+            </div>
           ) : (
             <div className="space-y-2">
               {packages.map((pkg) => (
@@ -291,9 +305,14 @@ export default function QuotePackagesPage() {
                       type="button"
                       onClick={() => handleSelectPackage(pkg.PackageId)}
                     >
-                      <div className="font-medium text-text-primary">{pkg.PackageName}</div>
-                      <div className="text-xs text-text-secondary">
-                        İskonto: %{pkg.DefaultDiscount ?? 0}
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium text-text-primary">{pkg.PackageName}</span>
+                        <span className="inline-flex rounded-md bg-info/10 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-info">
+                          Paket
+                        </span>
+                      </div>
+                      <div className="text-xs text-text-secondary mt-1">
+                        Varsayılan iskonto: %{pkg.DefaultDiscount ?? 0}
                       </div>
                     </button>
                     <button
@@ -310,10 +329,12 @@ export default function QuotePackagesPage() {
           )}
         </div>
 
-        <div className="card p-4">
+        <div className={`${embedded ? 'rounded-lg border border-background-border bg-background-panel' : 'card'} p-4`}>
           <h2 className="text-sm font-semibold text-text-primary mb-3">Paket Detayı</h2>
           {!selectedPackage ? (
-            <div className="text-text-secondary">Detay görmek için soldan bir paket seçin.</div>
+            <div className="rounded-xl border border-dashed border-background-border px-4 py-6 text-center text-sm text-text-secondary">
+              Detay görmek için soldan bir paket seçin.
+            </div>
           ) : (
             <div className="space-y-3">
               <div>

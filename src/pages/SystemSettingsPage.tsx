@@ -17,6 +17,7 @@ import {
   TrashIcon,
   PlusIcon,
   FileTextIcon,
+  PackageIcon,
   TagIcon,
   RulerIcon,
 } from '@phosphor-icons/react';
@@ -809,35 +810,20 @@ export default function SystemSettingsPage() {
               <SettingsSection
                 icon={<FileTextIcon size={18} weight="duotone" />}
                 title="Teklif ve Sözleşme"
-                description="Teklif ve sözleşme şablon yönetimine hızlı erişim."
+                description="Belge şablonları ile teklif kategori/paket yönetimine hızlı erişim."
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Link
-                    to="/offer-management?tab=templates"
-                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
+                    to="/document-templates"
+                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5 sm:col-span-2"
                   >
                     <span className="flex items-center gap-3">
                       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
                         <FileTextIcon size={18} />
                       </span>
                       <span>
-                        <span className="block text-sm font-medium text-text-primary">Teklif Yönetimi</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Şablonlar ve teklif ayarları</span>
-                      </span>
-                    </span>
-                    <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </Link>
-                  <Link
-                    to="/contract-management"
-                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
-                  >
-                    <span className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        <FileTextIcon size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-medium text-text-primary">Sözleşme Şablonları</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Sözleşme belge şablonlarını yönetin</span>
+                        <span className="block text-sm font-medium text-text-primary">Belge Şablonları</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Teklif, sözleşme ve kullanım extresi şablonları</span>
                       </span>
                     </span>
                     <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -852,7 +838,22 @@ export default function SystemSettingsPage() {
                       </span>
                       <span>
                         <span className="block text-sm font-medium text-text-primary">Kategori Yönetimi</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Ürün ve teklif kategorileri</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Ürün grupları ve kategori iskontoları</span>
+                      </span>
+                    </span>
+                    <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </Link>
+                  <Link
+                    to="/offer-management?tab=packages"
+                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info">
+                        <PackageIcon size={18} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-medium text-text-primary">Teklif Paketleri</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Hazır ürün listeleri ve hızlı uygulama</span>
                       </span>
                     </span>
                     <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
