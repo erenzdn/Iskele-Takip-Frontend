@@ -6,6 +6,7 @@ import type {
   AddendumDetail,
   ContractLineItem,
   ContractQuoteType,
+  CurrencyCode,
   Inventory,
   Warehouse,
 } from '../../models';
@@ -26,6 +27,7 @@ import { firstValidationError, validateRequired } from '../../utils/validation';
 import ConfirmModal from './ConfirmModal';
 import PdfPreviewModal from './PdfPreviewModal';
 import AddendumLineItemModal from './AddendumLineItemModal';
+import AddendumAddProductsModal from './AddendumAddProductsModal';
 
 function todayDateInputValue(): string {
   return new Date().toISOString().split('T')[0];
@@ -58,6 +60,7 @@ interface AddendumDetailModalProps {
   contractLines: ContractLineItem[];
   items: Inventory[];
   warehouses: Warehouse[];
+  currency?: CurrencyCode;
   templateId?: number | '';
   canUpdate: boolean;
   canDelete: boolean;
@@ -75,6 +78,7 @@ export default function AddendumDetailModal({
   contractLines,
   items,
   warehouses,
+  currency = 'TRY',
   templateId = '',
   canUpdate,
   canDelete,
@@ -92,6 +96,7 @@ export default function AddendumDetailModal({
   const [addendumCode, setAddendumCode] = useState('');
 
   const [showLineModal, setShowLineModal] = useState(false);
+  const [showAddProductsModal, setShowAddProductsModal] = useState(false);
   const [editingDetail, setEditingDetail] = useState<AddendumDetail | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -487,23 +492,34 @@ export default function AddendumDetailModal({
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="text-sm font-semibold text-text-primary">Kalemler</h3>
                 {editable && (
-                  <button
-                    type="button"
-                    className="btn-secondary text-sm"
-                    disabled={isBusy}
-                    onClick={() => {
-                      setEditingDetail(null);
-                      setShowLineModal(true);
-                    }}
-                  >
-                    Kalem Ekle
-                  </button>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      className="btn-primary text-sm"
+                      disabled={isBusy}
+                      onClick={() => setShowAddProductsModal(true)}
+                    >
+                      Ürün Ekle
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-secondary text-sm"
+                      disabled={isBusy}
+                      onClick={() => {
+                        setEditingDetail(null);
+                        setShowLineModal(true);
+                      }}
+                    >
+                      Mevcut Kalemi Değiştir
+                    </button>
+                  </div>
                 )}
               </div>
 
               {details.length === 0 ? (
                 <div className="text-center py-8 text-text-secondary text-sm">
-                  Henüz kalem eklenmedi.
+                  Henüz kalem eklenmedi. Yeni ürün için <strong className="text-text-primary">Ürün Ekle</strong>,
+                  mevcut kalem için <strong className="text-text-primary">Mevcut Kalemi Değiştir</strong> kullanın.
                 </div>
               ) : (
                 <div className="overflow-x-auto">
@@ -716,6 +732,23 @@ export default function AddendumDetailModal({
       )}
 
       {addendum && (
+        <AddendumAddProductsModal
+          open={showAddProductsModal}
+          addendumId={addendum.AddendumId}
+          contractType={contractType}
+          items={items}
+          warehouses={warehouses}
+          currency={currency}
+          zIndexClass="z-[75]"
+          onClose={() => setShowAddProductsModal(false)}
+          onSaved={async () => {
+            await refreshDetails();
+            await Promise.resolve(onChanged());
+          }}
+        />
+      )}
+
+      {addendum && (
         <AddendumLineItemModal
           open={showLineModal}
           addendumId={addendum.AddendumId}
@@ -724,6 +757,7 @@ export default function AddendumDetailModal({
           items={items}
           warehouses={warehouses}
           editingDetail={editingDetail}
+          initialChangeType={editingDetail ? undefined : 'INCREASE'}
           zIndexClass="z-[75]"
           onClose={() => {
             setShowLineModal(false);

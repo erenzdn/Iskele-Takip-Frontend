@@ -17,6 +17,7 @@ import {
   TrashIcon,
   PlusIcon,
   FileTextIcon,
+  PackageIcon,
   TagIcon,
   RulerIcon,
 } from '@phosphor-icons/react';
@@ -28,6 +29,7 @@ import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 import { useTableColumnPreferencesStore } from '../store/tableColumnPreferencesStore';
 import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
+import type { LiveExchangeRatesResult } from '../types/electron';
 import { useUpdateStore } from '../store/updateStore';
 import { toast } from '../hooks/useToast';
 import { unitService } from '../services/unitService';
@@ -40,6 +42,7 @@ import {
   type InventoryColumnKey,
   type TableColumnMeta,
 } from '../constants/tableColumns';
+import packageJson from '../../package.json';
 
 type InventoryMockRow = Record<InventoryColumnKey, ReactNode>;
 type CustomerMockRow = Record<CustomerColumnKey, ReactNode>;
@@ -368,6 +371,7 @@ export default function SystemSettingsPage() {
   const [lastAutoBackupAt, setLastAutoBackupAt] = useState<string | null>(
     () => localStorage.getItem(LAST_AUTO_BACKUP_AT_KEY)
   );
+  const [backupStatusError, setBackupStatusError] = useState<string | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
 
   const [usdRate, setUsdRate] = useState<number | ''>('');
@@ -387,6 +391,7 @@ export default function SystemSettingsPage() {
   const [newUnitName, setNewUnitName] = useState('');
   const [loadingUnits, setLoadingUnits] = useState(false);
   const [busyUnits, setBusyUnits] = useState(false);
+  const [unitToDelete, setUnitToDelete] = useState<Unit | null>(null);
 
   const {
     isUpdateAvailable,
@@ -423,6 +428,7 @@ export default function SystemSettingsPage() {
     let mounted = true;
     const fetchBackupStatus = async () => {
       try {
+        setBackupStatusError(null);
         const statusInfo = await adminService.getSystemBackupStatusAsync();
         if (!mounted || !statusInfo) return;
 
@@ -436,6 +442,13 @@ export default function SystemSettingsPage() {
         }
       } catch (err) {
         console.warn('Backup status alınamadı:', err);
+        if (!mounted) return;
+        const statusCode = (err as { status?: number })?.status;
+        if (statusCode === 403) {
+          setBackupStatusError('Yedek durumu yalnızca admin yetkisiyle görüntülenebilir.');
+        } else {
+          setBackupStatusError('Son yedek bilgisi sunucudan alınamadı.');
+        }
       }
     };
     fetchBackupStatus();
@@ -578,10 +591,13 @@ export default function SystemSettingsPage() {
   };
 
   const handleCheckUpdates = () => {
-    if (window.electron) {
-      toast.info('Güncelleme kontrol ediliyor...');
-      window.electron.updates.checkForUpdates();
+    if (!window.electron?.updates) {
+      toast.error('Güncelleme yalnızca kurulu masaüstü uygulamasında çalışır.');
+      return;
     }
+    useUpdateStore.getState().setChecking(true);
+    toast.info('Güncelleme kontrol ediliyor...');
+    window.electron.updates.checkForUpdates();
   };
 
   const handleDownload = () => {
@@ -664,11 +680,13 @@ export default function SystemSettingsPage() {
     }
   };
 
-  const handleDeleteUnit = async (id: number) => {
+  const handleConfirmDeleteUnit = async () => {
+    if (!unitToDelete) return;
     try {
       setBusyUnits(true);
-      await unitService.deleteAsync(id);
-      toast.success('Birim silindi');
+      await unitService.deleteAsync(unitToDelete.UnitId);
+      toast.success(`"${unitToDelete.UnitName}" birimi silindi`);
+      setUnitToDelete(null);
       const data = await unitService.getAllAsync();
       setUnits(data);
     } catch (error) {
@@ -678,6 +696,11 @@ export default function SystemSettingsPage() {
       setBusyUnits(false);
     }
   };
+
+  const sortedUnits = useMemo(
+    () => [...units].sort((a, b) => a.UnitName.localeCompare(b.UnitName, 'tr')),
+    [units]
+  );
 
   if (!isAdmin) {
     return <Navigate to="/" replace />;
@@ -786,21 +809,21 @@ export default function SystemSettingsPage() {
 
               <SettingsSection
                 icon={<FileTextIcon size={18} weight="duotone" />}
-                title="Teklif ve Kategori"
-                description="Şablon ve kategori yönetimine hızlı erişim."
+                title="Teklif ve Sözleşme"
+                description="Belge şablonları ile teklif kategori/paket yönetimine hızlı erişim."
               >
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <Link
-                    to="/offer-management?tab=templates"
-                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
+                    to="/document-templates"
+                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5 sm:col-span-2"
                   >
                     <span className="flex items-center gap-3">
                       <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
                         <FileTextIcon size={18} />
                       </span>
                       <span>
-                        <span className="block text-sm font-medium text-text-primary">Teklif Yönetimi</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Şablonlar ve teklif ayarları</span>
+                        <span className="block text-sm font-medium text-text-primary">Belge Şablonları</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Teklif, sözleşme ve kullanım extresi şablonları</span>
                       </span>
                     </span>
                     <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -815,7 +838,22 @@ export default function SystemSettingsPage() {
                       </span>
                       <span>
                         <span className="block text-sm font-medium text-text-primary">Kategori Yönetimi</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Ürün ve teklif kategorileri</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Ürün grupları ve kategori iskontoları</span>
+                      </span>
+                    </span>
+                    <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
+                  </Link>
+                  <Link
+                    to="/offer-management?tab=packages"
+                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
+                  >
+                    <span className="flex items-center gap-3">
+                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info">
+                        <PackageIcon size={18} />
+                      </span>
+                      <span>
+                        <span className="block text-sm font-medium text-text-primary">Teklif Paketleri</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Hazır ürün listeleri ve hızlı uygulama</span>
                       </span>
                     </span>
                     <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -827,55 +865,92 @@ export default function SystemSettingsPage() {
                 icon={<RulerIcon size={18} weight="duotone" />}
                 title="Birim Tanımları"
                 description="Envanterde kullanılacak ölçü birimlerini yönetin."
+                action={
+                  !loadingUnits ? (
+                    <span className="inline-flex items-center rounded-lg border border-background-border bg-background-elevated/60 px-2.5 py-1 text-xs font-medium text-text-secondary">
+                      {units.length} birim
+                    </span>
+                  ) : null
+                }
               >
-                <div className="flex gap-2 mb-4">
-                  <input
-                    type="text"
-                    value={newUnitName}
-                    onChange={(e) => setNewUnitName(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddUnit()}
-                    placeholder="Örn: ton, paket, koli"
-                    className="input flex-1 py-2.5"
-                    disabled={busyUnits}
-                  />
-                  <button
-                    type="button"
-                    onClick={handleAddUnit}
-                    disabled={busyUnits || !newUnitName.trim()}
-                    className="btn-primary py-2.5 px-4 flex items-center gap-1.5"
-                  >
-                    {busyUnits ? <CircleNotchIcon size={16} className="animate-spin" /> : <PlusIcon size={16} />}
-                    Ekle
-                  </button>
-                </div>
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-background-border bg-background-elevated/30 p-4">
+                    <label htmlFor="new-unit-name" className="block text-xs font-medium text-text-secondary mb-2">
+                      Yeni birim ekle
+                    </label>
+                    <div className="flex flex-col sm:flex-row gap-2">
+                      <input
+                        id="new-unit-name"
+                        type="text"
+                        value={newUnitName}
+                        onChange={(e) => setNewUnitName(e.target.value)}
+                        onKeyDown={(e) => e.key === 'Enter' && void handleAddUnit()}
+                        placeholder="Örn: adet, ton, paket, koli"
+                        className="input flex-1 py-2.5"
+                        disabled={busyUnits}
+                        maxLength={64}
+                        autoComplete="off"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void handleAddUnit()}
+                        disabled={busyUnits || !newUnitName.trim()}
+                        className="btn-primary py-2.5 px-4 flex items-center justify-center gap-1.5 shrink-0"
+                      >
+                        {busyUnits && !unitToDelete ? (
+                          <CircleNotchIcon size={16} className="animate-spin" />
+                        ) : (
+                          <PlusIcon size={16} />
+                        )}
+                        Ekle
+                      </button>
+                    </div>
+                    <p className="mt-2 text-[11px] text-text-secondary/80">
+                      Eklenen birimler ürün kartındaki ana birim seçiminde görünür.
+                    </p>
+                  </div>
 
-                {loadingUnits ? (
-                  <div className="text-sm text-text-secondary flex items-center gap-2 py-4 justify-center">
-                    <CircleNotchIcon size={16} className="animate-spin" />
-                    Yükleniyor...
-                  </div>
-                ) : units.length === 0 ? (
-                  <div className="rounded-xl border border-dashed border-background-border px-4 py-8 text-center text-sm text-text-secondary">
-                    Henüz birim tanımlanmamış.
-                  </div>
-                ) : (
-                  <ul className="divide-y divide-background-border/60 rounded-xl border border-background-border overflow-hidden">
-                    {units.map((u) => (
-                      <li key={u.UnitId} className="flex items-center justify-between gap-3 px-4 py-2.5 bg-background-panel hover:bg-background-elevated/40">
-                        <span className="text-sm text-text-primary font-medium">{u.UnitName}</span>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteUnit(u.UnitId)}
-                          disabled={busyUnits}
-                          className="inline-flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-medium text-error hover:bg-error/10 transition-colors"
+                  {loadingUnits ? (
+                    <div className="text-sm text-text-secondary flex items-center gap-2 py-8 justify-center">
+                      <CircleNotchIcon size={16} className="animate-spin" />
+                      Birimler yükleniyor...
+                    </div>
+                  ) : sortedUnits.length === 0 ? (
+                    <div className="rounded-xl border border-dashed border-background-border px-4 py-10 text-center">
+                      <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                        <RulerIcon size={20} weight="duotone" />
+                      </div>
+                      <p className="text-sm font-medium text-text-primary">Henüz birim yok</p>
+                      <p className="mt-1 text-xs text-text-secondary">Yukarıdaki alandan ilk biriminizi ekleyin.</p>
+                    </div>
+                  ) : (
+                    <ul className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {sortedUnits.map((u) => (
+                        <li
+                          key={u.UnitId}
+                          className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-panel px-3.5 py-2.5 transition-colors hover:border-primary/25 hover:bg-background-elevated/40"
                         >
-                          <TrashIcon size={14} />
-                          Sil
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+                          <span className="flex items-center gap-2.5 min-w-0">
+                            <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary text-xs font-semibold uppercase">
+                              {u.UnitName.slice(0, 2)}
+                            </span>
+                            <span className="text-sm font-medium text-text-primary truncate">{u.UnitName}</span>
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => setUnitToDelete(u)}
+                            disabled={busyUnits}
+                            title="Birimi sil"
+                            aria-label={`${u.UnitName} birimini sil`}
+                            className="inline-flex items-center justify-center rounded-lg p-1.5 text-text-secondary opacity-70 transition-all hover:bg-error/10 hover:text-error group-hover:opacity-100 disabled:opacity-40"
+                          >
+                            <TrashIcon size={15} />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
               </SettingsSection>
             </>
           )}
@@ -1195,7 +1270,7 @@ export default function SystemSettingsPage() {
               <SettingsSection
                 icon={<ArrowClockwiseIcon size={18} weight="duotone" />}
                 title="Yazılım Güncelleme"
-                description={`Mevcut sürüm: v${window.electron?.appVersion || '1.4.5'}`}
+                description={`Mevcut sürüm: v${window.electron?.appVersion || packageJson.version}`}
                 className={
                   updateNeedsAttention
                     ? 'border-error/40 ring-1 ring-error/15'
@@ -1349,6 +1424,12 @@ export default function SystemSettingsPage() {
                   <WarningIcon size={15} className="mt-0.5 shrink-0" />
                   <span>Saatte en fazla 1 kez manuel yedek alabilirsiniz.</span>
                 </div>
+                {backupStatusError ? (
+                  <div className="mb-4 flex items-start gap-2 rounded-xl border border-error/25 bg-error/10 px-3.5 py-2.5 text-xs text-error">
+                    <WarningIcon size={15} className="mt-0.5 shrink-0" />
+                    <span>{backupStatusError}</span>
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                   <MetaChip label="Son manuel yedek" value={formatTrDateTime(lastBackupAt)} />
                   <MetaChip label="Son otomatik yedek" value={formatTrDateTime(lastAutoBackupAt)} />
@@ -1369,6 +1450,22 @@ export default function SystemSettingsPage() {
         onConfirm={handleConfirm}
         loading={busy}
         variant="default"
+      />
+
+      <ConfirmModal
+        open={unitToDelete != null}
+        title="Birim silinsin mi?"
+        message={
+          unitToDelete
+            ? `"${unitToDelete.UnitName}" birimi kalıcı olarak silinecek.\nBu birimi kullanan ürünlerde seçim etkilenebilir.\n\nDevam etmek istiyor musunuz?`
+            : ''
+        }
+        confirmLabel="Evet, sil"
+        cancelLabel="Vazgeç"
+        onCancel={() => (busyUnits ? null : setUnitToDelete(null))}
+        onConfirm={() => void handleConfirmDeleteUnit()}
+        loading={busyUnits}
+        variant="danger"
       />
     </div>
   );

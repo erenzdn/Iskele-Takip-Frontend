@@ -141,7 +141,9 @@
 }
 
 .ProseMirror p {
-  margin-bottom: 0.5rem;
+  margin-top: 0;
+  margin-bottom: 0.15rem;
+  line-height: 1.15;
 }
 
 .ProseMirror h1 {
@@ -158,7 +160,7 @@
 
 .ProseMirror table {
   border-collapse: collapse !important;
-  margin: 1rem 0 !important;
+  margin: 0 !important;
   border: 2px solid var(--color-text-primary) !important;
 }
 
@@ -227,7 +229,177 @@
   font-weight: 600;
 }
 
-/* Sınırları Gizlenmiş (Borderless) Tablo Izgara Layoutu */
+/* Envanter / müşteri sayfalarıyla uyumlu veri tablosu */
+.table-data-grid {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  border-collapse: collapse;
+}
+.table-data-grid thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--color-border);
+}
+.table-data-grid thead th {
+  padding: 0.125rem 0.375rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-hover);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-data-grid thead th:last-child {
+  border-right: none;
+}
+.table-data-grid tbody tr {
+  border-bottom: 1px solid var(--color-border);
+  transition: background-color 0.15s;
+}
+.table-data-grid tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+.table-data-grid tbody td {
+  padding: 0 0.375rem;
+  vertical-align: middle;
+  border-right: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  overflow: hidden;
+}
+.table-data-grid tbody td:last-child {
+  border-right: none;
+}
+.table-data-grid .item-code-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 500;
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.table-data-grid .addendum-badge {
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.table-data-grid.table-excel-rows tbody tr {
+  height: 1.375rem;
+}
+.table-data-grid.table-excel-rows tbody td {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  height: 1.375rem;
+  max-height: 1.375rem;
+  line-height: 1.25rem;
+}
+.table-data-grid.table-excel-rows tbody td .input {
+  height: 1.25rem;
+  min-height: 1.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1.25rem;
+  font-size: 0.75rem;
+}
+.table-data-grid.table-excel-rows tbody td .btn-secondary {
+  padding: 0 0.25rem;
+  font-size: 0.625rem;
+  line-height: 1.25rem;
+  min-height: 1.25rem;
+}
+.table-data-grid.table-excel-rows .cell-clip {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.table-data-grid.table-excel-rows tr.addendum-row td {
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-bg-panel));
+}
+.table-data-grid.table-excel-rows tr.addendum-separator-row td {
+  height: 1.125rem;
+  max-height: 1.125rem;
+  padding: 0 0.375rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-warning) 85%, var(--color-text-secondary));
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-panel));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-data-grid .drag-col {
+  width: 0.75rem;
+  max-width: 0.75rem;
+  min-width: 0.75rem;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  text-align: center;
+  vertical-align: middle;
+}
+.table-data-grid .drag-handle {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  border-radius: 0.125rem;
+  color: color-mix(in srgb, var(--color-text-secondary) 70%, transparent);
+}
+.table-data-grid .drag-handle:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+.table-data-grid .drag-handle:active {
+  cursor: grabbing;
+}
+.table-data-grid .action-col {
+  width: 1.25rem;
+  max-width: 1.25rem;
+  min-width: 1.25rem;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  text-align: center;
+  vertical-align: middle;
+}
+.table-data-grid .action-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  color: var(--color-error);
+}
+.table-data-grid .action-remove-btn:hover {
+  color: #dc2626;
+}
+
+/* Sınırları Gizlenmiş (Borderless) Tablo — editörde çizgi yok */
 .ProseMirror table.border-none,
 .ProseMirror table.border-none td,
 .ProseMirror table.border-none th,
@@ -237,20 +409,28 @@
   border: none !important;
 }
 
-/* Editör içinde sınırları gizlenmiş hücrelerin yerini görebilmek için hafif noktalı çerçeve */
+.ProseMirror table.border-none,
+.ProseMirror table[data-no-border="true"] {
+  border-style: none !important;
+  border-collapse: separate !important;
+  border-spacing: 0 !important;
+  box-shadow: none !important;
+}
+
 .ProseMirror table.border-none td,
 .ProseMirror table.border-none th,
 .ProseMirror table[data-no-border="true"] td,
 .ProseMirror table[data-no-border="true"] th {
-  outline: 1px dotted rgba(156, 163, 175, 0.4) !important;
+  border-style: none !important;
+  box-shadow: none !important;
 }
 
-/* Kılavuz çizgileri gizlendiğinde outline'ı kaldır */
-.hide-gridlines .ProseMirror table.border-none td,
-.hide-gridlines .ProseMirror table.border-none th,
-.hide-gridlines .ProseMirror table[data-no-border="true"] td,
-.hide-gridlines .ProseMirror table[data-no-border="true"] th {
-  outline: none !important;
+/* Kılavuz modu açıkken: hücre sınırlarını noktalı göster (sadece editör) */
+.show-gridlines .ProseMirror table.border-none td,
+.show-gridlines .ProseMirror table.border-none th,
+.show-gridlines .ProseMirror table[data-no-border="true"] td,
+.show-gridlines .ProseMirror table[data-no-border="true"] th {
+  outline: 1px dotted rgba(156, 163, 175, 0.4) !important;
 }
 
 /* Görsel Konumlandırma ve Hizalama (Float ve Blok Kontrolleri) */
@@ -294,39 +474,114 @@
 
 /* A4 şablon editörü – sayfa kılavuz çizgileri ve sayfa aralığı */
 .template-editor-workspace {
-  background-color: var(--color-bg-elevated);
+  background:
+    radial-gradient(ellipse at top, color-mix(in srgb, var(--color-primary) 6%, transparent), transparent 55%),
+    var(--color-bg-elevated);
 }
 
 .template-editor-paper {
+  --page-margin-top: 15mm;
+  --page-margin-bottom: 15mm;
   width: 21cm;
   max-width: calc(100vw - 2rem);
   min-height: 29.7cm;
-  padding: 1.5cm;
   box-sizing: border-box;
   background: var(--color-bg-panel);
   box-shadow:
-    0 10px 15px -3px rgba(0, 0, 0, 0.12),
-    0 4px 6px -4px rgba(0, 0, 0, 0.12);
-  border: 1px solid var(--color-background-border, var(--color-bg-border));
+    0 1px 2px rgba(15, 23, 42, 0.04),
+    0 12px 28px -8px rgba(15, 23, 42, 0.14),
+    0 0 0 1px color-mix(in srgb, var(--color-border) 70%, transparent);
+  border: none;
+  border-radius: 2px;
   flex-shrink: 0;
   align-self: flex-start;
 }
 
 .template-editor-paper .ProseMirror {
-  min-height: calc(29.7cm - 3cm);
+  min-height: calc(29.7cm - var(--page-margin-top) - var(--page-margin-bottom));
+}
+
+/* A4 sayfa kılavuz çizgileri — yalnızca kılavuz modu açıkken */
+.show-gridlines .template-editor-paper .ProseMirror {
+  --page-content-height: calc(29.7cm - var(--page-margin-top) - var(--page-margin-bottom));
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
-    transparent calc(26.7cm - 2px),
-    rgba(59, 130, 246, 0.22) calc(26.7cm - 2px),
-    rgba(59, 130, 246, 0.22) calc(26.7cm - 1px),
-    rgba(0, 0, 0, 0.1) calc(26.7cm - 1px),
-    rgba(0, 0, 0, 0.1) 26.7cm,
-    transparent 26.7cm,
-    transparent calc(26.7cm + 18px)
+    transparent calc(var(--page-content-height) - 2px),
+    rgba(59, 130, 246, 0.22) calc(var(--page-content-height) - 2px),
+    rgba(59, 130, 246, 0.22) calc(var(--page-content-height) - 1px),
+    rgba(0, 0, 0, 0.1) calc(var(--page-content-height) - 1px),
+    rgba(0, 0, 0, 0.1) var(--page-content-height),
+    transparent var(--page-content-height),
+    transparent calc(var(--page-content-height) + 18px)
   );
-  background-size: 100% calc(26.7cm + 18px);
+  background-size: 100% calc(var(--page-content-height) + 18px);
   background-repeat: repeat-y;
   padding-bottom: 18px;
+}
+
+/* Şablon editörü — alan paneli */
+.template-editor-fields {
+  box-shadow: inset -1px 0 0 transparent;
+}
+
+.template-editor-fields::-webkit-scrollbar,
+.template-editor-fields *::-webkit-scrollbar {
+  width: 6px;
+}
+
+.template-editor-fields *::-webkit-scrollbar-thumb {
+  background: var(--color-border);
+  border-radius: 999px;
+}
+
+/* Şablon editörü — sayfa sonu işaretçisi (yalnızca editörde görünür) */
+.template-editor-paper .ProseMirror .page-break {
+  position: relative;
+  display: block;
+  height: 0;
+  margin: 28px calc(-1 * var(--page-margin-left, 15mm));
+  padding: 0;
+  border: none;
+  page-break-after: auto !important;
+  break-after: auto !important;
+  user-select: none;
+  cursor: default;
+}
+
+.template-editor-paper .ProseMirror .page-break::before {
+  content: '';
+  display: block;
+  height: 20px;
+  margin: 0;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--color-bg-panel));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-border) 80%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--color-border) 80%, transparent);
+}
+
+.template-editor-paper .ProseMirror .page-break::after {
+  content: '— Sayfa Sonu —';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-panel);
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.template-editor-paper .ProseMirror .page-break.ProseMirror-selectednode::after {
+  color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-panel));
 }
 

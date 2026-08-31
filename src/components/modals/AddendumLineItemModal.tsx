@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { XIcon } from '@phosphor-icons/react';
+import { PackageIcon, XIcon } from '@phosphor-icons/react';
 import type {
   AddendumDetail,
   ChangeType,
@@ -21,7 +21,9 @@ import { getChangeTypeLabel } from '../../utils/addendum';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, validateNumber, validateRequired } from '../../utils/validation';
 import { isStockErrorMessage } from '../../utils/parseStockError';
+import { formatInventoryBilingualLabel, formatMoney } from '../../utils/formatters';
 import StockErrorPanel from '../StockErrorPanel';
+import ItemPickerPanel from '../ItemPickerPanel';
 
 type AddKind = 'inventory' | 'manual';
 
@@ -34,6 +36,8 @@ interface AddendumLineItemModalProps {
   warehouses: Warehouse[];
   /** Düzenleme modu */
   editingDetail?: AddendumDetail | null;
+  /** Yeni kalemde başlangıç tipi (örn. mevcut kalem değiştir → INCREASE) */
+  initialChangeType?: ChangeType;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
   zIndexClass?: string;
@@ -42,6 +46,11 @@ interface AddendumLineItemModalProps {
 function parseIntQty(raw: string): number {
   const n = Math.floor(Number(raw));
   return Number.isFinite(n) ? n : NaN;
+}
+
+function parsePositiveInt(raw: string): number {
+  const n = Math.floor(Number(raw));
+  return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
 function lineLabel(line: ContractLineItem): string {
@@ -53,6 +62,65 @@ function lineLabel(line: ContractLineItem): string {
   return `#${id}: ${code}${line.ItemName} (kirada: ${line.RentedQuantity})`;
 }
 
+function contractLineDetailRows(line: ContractLineItem): { label: string; value: string }[] {
+  if (line.kind === 'manual') {
+    return [
+      { label: 'Açıklama', value: line.Description || '—' },
+      { label: 'Miktar', value: String(line.RentedQuantity) },
+      {
+        label: 'Birim fiyat',
+        value: line.UnitPriceSnapshot != null ? formatMoney(line.UnitPriceSnapshot) : '—',
+      },
+    ];
+  }
+  const rows: { label: string; value: string }[] = [
+    {
+      label: 'Ürün',
+      value: formatInventoryBilingualLabel(line.ItemName, line.ItemNameEn),
+    },
+    { label: 'Ürün kodu', value: line.ItemCode || '—' },
+    { label: 'Depo', value: line.WarehouseName || `#${line.WarehouseId}` },
+    { label: 'Kiralanan miktar', value: String(line.RentedQuantity) },
+    { label: 'İade edilen', value: String(line.ReturnedQuantity ?? 0) },
+    {
+      label: 'Birim fiyat',
+      value: line.UnitPriceSnapshot != null ? formatMoney(line.UnitPriceSnapshot) : '—',
+    },
+  ];
+  if (line.MonthlyPriceOverride != null) {
+    rows.push({ label: 'Aylık override', value: formatMoney(line.MonthlyPriceOverride) });
+  }
+  return rows;
+}
+
+function selectedItemSummary(item: Inventory): { label: string; value: string }[] {
+  const available = Math.max(0, (item.TotalStock ?? 0) - (item.OnRent ?? 0));
+  const categories =
+    item.Categories?.map((c) => c.CategoryName).filter(Boolean).join(', ') || '—';
+  const rows: { label: string; value: string }[] = [
+    {
+      label: 'Ürün adı',
+      value: formatInventoryBilingualLabel(item.ItemName, item.ItemNameEn),
+    },
+    { label: 'Ürün kodu', value: item.ItemCode || '—' },
+    { label: 'Kategori', value: categories },
+    { label: 'Toplam stok', value: String(item.TotalStock ?? 0) },
+    { label: 'Kirada', value: String(item.OnRent ?? 0) },
+    { label: 'Müsait', value: String(available) },
+  ];
+  if (item.UnitName) rows.push({ label: 'Birim', value: item.UnitName });
+  if (item.MonthlyListPrice != null && item.MonthlyListPrice > 0) {
+    rows.push({ label: 'Aylık liste fiyatı', value: formatMoney(item.MonthlyListPrice) });
+  }
+  if (item.UnitPrice != null && item.UnitPrice > 0) {
+    rows.push({ label: 'Birim fiyat', value: formatMoney(item.UnitPrice) });
+  }
+  if (item.DailyPrice != null && item.DailyPrice > 0) {
+    rows.push({ label: 'Günlük fiyat', value: formatMoney(item.DailyPrice) });
+  }
+  return rows;
+}
+
 export default function AddendumLineItemModal({
   open,
   addendumId,
@@ -61,11 +129,13 @@ export default function AddendumLineItemModal({
   items,
   warehouses,
   editingDetail = null,
+  initialChangeType = 'INCREASE',
   onClose,
   onSaved,
   zIndexClass = 'z-[70]',
 }: AddendumLineItemModalProps) {
   const isRental = contractType === 'RENTAL';
+  const isSale = contractType === 'SALE';
   const isEdit = Boolean(editingDetail?.DetailId);
 
   const [changeType, setChangeType] = useState<ChangeType>('ADD');
@@ -94,10 +164,37 @@ export default function AddendumLineItemModal({
     [contractLines]
   );
 
+  const selectedItem = useMemo(() => {
+    if (!selectedItemId) return null;
+    return sortedItems.find((it) => it.ItemId === Number(selectedItemId)) ?? null;
+  }, [sortedItems, selectedItemId]);
+
   const selectedContractLine = useMemo(() => {
     if (!selectedContractDetailId) return null;
     return selectableLines.find((l) => l.DetailId === Number(selectedContractDetailId)) ?? null;
   }, [selectableLines, selectedContractDetailId]);
+
+  const isInventoryAdd = changeType === 'ADD' && addKind === 'inventory';
+  const requestedQty = parsePositiveInt(quantityStr);
+
+  const selectedWarehouseStock = useMemo(() => {
+    if (!selectedWarehouseId) return null;
+    const whId = Number(selectedWarehouseId);
+    return itemWarehouseStocks.find((s) => s.WarehouseId === whId)?.Quantity ?? null;
+  }, [itemWarehouseStocks, selectedWarehouseId]);
+
+  const stockInlineWarning =
+    isInventoryAdd &&
+    selectedWarehouseId &&
+    selectedWarehouseStock != null &&
+    requestedQty > selectedWarehouseStock
+      ? `Seçili depoda yalnızca ${selectedWarehouseStock} adet müsait; talep ${requestedQty} adet.`
+      : null;
+
+  const highlightedItemIds = useMemo(() => {
+    if (!selectedItemId) return undefined;
+    return new Set([Number(selectedItemId)]);
+  }, [selectedItemId]);
 
   useEffect(() => {
     if (!open) return;
@@ -131,7 +228,7 @@ export default function AddendumLineItemModal({
           : ''
       );
     } else {
-      setChangeType('ADD');
+      setChangeType(initialChangeType);
       setAddKind('inventory');
       setSelectedItemId('');
       setSelectedWarehouseId('');
@@ -141,7 +238,7 @@ export default function AddendumLineItemModal({
       setUnitPriceStr('');
       setMonthlyOverrideStr('');
     }
-  }, [open, editingDetail]);
+  }, [open, editingDetail, initialChangeType]);
 
   useEffect(() => {
     if (!open || changeType !== 'ADD' || addKind !== 'inventory' || !selectedItemId) {
@@ -166,11 +263,14 @@ export default function AddendumLineItemModal({
     };
   }, [open, changeType, addKind, selectedItemId]);
 
-  const selectedWarehouseStock = useMemo(() => {
-    if (!selectedWarehouseId) return null;
-    const whId = Number(selectedWarehouseId);
-    return itemWarehouseStocks.find((s) => s.WarehouseId === whId)?.Quantity ?? null;
-  }, [itemWarehouseStocks, selectedWarehouseId]);
+  useEffect(() => {
+    if (!open) return;
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isBusy) onClose();
+    };
+    window.addEventListener('keydown', handleEsc);
+    return () => window.removeEventListener('keydown', handleEsc);
+  }, [open, isBusy, onClose]);
 
   if (!open) return null;
 
@@ -241,7 +341,6 @@ export default function AddendumLineItemModal({
       };
     }
 
-    // PRICE_CHANGE
     const price = Number(unitPriceStr);
     const monthly =
       monthlyOverrideStr.trim() === '' ? undefined : Number(monthlyOverrideStr);
@@ -262,6 +361,11 @@ export default function AddendumLineItemModal({
       NewUnitPrice: price,
       ...(isRental && monthly !== undefined ? { NewMonthlyOverride: monthly } : {}),
     };
+  };
+
+  const handleReduceQuantity = (available: number) => {
+    setQuantityStr(String(Math.max(1, available)));
+    setStockError(null);
   };
 
   const handleSave = async () => {
@@ -294,17 +398,244 @@ export default function AddendumLineItemModal({
     }
   };
 
+  const handleItemPick = (item: Inventory) => {
+    setSelectedItemId(item.ItemId);
+    setSelectedWarehouseId('');
+    setStockError(null);
+  };
+
   const changeTypes: ChangeType[] = ['ADD', 'INCREASE', 'DECREASE', 'PRICE_CHANGE'];
+
+  const pickerDisplayMode = isSale ? 'quote' : 'contract';
+  const pickerQuotePricing = isSale ? 'sale' : 'rental';
+
+  const renderChangeTypeTabs = () => (
+    <div className="space-y-2">
+      <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+        Değişiklik tipi
+      </div>
+      <div className="flex flex-wrap gap-2">
+        {changeTypes.map((ct) => (
+          <button
+            key={ct}
+            type="button"
+            onClick={() => setChangeType(ct)}
+            className={changeType === ct ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
+            disabled={isBusy}
+          >
+            {getChangeTypeLabel(ct)}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+
+  const renderAddKindTabs = () => (
+    <div className="space-y-2">
+      <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+        Kalem tipi
+      </div>
+      <div className="flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={() => setAddKind('inventory')}
+          className={addKind === 'inventory' ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
+          disabled={isBusy}
+        >
+          Envanter Ürünü
+        </button>
+        <button
+          type="button"
+          onClick={() => setAddKind('manual')}
+          className={addKind === 'manual' ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
+          disabled={isBusy}
+        >
+          Manuel Kalem
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderWarehouseFields = () => (
+    <>
+      <div>
+        <label className="block text-xs font-medium text-text-primary mb-1.5">Depo *</label>
+        <select
+          value={selectedWarehouseId}
+          onChange={(e) => {
+            setSelectedWarehouseId(Number(e.target.value) || '');
+            setStockError(null);
+          }}
+          className="input w-full"
+          disabled={isBusy || !selectedItemId}
+        >
+          <option value="">Depo seçin</option>
+          {warehouses.map((wh) => {
+            const stock = itemWarehouseStocks.find((s) => s.WarehouseId === wh.WarehouseId);
+            const stockLabel =
+              selectedItemId && stock != null ? ` (${stock.Quantity} adet)` : '';
+            return (
+              <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                {wh.WarehouseName}
+                {stockLabel}
+              </option>
+            );
+          })}
+        </select>
+        {selectedItemId && stocksLoading && (
+          <div className="text-xs text-text-secondary mt-1.5">Stok bilgisi yükleniyor...</div>
+        )}
+        {selectedItemId && !stocksLoading && selectedWarehouseStock != null && (
+          <div className="text-xs text-text-secondary mt-1.5">
+            Seçili depoda müsait: <span className="font-medium text-text-primary">{selectedWarehouseStock}</span> adet
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-text-primary mb-1.5">Miktar *</label>
+        <input
+          type="number"
+          min={1}
+          value={quantityStr}
+          onChange={(e) => {
+            setQuantityStr(e.target.value);
+            setStockError(null);
+          }}
+          className="input w-full"
+          disabled={isBusy}
+        />
+        {stockInlineWarning && (
+          <p className="text-xs text-amber-400 mt-1.5">{stockInlineWarning}</p>
+        )}
+      </div>
+
+      {selectedItemId && !stocksLoading && itemWarehouseStocks.length > 0 && (
+        <div className="rounded-lg border border-background-border bg-background-secondary/30 overflow-hidden">
+          <div className="px-3 py-2 text-xs font-semibold text-text-secondary uppercase tracking-wider border-b border-background-border">
+            Depo stok dağılımı
+          </div>
+          <div className="max-h-36 overflow-y-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-text-secondary border-b border-background-border/60">
+                  <th className="text-left py-1.5 px-3 font-medium">Depo</th>
+                  <th className="text-right py-1.5 px-3 font-medium">Müsait</th>
+                </tr>
+              </thead>
+              <tbody>
+                {itemWarehouseStocks.map((s) => {
+                  const wh = warehouses.find((w) => w.WarehouseId === s.WarehouseId);
+                  const isSelected = selectedWarehouseId === s.WarehouseId;
+                  return (
+                    <tr
+                      key={s.WarehouseId}
+                      className={`border-b border-background-border/40 ${isSelected ? 'bg-primary/10' : ''}`}
+                    >
+                      <td className="py-1.5 px-3 text-text-primary">{wh?.WarehouseName ?? s.WarehouseId}</td>
+                      <td className="py-1.5 px-3 text-right font-medium text-text-primary">{s.Quantity}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+    </>
+  );
+
+  const renderSelectedProductPanel = () => {
+    if (!selectedItem) {
+      return (
+        <div className="flex flex-col items-center justify-center gap-3 py-10 px-4 text-center rounded-xl border border-dashed border-background-border bg-background-secondary/20">
+          <PackageIcon size={40} className="text-text-secondary/60" weight="duotone" />
+          <div>
+            <p className="text-sm font-medium text-text-primary">Ürün seçilmedi</p>
+            <p className="text-xs text-text-secondary mt-1">
+              Soldaki listeden bir ürüne tıklayarak seçin. Arama ve kategori filtrelerini kullanabilirsiniz.
+            </p>
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-xl border border-background-border bg-background-secondary/20 overflow-hidden">
+        <div className="px-4 py-3 border-b border-background-border bg-background-secondary/40">
+          <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-1">
+            Seçili ürün
+          </p>
+          <p className="text-sm font-semibold text-text-primary leading-snug">
+            {formatInventoryBilingualLabel(selectedItem.ItemName, selectedItem.ItemNameEn)}
+          </p>
+          {selectedItem.ItemCode && (
+            <p className="text-xs font-mono text-text-secondary mt-0.5">{selectedItem.ItemCode}</p>
+          )}
+        </div>
+        <dl className="divide-y divide-background-border/60">
+          {selectedItemSummary(selectedItem).map((row) => (
+            <div key={row.label} className="flex justify-between gap-3 px-4 py-2 text-xs">
+              <dt className="text-text-secondary shrink-0">{row.label}</dt>
+              <dd className="text-text-primary text-right font-medium">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
+  };
+
+  const renderContractLinePanel = () => {
+    if (!selectedContractLine) {
+      return (
+        <div className="rounded-xl border border-dashed border-background-border bg-background-secondary/20 px-4 py-8 text-center">
+          <p className="text-sm text-text-secondary">
+            Sözleşme kalemi seçildiğinde mevcut bilgiler burada görüntülenir.
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="rounded-xl border border-background-border bg-background-secondary/20 overflow-hidden">
+        <div className="px-4 py-3 border-b border-background-border bg-background-secondary/40">
+          <p className="text-xs font-semibold text-text-secondary uppercase tracking-wider mb-1">
+            Seçili sözleşme kalemi
+          </p>
+          <p className="text-sm font-semibold text-text-primary">
+            {lineLabel(selectedContractLine)}
+          </p>
+        </div>
+        <dl className="divide-y divide-background-border/60">
+          {contractLineDetailRows(selectedContractLine).map((row) => (
+            <div key={row.label} className="flex justify-between gap-3 px-4 py-2 text-xs">
+              <dt className="text-text-secondary shrink-0">{row.label}</dt>
+              <dd className="text-text-primary text-right font-medium">{row.value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    );
+  };
 
   const modalTree = (
     <div
-      className={`fixed inset-0 ${zIndexClass} flex items-center justify-center bg-black/60 p-4`}
+      className={`fixed inset-0 ${zIndexClass} flex flex-col bg-black/60`}
+      aria-modal="true"
+      role="dialog"
     >
-      <div className="w-full max-w-xl rounded-xl border border-background-border bg-background-panel shadow-xl max-h-[90vh] overflow-y-auto">
-        <header className="flex items-center justify-between px-5 py-4 border-b border-background-border sticky top-0 bg-background-panel z-10">
-          <h2 className="text-lg font-semibold text-text-primary">
-            {isEdit ? 'Kalem Düzenle' : 'Zeyilname Kalemi Ekle'}
-          </h2>
+      <div className="flex h-full w-full min-h-0 flex-col bg-background-panel shadow-2xl overflow-hidden">
+        <header className="flex items-center justify-between px-5 py-3.5 border-b border-background-border shrink-0 bg-background-secondary/50">
+          <div>
+            <h2 className="text-lg font-semibold text-text-primary">
+              {isEdit ? 'Kalem Düzenle' : 'Zeyilname Kalemi Ekle'}
+            </h2>
+            <p className="text-xs text-text-secondary mt-0.5">
+              {isInventoryAdd
+                ? 'Ürün listesinden seçim yapın, ardından depo ve miktarı belirleyin.'
+                : 'Değişiklik tipini seçin ve ilgili alanları doldurun.'}
+            </p>
+          </div>
           <button
             type="button"
             onClick={onClose}
@@ -312,269 +643,204 @@ export default function AddendumLineItemModal({
             aria-label="Kapat"
             disabled={isBusy}
           >
-            <XIcon size={20} weight="regular" />
+            <XIcon size={22} weight="regular" />
           </button>
         </header>
 
-        <div className="p-5 space-y-4">
+        <div className="px-5 py-3 border-b border-background-border shrink-0 bg-background-panel space-y-3">
           {stockError && (
             <StockErrorPanel
               message={stockError}
               onRetry={handleSave}
+              onReduceQuantity={isInventoryAdd ? handleReduceQuantity : undefined}
               onDismiss={() => setStockError(null)}
             />
           )}
+          {renderChangeTypeTabs()}
+          {changeType === 'ADD' && renderAddKindTabs()}
+        </div>
 
-          <div className="space-y-2">
-            <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-              Değişiklik tipi
-            </div>
-            <div className="flex flex-wrap gap-2">
-              {changeTypes.map((ct) => (
-                <button
-                  key={ct}
-                  type="button"
-                  onClick={() => setChangeType(ct)}
-                  className={changeType === ct ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
-                  disabled={isBusy}
-                >
-                  {getChangeTypeLabel(ct)}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {changeType === 'ADD' && (
-            <>
-              <div className="space-y-2">
-                <div className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
-                  Kalem tipi
-                </div>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setAddKind('inventory')}
-                    className={addKind === 'inventory' ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
-                    disabled={isBusy}
-                  >
-                    Envanter Ürünü
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setAddKind('manual')}
-                    className={addKind === 'manual' ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
-                    disabled={isBusy}
-                  >
-                    Manuel Kalem
-                  </button>
+        <div className="flex-1 min-h-0 overflow-hidden flex flex-col">
+          {isInventoryAdd ? (
+            <div className="flex-1 min-h-0 flex flex-col lg:flex-row">
+              <div className="flex-1 min-h-[280px] lg:min-h-0 p-3 sm:p-4 overflow-hidden flex flex-col">
+                <div className="flex-1 min-h-0 overflow-hidden border border-background-border bg-background-panel rounded-lg">
+                  <ItemPickerPanel
+                    items={sortedItems}
+                    onItemSelect={handleItemPick}
+                    displayMode={pickerDisplayMode}
+                    quotePricing={pickerQuotePricing}
+                    highlightedItemIds={highlightedItemIds}
+                    pickedItemIds={highlightedItemIds}
+                    className="h-full rounded-lg border-0"
+                  />
                 </div>
               </div>
-
-              {addKind === 'inventory' ? (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-text-primary mb-1">Ürün *</label>
-                    <select
-                      value={selectedItemId}
-                      onChange={(e) => setSelectedItemId(Number(e.target.value) || '')}
-                      className="input w-full"
-                      disabled={isBusy}
-                    >
-                      <option value="">Ürün seçin</option>
-                      {sortedItems.map((it) => (
-                        <option key={it.ItemId} value={it.ItemId}>
-                          {(it.ItemCode ? `${it.ItemCode} — ` : '') + it.ItemName}
-                        </option>
-                      ))}
-                    </select>
+              <aside className="w-full lg:w-[420px] xl:w-[460px] shrink-0 border-t lg:border-t-0 lg:border-l border-background-border overflow-y-auto bg-background-secondary/20">
+                <div className="p-4 space-y-4">
+                  {renderSelectedProductPanel()}
+                  {renderWarehouseFields()}
+                </div>
+              </aside>
+            </div>
+          ) : (
+            <div className="flex-1 overflow-y-auto">
+              <div className="max-w-4xl mx-auto w-full p-5 sm:p-6 space-y-5">
+                {changeType === 'ADD' && addKind === 'manual' && (
+                  <div className="grid gap-4 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <label className="block text-xs font-medium text-text-primary mb-1.5">
+                        Açıklama *
+                      </label>
+                      <textarea
+                        value={manualDescription}
+                        onChange={(e) => setManualDescription(e.target.value)}
+                        className="input w-full min-h-[88px] resize-y"
+                        disabled={isBusy}
+                        placeholder="Örn: Nakliye, montaj veya hizmet bedeli açıklaması"
+                        rows={3}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-primary mb-1.5">
+                        Miktar *
+                      </label>
+                      <input
+                        type="number"
+                        min={1}
+                        value={quantityStr}
+                        onChange={(e) => setQuantityStr(e.target.value)}
+                        className="input w-full"
+                        disabled={isBusy}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-medium text-text-primary mb-1.5">
+                        Birim fiyat (opsiyonel)
+                      </label>
+                      <input
+                        type="number"
+                        min={0}
+                        step={0.01}
+                        value={unitPriceStr}
+                        onChange={(e) => setUnitPriceStr(e.target.value)}
+                        className="input w-full"
+                        disabled={isBusy}
+                        placeholder="Boş bırakılabilir"
+                      />
+                      <p className="text-xs text-text-secondary mt-1.5">
+                        Manuel kalemlerde birim fiyat belirtilmezse sözleşme fiyatlandırma kuralları uygulanır.
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-primary mb-1">Depo *</label>
-                    <select
-                      value={selectedWarehouseId}
-                      onChange={(e) => {
-                        setSelectedWarehouseId(Number(e.target.value) || '');
-                        setStockError(null);
-                      }}
-                      className="input w-full"
-                      disabled={isBusy}
-                    >
-                      <option value="">Depo seçin</option>
-                      {warehouses.map((wh) => {
-                        const stock = itemWarehouseStocks.find((s) => s.WarehouseId === wh.WarehouseId);
-                        const stockLabel =
-                          selectedItemId && stock != null ? ` (${stock.Quantity} adet)` : '';
-                        return (
-                          <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                            {wh.WarehouseName}
-                            {stockLabel}
-                          </option>
-                        );
-                      })}
-                    </select>
-                    {selectedItemId && stocksLoading && (
-                      <div className="text-[11px] text-text-secondary mt-1">Stok bilgisi yükleniyor...</div>
-                    )}
-                    {selectedItemId && !stocksLoading && selectedWarehouseStock != null && (
-                      <div className="text-[11px] text-text-secondary mt-1">
-                        Seçili depoda müsait: {selectedWarehouseStock} adet
+                )}
+
+                {(changeType === 'INCREASE' || changeType === 'DECREASE') && (
+                  <div className="grid gap-5 lg:grid-cols-2">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-text-primary mb-1.5">
+                          Sözleşme kalemi *
+                        </label>
+                        <select
+                          value={selectedContractDetailId}
+                          onChange={(e) => setSelectedContractDetailId(Number(e.target.value) || '')}
+                          className="input w-full"
+                          disabled={isBusy}
+                        >
+                          <option value="">Kalem seçin</option>
+                          {selectableLines.map((line) => (
+                            <option key={line.DetailId} value={line.DetailId}>
+                              {lineLabel(line)}
+                            </option>
+                          ))}
+                        </select>
                       </div>
-                    )}
+                      <div>
+                        <label className="block text-xs font-medium text-text-primary mb-1.5">
+                          {changeType === 'DECREASE' ? 'Azaltılacak miktar *' : 'Artırılacak miktar *'}
+                        </label>
+                        <input
+                          type="number"
+                          min={1}
+                          value={quantityStr}
+                          onChange={(e) => setQuantityStr(e.target.value)}
+                          className="input w-full"
+                          disabled={isBusy}
+                        />
+                        {changeType === 'DECREASE' && selectedContractLine && (
+                          <p className="text-xs text-text-secondary mt-1.5">
+                            Mevcut kiralanan miktar: {selectedContractLine.RentedQuantity}. Azaltma API&apos;ye negatif olarak gönderilir.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                    <div>{renderContractLinePanel()}</div>
                   </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-primary mb-1">Miktar *</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={quantityStr}
-                      onChange={(e) => setQuantityStr(e.target.value)}
-                      className="input w-full"
-                      disabled={isBusy}
-                    />
-                  </div>
-                </div>
-              ) : (
-                <div className="grid gap-3 md:grid-cols-2">
-                  <div className="md:col-span-2">
-                    <label className="block text-xs font-medium text-text-primary mb-1">Açıklama *</label>
-                    <input
-                      type="text"
-                      value={manualDescription}
-                      onChange={(e) => setManualDescription(e.target.value)}
-                      className="input w-full"
-                      disabled={isBusy}
-                      placeholder="Örn: Nakliye / Montaj"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-primary mb-1">Miktar *</label>
-                    <input
-                      type="number"
-                      min={1}
-                      value={quantityStr}
-                      onChange={(e) => setQuantityStr(e.target.value)}
-                      className="input w-full"
-                      disabled={isBusy}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium text-text-primary mb-1">
-                      Birim fiyat (opsiyonel)
-                    </label>
-                    <input
-                      type="number"
-                      min={0}
-                      step={0.01}
-                      value={unitPriceStr}
-                      onChange={(e) => setUnitPriceStr(e.target.value)}
-                      className="input w-full"
-                      disabled={isBusy}
-                      placeholder="Boş bırakılabilir"
-                    />
-                  </div>
-                </div>
-              )}
-            </>
-          )}
+                )}
 
-          {(changeType === 'INCREASE' || changeType === 'DECREASE') && (
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-medium text-text-primary mb-1">
-                  Sözleşme kalemi *
-                </label>
-                <select
-                  value={selectedContractDetailId}
-                  onChange={(e) => setSelectedContractDetailId(Number(e.target.value) || '')}
-                  className="input w-full"
-                  disabled={isBusy}
-                >
-                  <option value="">Kalem seçin</option>
-                  {selectableLines.map((line) => (
-                    <option key={line.DetailId} value={line.DetailId}>
-                      {lineLabel(line)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-primary mb-1">
-                  {changeType === 'DECREASE' ? 'Azaltılacak miktar *' : 'Artırılacak miktar *'}
-                </label>
-                <input
-                  type="number"
-                  min={1}
-                  value={quantityStr}
-                  onChange={(e) => setQuantityStr(e.target.value)}
-                  className="input w-full"
-                  disabled={isBusy}
-                />
-                {changeType === 'DECREASE' && selectedContractLine && (
-                  <p className="text-[11px] text-text-secondary mt-1">
-                    Mevcut miktar: {selectedContractLine.RentedQuantity}. API&apos;ye negatif olarak
-                    gönderilir.
-                  </p>
+                {changeType === 'PRICE_CHANGE' && (
+                  <div className="grid gap-5 lg:grid-cols-2">
+                    <div className="space-y-4">
+                      <div>
+                        <label className="block text-xs font-medium text-text-primary mb-1.5">
+                          Sözleşme kalemi *
+                        </label>
+                        <select
+                          value={selectedContractDetailId}
+                          onChange={(e) => setSelectedContractDetailId(Number(e.target.value) || '')}
+                          className="input w-full"
+                          disabled={isBusy}
+                        >
+                          <option value="">Kalem seçin</option>
+                          {selectableLines.map((line) => (
+                            <option key={line.DetailId} value={line.DetailId}>
+                              {lineLabel(line)}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-xs font-medium text-text-primary mb-1.5">
+                          Yeni birim fiyat *
+                        </label>
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={unitPriceStr}
+                          onChange={(e) => setUnitPriceStr(e.target.value)}
+                          className="input w-full"
+                          disabled={isBusy}
+                        />
+                      </div>
+                      {isRental && (
+                        <div>
+                          <label className="block text-xs font-medium text-text-primary mb-1.5">
+                            Aylık override (opsiyonel)
+                          </label>
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={monthlyOverrideStr}
+                            onChange={(e) => setMonthlyOverrideStr(e.target.value)}
+                            className="input w-full"
+                            disabled={isBusy}
+                            placeholder="Boş bırakılabilir"
+                          />
+                        </div>
+                      )}
+                    </div>
+                    <div>{renderContractLinePanel()}</div>
+                  </div>
                 )}
               </div>
             </div>
           )}
-
-          {changeType === 'PRICE_CHANGE' && (
-            <div className="grid gap-3 md:grid-cols-2">
-              <div className="md:col-span-2">
-                <label className="block text-xs font-medium text-text-primary mb-1">
-                  Sözleşme kalemi *
-                </label>
-                <select
-                  value={selectedContractDetailId}
-                  onChange={(e) => setSelectedContractDetailId(Number(e.target.value) || '')}
-                  className="input w-full"
-                  disabled={isBusy}
-                >
-                  <option value="">Kalem seçin</option>
-                  {selectableLines.map((line) => (
-                    <option key={line.DetailId} value={line.DetailId}>
-                      {lineLabel(line)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-text-primary mb-1">
-                  Yeni birim fiyat *
-                </label>
-                <input
-                  type="number"
-                  min={0}
-                  step={0.01}
-                  value={unitPriceStr}
-                  onChange={(e) => setUnitPriceStr(e.target.value)}
-                  className="input w-full"
-                  disabled={isBusy}
-                />
-              </div>
-              {isRental && (
-                <div>
-                  <label className="block text-xs font-medium text-text-primary mb-1">
-                    Aylık override (opsiyonel)
-                  </label>
-                  <input
-                    type="number"
-                    min={0}
-                    step={0.01}
-                    value={monthlyOverrideStr}
-                    onChange={(e) => setMonthlyOverrideStr(e.target.value)}
-                    className="input w-full"
-                    disabled={isBusy}
-                    placeholder="Boş bırakılabilir"
-                  />
-                </div>
-              )}
-            </div>
-          )}
         </div>
 
-        <footer className="flex items-center justify-end gap-2 px-5 py-4 border-t border-background-border sticky bottom-0 bg-background-panel">
+        <footer className="flex items-center justify-end gap-2 px-5 py-4 border-t border-background-border shrink-0 bg-background-secondary/30">
           <button type="button" onClick={onClose} className="btn-secondary" disabled={isBusy}>
             İptal
           </button>

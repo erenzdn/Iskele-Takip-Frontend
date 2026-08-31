@@ -1,13 +1,10 @@
-import { useState, useEffect, useRef } from 'react';
-import { ClipboardIcon } from '@phosphor-icons/react';
-import { useEditor, EditorContent } from '@tiptap/react';
+﻿import { useState, useEffect, useRef } from 'react';
+import { useEditor } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
-import { Table } from '@tiptap/extension-table';
 import { TableRow } from '@tiptap/extension-table-row';
-import { TableCell } from '@tiptap/extension-table-cell';
-import { TableHeader } from '@tiptap/extension-table-header';
 import { TextAlign } from '@tiptap/extension-text-align';
 import { Underline } from '@tiptap/extension-underline';
+import { TextStyle } from '@tiptap/extension-text-style';
 import { ContractTemplate, TemplateImage } from '../../models';
 import { contractTemplateService } from '../../services/contractTemplateService';
 import { templateImageService } from '../../services/templateImageService';
@@ -15,49 +12,30 @@ import { getApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import { CustomImage } from './CustomImageExtension';
 import PdfPreviewModal from './PdfPreviewModal';
-
-const CustomTable = Table.extend({
-  addAttributes() {
-    return {
-      ...this.parent?.(),
-      align: {
-        default: 'left',
-        parseHTML: element => element.getAttribute('align') || 'left',
-        renderHTML: attributes => {
-          if (attributes.align === 'center') {
-            return {
-              align: 'center',
-              style: 'margin-left: auto !important; margin-right: auto !important; margin-top: 1rem !important; margin-bottom: 1rem !important;',
-            };
-          }
-          if (attributes.align === 'right') {
-            return {
-              align: 'right',
-              style: 'margin-left: auto !important; margin-right: 0 !important; margin-top: 1rem !important; margin-bottom: 1rem !important;',
-            };
-          }
-          return {
-            align: 'left',
-            style: 'margin-right: auto !important; margin-left: 0 !important; margin-top: 1rem !important; margin-bottom: 1rem !important;',
-          };
-        },
-      },
-      noBorder: {
-        default: false,
-        parseHTML: element => element.classList.contains('border-none') || element.getAttribute('data-no-border') === 'true',
-        renderHTML: attributes => {
-          if (attributes.noBorder) {
-            return {
-              class: 'border-none',
-              'data-no-border': 'true',
-            };
-          }
-          return {};
-        },
-      },
-    };
-  },
-});
+import { LineHeight } from './LineHeightExtension';
+import { FontSize } from './FontSizeExtension';
+import {
+  CustomTable,
+  CustomTableCell,
+  CustomTableHeader,
+  prepareTemplateContentForExport,
+  ensureLayoutTablesBorderless,
+} from './CustomTableExtensions';
+import { PageBreak } from './PageBreakExtension';
+import TipTapTemplateEditorLayout, {
+  type TipTapPlaceholderGroup,
+} from './TipTapTemplateEditorLayout';
+import {
+  DEFAULT_PAGE_MARGINS,
+  getPageMargins,
+  withPageMargins,
+  type PageMargins,
+} from './PageMargins';
+import {
+  DOCUMENT_TEMPLATE_PLACEHOLDERS,
+  MATERIAL_TABLE_PLACEHOLDER,
+  RETURN_TABLE_PLACEHOLDER,
+} from '../../constants/documentTemplatePlaceholders';
 
 interface ContractTemplateEditorModalProps {
   template: ContractTemplate | null;
@@ -66,37 +44,12 @@ interface ContractTemplateEditorModalProps {
   onSave?: (templateId: number) => void;
 }
 
-const PLACEHOLDERS = {
-  musteri: [
-    { key: 'musteriAdi', label: 'Müşteri Adı' },
-    { key: 'musteriAdres', label: 'Müşteri Adres' },
-    { key: 'musteriTelefon', label: 'Müşteri Telefon' },
-    { key: 'musteriEmail', label: 'Müşteri Email' },
-    { key: 'musteriVergiNo', label: 'Müşteri Vergi No' },
-  ],
-  santiye: [
-    { key: 'santiyeAdi', label: 'Şantiye Adı' },
-    { key: 'santiyeAdres', label: 'Şantiye Adres' },
-  ],
-  sozlesme: [
-    { key: 'sozlesmeNo', label: 'Sözleşme No' },
-    { key: 'baslangicTarihi', label: 'Başlangıç Tarihi' },
-    { key: 'bitisTarihi', label: 'Bitiş Tarihi' },
-    { key: 'gercekBitisTarihi', label: 'Gerçek Bitiş Tarihi' },
-    { key: 'toplamTutar', label: 'Toplam Tutar' },
-    { key: 'hesaplananTutar', label: 'Hesaplanan Tutar' },
-    { key: 'bugunTarihi', label: 'Bugünün Tarihi' },
-  ],
-  cek: [
-    { key: 'Check.BankName', label: 'Çek Banka Adı' },
-    { key: 'Check.CheckNumber', label: 'Çek Numarası' },
-    { key: 'Check.AmountFormatted', label: 'Çek Tutarı (formatlı)' },
-    { key: 'Check.IssueDateFormatted', label: 'Keside Tarihi (formatlı)' },
-    { key: 'Check.DueDateFormatted', label: 'Vade Tarihi (formatlı)' },
-    { key: 'Check.StatusLabel', label: 'Çek Durumu' },
-    { key: 'Check.CustomerName', label: 'Müşteri Adı' },
-  ],
-};
+const PLACEHOLDER_GROUPS: TipTapPlaceholderGroup[] = [
+  { id: 'musteri', title: 'Müşteri', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.musteri },
+  { id: 'santiye', title: 'Şantiye', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.santiye },
+  { id: 'sozlesme', title: 'Sözleşme', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.sozlesme },
+  { id: 'cek', title: 'Çek', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.cek },
+];
 
 type ImageCommandOptions = {
   src: string;
@@ -114,12 +67,12 @@ export default function ContractTemplateEditorModal({
   const [isBusy, setIsBusy] = useState(false);
   const [images, setImages] = useState<TemplateImage[]>([]);
   const [uploadingImage, setUploadingImage] = useState(false);
-  const [selectedImageId, setSelectedImageId] = useState<number | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [isTableActive, setIsTableActive] = useState(false);
   const [isImageActive, setIsImageActive] = useState(false);
   const [showGridlines, setShowGridlines] = useState(true);
+  const [pageMargins, setPageMargins] = useState<PageMargins>(DEFAULT_PAGE_MARGINS);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const editor = useEditor({
@@ -130,20 +83,44 @@ export default function ContractTemplateEditorModal({
         resizable: true,
       }),
       TableRow,
-      TableCell,
-      TableHeader,
+      CustomTableCell,
+      CustomTableHeader,
       TextAlign.configure({
         types: ['heading', 'paragraph'],
       }),
       Underline,
+      TextStyle,
+      FontSize,
+      LineHeight,
+      PageBreak,
     ],
     content: {
       type: 'doc',
       content: [],
     },
+    editable: true,
     editorProps: {
       attributes: {
         class: 'focus:outline-none',
+      },
+      handleKeyDown: (_view, event) => {
+        const isMeta = event.metaKey || event.ctrlKey;
+        if (!isMeta) return false;
+
+        const key = event.key.toLowerCase();
+        if (key === 'z' && !event.shiftKey) {
+          event.preventDefault();
+          editor.commands.undo();
+          return true;
+        }
+
+        if (key === 'y' || (key === 'z' && event.shiftKey)) {
+          event.preventDefault();
+          editor.commands.redo();
+          return true;
+        }
+
+        return false;
       },
     },
     onSelectionUpdate: ({ editor }) => {
@@ -187,6 +164,7 @@ export default function ContractTemplateEditorModal({
   useEffect(() => {
     if (template) {
       setTemplateName(template.TemplateName);
+      setPageMargins(getPageMargins(template.Content));
       if (editor && template.Content) {
         preprocessAndSetContent(template.Content);
       }
@@ -235,16 +213,14 @@ export default function ContractTemplateEditorModal({
     }
   };
 
-  const insertPlaceholder = (key: string) => {
-    if (!editor) return;
-    const placeholder = `{{${key}}}`;
-    editor.chain().focus().insertContent(placeholder).run();
-  };
-
   const insertMaterialTable = () => {
     if (!editor) return;
-    const placeholder = `{{malzemeTablosu}}`;
-    editor.chain().focus().insertContent(placeholder).run();
+    editor.chain().focus().insertContent(`{{${MATERIAL_TABLE_PLACEHOLDER}}}`).run();
+  };
+
+  const insertReturnTable = () => {
+    if (!editor) return;
+    editor.chain().focus().insertContent(`{{${RETURN_TABLE_PLACEHOLDER}}}`).run();
   };
 
   const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -254,13 +230,10 @@ export default function ContractTemplateEditorModal({
     try {
       setUploadingImage(true);
       const response = await templateImageService.uploadAsync(file);
-      
-      // Görseli listeye ekle
+
       await loadImages();
-      
-      // Editöre ekle
+
       if (editor) {
-        // Node selection varsa üzerine yazmamak için imleci sonrasına al
         const { selection } = editor.state;
         if (selection && 'node' in selection) {
           editor.commands.setTextSelection(selection.to);
@@ -276,11 +249,10 @@ export default function ContractTemplateEditorModal({
         }
       }
 
-      // File input'u temizle
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
-    } catch (error: any) {
+    } catch (error: unknown) {
       toast.error(getApiErrorMessage(error));
     } finally {
       setUploadingImage(false);
@@ -289,8 +261,7 @@ export default function ContractTemplateEditorModal({
 
   const insertImage = async (imageId: number) => {
     if (!editor) return;
-    
-    // Node selection varsa üzerine yazmamak için imleci sonrasına al
+
     const { selection } = editor.state;
     if (selection && 'node' in selection) {
       editor.commands.setTextSelection(selection.to);
@@ -304,7 +275,6 @@ export default function ContractTemplateEditorModal({
       console.error('Failed to load image:', error);
       editor.chain().focus().setImage({ src: `image:${imageId}`, width: 150 } as ImageCommandOptions).insertContent(' ').run();
     }
-    setSelectedImageId(null);
   };
 
   const handleSave = async () => {
@@ -317,43 +287,11 @@ export default function ContractTemplateEditorModal({
 
     try {
       setIsBusy(true);
-      const content = editor.getJSON();
-      
-      const postprocessNodes = (node: any) => {
-        if ((node.type === 'image' || node.type === 'imageResize') && node.attrs) {
-          const imageId = node.attrs['data-image-id'];
-          if (imageId) {
-            node.attrs.src = `image:${imageId}`;
-            delete node.attrs['data-image-id'];
-          }
-        }
-        if (node.type === 'table' && node.attrs && (node.attrs.noBorder === true || node.attrs.noBorder === 'true')) {
-          node.attrs.style = (node.attrs.style || '') + ' border: none !important; border-width: 0px !important; outline: none !important;';
-          node.attrs.class = (node.attrs.class || '') + ' border-none';
-          const makeCellsBorderless = (n: any) => {
-            if (n.type === 'tableCell' || n.type === 'tableHeader') {
-              if (!n.attrs) {
-                n.attrs = {};
-              }
-              n.attrs.style = (n.attrs.style || '') + ' border: none !important; border-width: 0px !important; outline: none !important;';
-            }
-            if (n.content && Array.isArray(n.content)) {
-              for (const c of n.content) {
-                makeCellsBorderless(c);
-              }
-            }
-          };
-          makeCellsBorderless(node);
-        }
-        if (node.content && Array.isArray(node.content)) {
-          for (const child of node.content) {
-            postprocessNodes(child);
-          }
-        }
-      };
-
-      const clonedContent = JSON.parse(JSON.stringify(content));
-      postprocessNodes(clonedContent);
+      ensureLayoutTablesBorderless(editor);
+      const clonedContent = withPageMargins(
+        prepareTemplateContentForExport(editor.getJSON()),
+        pageMargins
+      );
 
       if (isNew) {
         const response = await contractTemplateService.createAsync({
@@ -364,13 +302,13 @@ export default function ContractTemplateEditorModal({
         if (onSave) {
           onSave(response.TemplateId);
         }
-        toast.success('Şablon başarıyla oluşturuldu!');
+        toast.success('Sözleşme şablonu başarıyla oluşturuldu!');
       } else if (template) {
         await contractTemplateService.updateAsync(template.TemplateId, {
           TemplateName: templateName,
           Content: clonedContent,
         });
-        toast.success('Şablon başarıyla güncellendi!');
+        toast.success('Sözleşme şablonu başarıyla güncellendi!');
       }
 
       onClose();
@@ -387,40 +325,11 @@ export default function ContractTemplateEditorModal({
 
     try {
       setIsBusy(true);
-      const content = editor.getJSON();
-
-      const postprocessNodes = (node: any) => {
-        if ((node.type === 'image' || node.type === 'imageResize') && node.attrs) {
-          const imageId = node.attrs['data-image-id'];
-          if (imageId) {
-            node.attrs.src = `image:${imageId}`;
-            delete node.attrs['data-image-id'];
-          }
-        }
-        if (node.type === 'table' && node.attrs && (node.attrs.noBorder === true || node.attrs.noBorder === 'true')) {
-          node.attrs.style = (node.attrs.style || '') + ' border: none !important; border-width: 0px !important; outline: none !important;';
-          node.attrs.class = (node.attrs.class || '') + ' border-none';
-          const makeCellsBorderless = (n: any) => {
-            if ((n.type === 'tableCell' || n.type === 'tableHeader') && n.attrs) {
-              n.attrs.style = (n.attrs.style || '') + ' border: none !important; border-width: 0px !important; outline: none !important;';
-            }
-            if (n.content && Array.isArray(n.content)) {
-              for (const c of n.content) {
-                makeCellsBorderless(c);
-              }
-            }
-          };
-          makeCellsBorderless(node);
-        }
-        if (node.content && Array.isArray(node.content)) {
-          for (const child of node.content) {
-            postprocessNodes(child);
-          }
-        }
-      };
-
-      const clonedContent = JSON.parse(JSON.stringify(content));
-      postprocessNodes(clonedContent);
+      ensureLayoutTablesBorderless(editor);
+      const clonedContent = withPageMargins(
+        prepareTemplateContentForExport(editor.getJSON()),
+        pageMargins
+      );
 
       const blob = await contractTemplateService.previewContentAsync(clonedContent);
 
@@ -459,510 +368,48 @@ export default function ContractTemplateEditorModal({
     }
   };
 
-  const getTableAttrs = () => {
-    if (!editor) return {};
-    const { $from } = editor.state.selection;
-    for (let depth = $from.depth; depth > 0; depth--) {
-      const node = $from.node(depth);
-      if (node.type.name === 'table') {
-        return node.attrs;
-      }
-    }
-    return editor.getAttributes('table');
-  };
-
   if (!editor) {
     return null;
   }
 
   return (
-    <div className="fixed inset-0 bg-background-main flex flex-col z-[100] overflow-hidden">
-      {/* Sleek Top Header Bar */}
-      <div className="bg-background-panel border-b border-background-border px-4 py-2 flex items-center justify-between gap-4 shrink-0 shadow-sm">
-        <div className="flex items-center gap-3">
-          <span className="text-blue-600 font-bold text-lg">📝</span>
-          <h2 className="text-sm font-semibold text-text-primary">
-            {isNew ? 'Yeni Sözleşme Şablonu' : 'Sözleşme Şablonu Düzenle'}
-          </h2>
-        </div>
-        
-        <div className="flex-1 max-w-md mx-4">
-          <div className="relative flex items-center">
-            <span className="absolute left-3 text-xs font-semibold text-text-secondary">Şablon Adı:</span>
-            <input
-              type="text"
-              value={templateName}
-              onChange={(e) => setTemplateName(e.target.value)}
-              className="input w-full pl-24 pr-3 py-1 text-xs"
-              placeholder="Örn: Standart Kiralama Sözleşmesi"
-            />
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handlePreview}
-            disabled={isBusy}
-            className="btn-secondary text-xs px-3 py-1.5 flex items-center gap-1"
-          >
-            <span>👁️</span> {isBusy ? 'Önizleniyor...' : 'Önizle'}
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={isBusy}
-            className="btn-primary text-xs px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white flex items-center gap-1 font-semibold"
-          >
-            <span>💾</span> {isBusy ? 'Kaydediliyor...' : 'Kaydet'}
-          </button>
-          <div className="h-5 w-px bg-background-border mx-1" />
-          <button 
-            onClick={onClose}
-            className="btn-secondary text-xs px-3 py-1.5 text-red-500 hover:bg-red-50 border-red-200 flex items-center gap-1"
-          >
-            <span>❌</span> Kapat
-          </button>
-        </div>
-      </div>
-
-      {/* MS Word style Compact Ribbon Toolbar */}
-      <div className="bg-background-panel border-b border-background-border px-4 py-1.5 flex flex-wrap items-center gap-2 shrink-0 shadow-sm">
-        {/* Metin Formatlama Grubu */}
-        <div className="flex rounded-input border border-background-border overflow-hidden bg-background-panel">
-          <button
-            onClick={() => editor.chain().focus().toggleBold().run()}
-            disabled={!editor.can().chain().focus().toggleBold().run()}
-            className={`p-1.5 text-xs px-2.5 hover:bg-background-hover transition-colors font-bold ${editor.isActive('bold') ? 'bg-blue-100 text-blue-700 font-extrabold' : 'text-text-primary'}`}
-            title="Kalın"
-          >
-            B
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleItalic().run()}
-            disabled={!editor.can().chain().focus().toggleItalic().run()}
-            className={`p-1.5 text-xs px-2.5 border-l border-background-border hover:bg-background-hover transition-colors italic ${editor.isActive('italic') ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="İtalik"
-          >
-            I
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleUnderline().run()}
-            className={`p-1.5 text-xs px-2.5 border-l border-background-border hover:bg-background-hover transition-colors underline ${editor.isActive('underline') ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="Altı Çizili"
-          >
-            U
-          </button>
-        </div>
-
-        {/* Paragraf / Başlık Grubu */}
-        <div className="flex rounded-input border border-background-border overflow-hidden bg-background-panel">
-          <button
-            onClick={() => editor.chain().focus().setParagraph().run()}
-            className={`p-1.5 text-xs px-2.5 hover:bg-background-hover transition-colors ${editor.isActive('paragraph') ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="Normal Metin"
-          >
-            Normal
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
-            className={`p-1.5 text-xs px-2.5 border-l border-background-border hover:bg-background-hover transition-colors font-bold ${editor.isActive('heading', { level: 1 }) ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="Başlık 1"
-          >
-            H1
-          </button>
-          <button
-            onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
-            className={`p-1.5 text-xs px-2.5 border-l border-background-border hover:bg-background-hover transition-colors font-bold ${editor.isActive('heading', { level: 2 }) ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="Başlık 2"
-          >
-            H2
-          </button>
-        </div>
-
-        {/* Hizalama Grubu */}
-        <div className="flex rounded-input border border-background-border overflow-hidden bg-background-panel">
-          <button
-            onClick={() => editor.chain().focus().setTextAlign('left').run()}
-            className={`p-1.5 text-xs px-2.5 hover:bg-background-hover transition-colors ${editor.isActive({ textAlign: 'left' }) ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="Sola Hizala"
-          >
-            ⬅️
-          </button>
-          <button
-            onClick={() => editor.chain().focus().setTextAlign('center').run()}
-            className={`p-1.5 text-xs px-2.5 border-l border-background-border hover:bg-background-hover transition-colors ${editor.isActive({ textAlign: 'center' }) ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="Ortala"
-          >
-            ↔️
-          </button>
-          <button
-            onClick={() => editor.chain().focus().setTextAlign('right').run()}
-            className={`p-1.5 text-xs px-2.5 border-l border-background-border hover:bg-background-hover transition-colors ${editor.isActive({ textAlign: 'right' }) ? 'bg-blue-100 text-blue-700' : 'text-text-primary'}`}
-            title="Sağa Hizala"
-          >
-            ➡️
-          </button>
-        </div>
-
-        <div className="w-px bg-background-border h-5 self-center" />
-
-        {/* Görsel Grubu */}
-        <div className="flex items-center gap-1 bg-background-panel border border-background-border rounded-input px-1.5 py-0.5">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/jpeg,image/png,image/gif,image/webp"
-            onChange={handleImageUpload}
-            className="hidden"
-          />
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploadingImage}
-            className="text-xs px-2 py-1 font-semibold hover:bg-background-hover rounded-sm text-text-primary"
-            title="Görsel Yükle"
-          >
-            {uploadingImage ? '⏳ Yükleniyor' : '📷 Görsel Yükle'}
-          </button>
-          {images.length > 0 && (
-            <select
-              value={selectedImageId || ''}
-              onChange={(e) => {
-                const id = e.target.value ? Number(e.target.value) : null;
-                setSelectedImageId(id);
-                if (id) insertImage(id);
-              }}
-              className="text-xs bg-background-elevated border border-background-border rounded-input px-1 py-0.5 text-text-primary max-w-[120px]"
-            >
-              <option value="">🖼️ Görsel Seç</option>
-              {images.map((img) => (
-                <option key={img.ImageId} value={img.ImageId}>
-                  {img.FileName}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        {/* Görsel Aktif Ayarlar */}
-        {isImageActive && (
-          <div className="flex items-center gap-0.5 bg-blue-50 border border-blue-200 p-0.5 rounded-input">
-            <span className="text-[10px] font-semibold text-blue-800 px-1">Görsel:</span>
-            <button
-              onClick={() => {
-                const nodeType = editor.isActive('imageResize') ? 'imageResize' : 'image';
-                editor.commands.updateAttributes(nodeType, { align: 'left' });
-              }}
-              className={`text-[10px] font-medium px-1.5 py-0.5 rounded-sm hover:bg-blue-100 ${editor.getAttributes(editor.isActive('imageResize') ? 'imageResize' : 'image').align === 'left' ? 'bg-blue-600 text-white hover:bg-blue-600' : 'text-blue-800'}`}
-              title="Sola Yasla"
-            >
-              Sola Yasla
-            </button>
-            <button
-              onClick={() => {
-                const nodeType = editor.isActive('imageResize') ? 'imageResize' : 'image';
-                editor.commands.updateAttributes(nodeType, { align: 'center' });
-              }}
-              className={`text-[10px] font-medium px-1.5 py-0.5 rounded-sm hover:bg-blue-100 ${editor.getAttributes(editor.isActive('imageResize') ? 'imageResize' : 'image').align === 'center' ? 'bg-blue-600 text-white hover:bg-blue-600' : 'text-blue-800'}`}
-              title="Ortala"
-            >
-              Ortala
-            </button>
-            <button
-              onClick={() => {
-                const nodeType = editor.isActive('imageResize') ? 'imageResize' : 'image';
-                editor.commands.updateAttributes(nodeType, { align: 'right' });
-              }}
-              className={`text-[10px] font-medium px-1.5 py-0.5 rounded-sm hover:bg-blue-100 ${editor.getAttributes(editor.isActive('imageResize') ? 'imageResize' : 'image').align === 'right' ? 'bg-blue-600 text-white hover:bg-blue-600' : 'text-blue-800'}`}
-              title="Sağa Yasla"
-            >
-              Sağa Yasla
-            </button>
-            <button
-              onClick={() => {
-                const nodeType = editor.isActive('imageResize') ? 'imageResize' : 'image';
-                editor.commands.updateAttributes(nodeType, { align: 'none' });
-              }}
-              className={`text-[10px] font-medium px-1.5 py-0.5 rounded-sm hover:bg-blue-100 ${(!editor.getAttributes(editor.isActive('imageResize') ? 'imageResize' : 'image').align || editor.getAttributes(editor.isActive('imageResize') ? 'imageResize' : 'image').align === 'none') ? 'bg-blue-600 text-white hover:bg-blue-600' : 'text-blue-800'}`}
-              title="Sıfırla"
-            >
-              Sıfırla
-            </button>
-          </div>
-        )}
-
-        <div className="w-px bg-background-border h-5 self-center" />
-
-        {/* Placeholders Grubu */}
-        <div className="flex items-center gap-1">
-          <select
-            onChange={(e) => {
-              if (e.target.value) {
-                insertPlaceholder(e.target.value);
-                e.target.value = '';
-              }
-            }}
-            className="text-xs bg-background-panel border border-background-border rounded-input px-1 py-1 text-text-primary"
-          >
-            <option value="">👤 Müşteri Bilgisi</option>
-            {PLACEHOLDERS.musteri.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <select
-            onChange={(e) => {
-              if (e.target.value) {
-                insertPlaceholder(e.target.value);
-                e.target.value = '';
-              }
-            }}
-            className="text-xs bg-background-panel border border-background-border rounded-input px-1 py-1 text-text-primary"
-          >
-            <option value="">💳 Çek Bilgisi</option>
-            {PLACEHOLDERS.cek.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <select
-            onChange={(e) => {
-              if (e.target.value) {
-                insertPlaceholder(e.target.value);
-                e.target.value = '';
-              }
-            }}
-            className="text-xs bg-background-panel border border-background-border rounded-input px-1 py-1 text-text-primary"
-          >
-            <option value="">🏗️ Şantiye Bilgisi</option>
-            {PLACEHOLDERS.santiye.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          <select
-            onChange={(e) => {
-              if (e.target.value) {
-                insertPlaceholder(e.target.value);
-                e.target.value = '';
-              }
-            }}
-            className="text-xs bg-background-panel border border-background-border rounded-input px-1 py-1 text-text-primary"
-          >
-            <option value="">📄 Sözleşme Bilgisi</option>
-            {PLACEHOLDERS.sozlesme.map((p) => (
-              <option key={p.key} value={p.key}>
-                {p.label}
-              </option>
-            ))}
-          </select>
-          
-          <button
-            onClick={insertMaterialTable}
-            className="text-xs bg-background-panel border border-background-border hover:bg-background-hover text-text-primary rounded-input px-2 py-1 flex items-center gap-1"
-            title="Malzeme Tablosu Ekle"
-          >
-            <ClipboardIcon size={14} weight="regular" />
-            <span>Malzeme Tablosu</span>
-          </button>
-        </div>
-
-        <div className="w-px bg-background-border h-5 self-center" />
-
-        {/* Düzen ve Tablo Grubu */}
-        <select
-          onChange={(e) => {
-            const val = e.target.value;
-            if (!val) return;
-            
-            if (val === 'empty') {
-              editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-            } else if (val === 'logo-header') {
-              editor.chain().focus().insertContent(`
-                <table class="border-none" data-no-border="true" style="width: 100%;">
-                  <tbody>
-                    <tr>
-                      <td style="width: 30%; vertical-align: middle; text-align: center;"><p>📁 <strong>[Buraya Logo Ekleyin]</strong></p></td>
-                      <td style="width: 70%; vertical-align: middle;"><p style="font-size: 1.5rem; font-weight: bold; margin-bottom: 0.25rem;">ŞİRKET UNVANI / BAŞLIK</p><p style="color: #666; font-size: 0.875rem;">Sözleşme No: {{sozlesmeNo}}<br>Tarih: {{bugunTarihi}}</p></td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p></p>
-              `).run();
-            } else if (val === '2-col') {
-              editor.chain().focus().insertContent(`
-                <table class="border-none" data-no-border="true" style="width: 100%;">
-                  <tbody>
-                    <tr>
-                      <td style="width: 50%; vertical-align: top;"><p><strong>Sol Sütun (Metin veya Resim)</strong></p><p>İçeriği buraya yazabilirsiniz.</p></td>
-                      <td style="width: 50%; vertical-align: top;"><p><strong>Sağ Sütun (Metin veya Resim)</strong></p><p>İçeriği buraya yazabilirsiniz.</p></td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p></p>
-              `).run();
-            } else if (val === '3-col') {
-              editor.chain().focus().insertContent(`
-                <table class="border-none" data-no-border="true" style="width: 100%;">
-                  <tbody>
-                    <tr>
-                      <td style="width: 33.33%; vertical-align: top;"><p><strong>Sütun 1</strong></p></td>
-                      <td style="width: 33.33%; vertical-align: top;"><p><strong>Sütun 2</strong></p></td>
-                      <td style="width: 33.33%; vertical-align: top;"><p><strong>Sütun 3</strong></p></td>
-                    </tr>
-                  </tbody>
-                </table>
-                <p></p>
-              `).run();
-            }
-            
-            e.target.value = '';
-          }}
-          className="text-xs bg-background-panel border border-background-border rounded-input px-1.5 py-1 text-text-primary font-semibold"
-          title="Sayfa Düzeni ve Tablo Ekle"
-        >
-          <option value="">📐 Düzen / Tablo Ekle</option>
-          <option value="empty">Boş Tablo Ekle</option>
-          <option value="logo-header">Logo + Başlık Düzeni (Sütunlu)</option>
-          <option value="2-col">2 Sütunlu Yan Yana Düzen</option>
-          <option value="3-col">3 Sütunlu Yan Yana Düzen</option>
-        </select>
-
-        <button
-          type="button"
-          onClick={() => setShowGridlines(!showGridlines)}
-          className={`text-xs border rounded-input px-2.5 py-1 flex items-center gap-1 font-semibold transition-colors ${!showGridlines ? 'bg-red-50 text-red-600 border-red-200 hover:bg-red-100' : 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100'}`}
-          title="Kılavuz Çizgilerini Göster / Gizle"
-        >
-          <span>{showGridlines ? '👁️ Kılavuz Gizle' : '👁️ Kılavuz Göster'}</span>
-        </button>
-
-        {/* Tablo Aktif Ayarlar */}
-        {isTableActive && (
-          <div className="flex flex-wrap items-center gap-0.5 bg-blue-50 border border-blue-200 p-0.5 rounded-input">
-            <span className="text-[10px] font-semibold text-blue-800 px-1">Tablo:</span>
-            <button
-              onClick={() => editor.commands.updateAttributes('table', { align: 'left' })}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Sola Yasla"
-            >
-              ⬅️ Sol
-            </button>
-            <button
-              onClick={() => editor.commands.updateAttributes('table', { align: 'center' })}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Ortala"
-            >
-              ↔️ Orta
-            </button>
-            <button
-              onClick={() => editor.commands.updateAttributes('table', { align: 'right' })}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Sağa Yasla"
-            >
-              ➡️ Sağ
-            </button>
-            <button
-              onClick={() => {
-                const attrs = getTableAttrs();
-                editor.commands.updateAttributes('table', { noBorder: !attrs.noBorder });
-              }}
-              className={`text-[10px] px-1.5 py-0.5 rounded-sm hover:bg-blue-100 ${getTableAttrs().noBorder ? 'bg-blue-600 text-white hover:bg-blue-600' : 'text-blue-800'}`}
-              title="Sınırları Gizle / Göster"
-            >
-              {getTableAttrs().noBorder ? '👀 Çizgi Göster' : '🚫 Çizgi Gizle'}
-            </button>
-            <div className="w-px bg-blue-200 h-3 mx-0.5" />
-            <button
-              onClick={() => editor.chain().focus().addColumnBefore().run()}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Sütun Ekle (Sol)"
-            >
-              +Sütun (Sol)
-            </button>
-            <button
-              onClick={() => editor.chain().focus().addColumnAfter().run()}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Sütun Ekle (Sağ)"
-            >
-              +Sütun (Sağ)
-            </button>
-            <button
-              onClick={() => editor.chain().focus().addRowBefore().run()}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Satır Ekle (Üst)"
-            >
-              +Satır (Üst)
-            </button>
-            <button
-              onClick={() => editor.chain().focus().addRowAfter().run()}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Satır Ekle (Alt)"
-            >
-              +Satır (Alt)
-            </button>
-            <div className="w-px bg-blue-200 h-3 mx-0.5" />
-            <button
-              onClick={() => editor.chain().focus().deleteColumn().run()}
-              className="text-[10px] text-red-500 hover:bg-red-50 px-1.5 py-0.5 rounded-sm"
-              title="Sütunu Sil"
-            >
-              -Sütun
-            </button>
-            <button
-              onClick={() => editor.chain().focus().deleteRow().run()}
-              className="text-[10px] text-red-500 hover:bg-red-50 px-1.5 py-0.5 rounded-sm"
-              title="Satırı Sil"
-            >
-              -Satır
-            </button>
-            <button
-              onClick={() => editor.chain().focus().mergeCells().run()}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Birleştir"
-            >
-              Birleştir
-            </button>
-            <button
-              onClick={() => editor.chain().focus().splitCell().run()}
-              className="text-[10px] text-blue-800 hover:bg-blue-100 px-1.5 py-0.5 rounded-sm"
-              title="Ayrıştır"
-            >
-              Ayrıştır
-            </button>
-            <button
-              onClick={() => editor.chain().focus().deleteTable().run()}
-              className="text-[10px] text-red-600 hover:bg-red-50 px-1.5 py-0.5 rounded-sm font-semibold"
-              title="Tabloyu Sil"
-            >
-              🗑️ Sil
-            </button>
-          </div>
-        )}
-      </div>
-
-      {/* Bilgi / İpucu Kutusu (İnce Şerit halinde) */}
-      <div className="text-[10px] text-text-secondary bg-background-surface border-b border-background-border px-4 py-1 flex items-center gap-1.5 shrink-0">
-        <span>💡</span>
-        <span>
-          <strong>İpucu:</strong> Logo ve görselleri yan yana yerleştirmek veya sayfanın köşesine hizalamak için <strong>📐 Düzen / Tablo Ekle</strong> menüsünden sütunlu düzenler ekleyebilir ve tablo seçiliyken <strong>🚫 Çizgi Gizle</strong> butonuyla görünmez kılavuz çizgileri yapabilirsiniz.
-        </span>
-      </div>
-
-      {/* MS Word style maximized workspace */}
-      <div className={`template-editor-workspace flex-1 p-2 md:p-4 flex justify-center overflow-auto min-h-0 ${showGridlines ? 'show-gridlines' : 'hide-gridlines'}`}>
-        <div className="template-editor-paper text-text-primary my-2">
-          <EditorContent editor={editor} />
-        </div>
-      </div>
-      <PdfPreviewModal
-        open={showPdfPreview}
-        pdfUrl={pdfPreviewUrl}
-        title="Şablon Önizleme"
-        downloadFileName="sablon_onizleme.pdf"
-        onClose={closePdfPreview}
-      />
-    </div>
+    <TipTapTemplateEditorLayout
+      editor={editor}
+      pageTitle={isNew ? 'Yeni sözleşme şablonu' : 'Sözleşme şablonu düzenle'}
+      templateName={templateName}
+      onTemplateNameChange={setTemplateName}
+      namePlaceholder="Örn: Standart Kiralama Sözleşmesi"
+      isBusy={isBusy}
+      onPreview={handlePreview}
+      onSave={handleSave}
+      onClose={onClose}
+      pageMargins={pageMargins}
+      onPageMarginsChange={setPageMargins}
+      placeholderGroups={PLACEHOLDER_GROUPS}
+      documentNumberKey="sozlesmeNo"
+      documentNumberLabel="Sözleşme No"
+      showMaterialTable
+      onInsertMaterialTable={insertMaterialTable}
+      showReturnTable
+      onInsertReturnTable={insertReturnTable}
+      images={images}
+      uploadingImage={uploadingImage}
+      onImageUpload={handleImageUpload}
+      onInsertImage={insertImage}
+      fileInputRef={fileInputRef}
+      showGridlines={showGridlines}
+      onToggleGridlines={() => setShowGridlines((v) => !v)}
+      isTableActive={isTableActive}
+      isImageActive={isImageActive}
+      previewModal={
+        <PdfPreviewModal
+          open={showPdfPreview}
+          pdfUrl={pdfPreviewUrl}
+          title="Sözleşme Şablonu Önizleme"
+          downloadFileName="sozlesme_sablon_onizleme.pdf"
+          onClose={closePdfPreview}
+        />
+      }
+    />
   );
 }

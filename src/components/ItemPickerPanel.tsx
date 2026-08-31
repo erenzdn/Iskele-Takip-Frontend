@@ -121,6 +121,32 @@ function getStock(i: ItemRecord): number {
   );
 }
 
+/** Ürünün ölçü birimi: UnitName, yoksa kategori Kiralama Birimi. */
+function getUnitName(i: ItemRecord): string {
+  const fromItem = safeStr(i.UnitName ?? (i as { unitName?: string }).unitName).trim();
+  if (fromItem) return fromItem;
+
+  const cats = i.Categories ?? i.categories;
+  if (Array.isArray(cats)) {
+    for (const c of cats) {
+      const ru = safeStr(
+        (c as { RentalUnit?: string; rentalUnit?: string }).RentalUnit ??
+          (c as { rentalUnit?: string }).rentalUnit
+      ).trim();
+      if (ru) return ru;
+    }
+  }
+  const single = i.Category ?? i.category;
+  if (single && typeof single === 'object') {
+    const ru = safeStr(
+      (single as { RentalUnit?: string; rentalUnit?: string }).RentalUnit ??
+        (single as { rentalUnit?: string }).rentalUnit
+    ).trim();
+    if (ru) return ru;
+  }
+  return '—';
+}
+
 /** Ürün adının ilk karakteri, Türkçe büyük harf (filtreleme için). Rakam ise "0", harf değilse "#". */
 function getFirstChar(i: ItemRecord): string {
   const name = getName(i).trim();
@@ -635,7 +661,7 @@ export default function ItemPickerPanel({
                           <div className="text-xs text-text-secondary mt-0.5 leading-tight">{getNameEn(i).trim()}</div>
                         ) : null}
                       </td>
-                      <td className="px-3 py-2 text-text-secondary">Adet</td>
+                      <td className="px-3 py-2 text-text-secondary">{getUnitName(i)}</td>
                       <td className="px-3 py-2 text-text-secondary">{getCatName(i) || '—'}</td>
                       <td className="px-3 py-2 text-right text-text-secondary">
                         {getStock(i)}

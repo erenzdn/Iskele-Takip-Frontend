@@ -1157,6 +1157,9 @@ export default function InventoryPage() {
           categories={categories}
           isNew={isNewItem}
           startInEditMode={startItemInEditMode}
+          onCategoriesChanged={() => {
+            void inventoryService.getAllCategoriesAsync().then(setCategories).catch(() => undefined);
+          }}
           onClose={handleItemModalClose}
         />
       )}

@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { dirname } from 'path';
 import { createRequire } from 'module';
+import fs from 'fs/promises';
 const require = createRequire(import.meta.url);
 
 const { autoUpdater } = require('electron-updater');
@@ -130,7 +131,8 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
-      preload: path.join(__dirname, 'preload.js'),
+      // Must be .cjs: package.json has "type": "module", so .js preload is treated as ESM and fails to load.
+      preload: path.join(__dirname, 'preload.cjs'),
     },
     titleBarStyle: 'default',
   });
@@ -147,11 +149,52 @@ function createWindow() {
   }
 }
 
+function registerIpcHandlers() {
+  ipcMain.on('get-app-version', (event) => {
+    if (isDev) {
+      try {
+        const pkg = require('../package.json');
+        event.returnValue = pkg.version;
+      } catch (e) {
+        event.returnValue = app.getVersion();
+      }
+    } else {
+      event.returnValue = app.getVersion();
+    }
+  });
+
+  ipcMain.handle('get-live-exchange-rates', async () => {
+    try {
+      return await fetchLiveExchangeRates();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Güncel kur alınamadı.';
+      log.error('Güncel kur alınamadı:', err);
+      return { ok: false as const, error: message };
+    }
+  });
+
+  ipcMain.handle('save-file-dialog', async (_, options) => {
+    const result = await dialog.showSaveDialog({
+      defaultPath: options.defaultPath,
+      filters: options.filters || [{ name: 'Word Belgesi', extensions: ['docx'] }],
+    });
+    return result.canceled ? null : result.filePath;
+  });
+
+  ipcMain.handle('write-file', async (_, filePath: string, data: ArrayBuffer) => {
+    await fs.writeFile(filePath, Buffer.from(data));
+    return true;
+  });
+}
+
 app.whenReady().then(() => {
   // Windows için AppID set etmek şart (Bildirimler ve Updater için)
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.iskeletakip.app');
   }
+
+  // Preload sendSync('/get-app-version') için handler pencere açılmadan önce hazır olmalı
+  registerIpcHandlers();
 
   // Content Security Policy ayarları
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
@@ -160,7 +203,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval' http://localhost:* https://iskeletakip.mehmeterenozden.com; style-src 'self' 'unsafe-inline' http://localhost:*; connect-src 'self' blob: http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: http://localhost:* https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:; worker-src 'self' blob:;"
+            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval' http://localhost:* https://iskeletakip.mehmeterenozden.com; style-src 'self' 'unsafe-inline' http://localhost:* https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' blob: http://localhost:* ws://localhost:* https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: http://localhost:* https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:; worker-src 'self' blob:;"
           ],
         },
       });
@@ -169,7 +212,7 @@ app.whenReady().then(() => {
         responseHeaders: {
           ...details.responseHeaders,
           'Content-Security-Policy': [
-            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' https://iskeletakip.mehmeterenozden.com; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; connect-src 'self' blob: https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:; worker-src 'self' blob:;"
+            "default-src 'self' blob: 'unsafe-inline' 'unsafe-eval' https://iskeletakip.mehmeterenozden.com; script-src 'self' blob: 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; connect-src 'self' blob: https://iskeletakip.mehmeterenozden.com; img-src 'self' data: blob: https://iskeletakip.mehmeterenozden.com; frame-src 'self' blob:; object-src 'self' blob:; worker-src 'self' blob:;"
           ],
         },
       });
@@ -272,30 +315,12 @@ app.whenReady().then(() => {
         });
       }, 1500);
     } else {
-      autoUpdater.checkForUpdates();
-    }
-  });
-
-  ipcMain.on('get-app-version', (event) => {
-    if (isDev) {
-      try {
-        const pkg = require('../package.json');
-        event.returnValue = pkg.version;
-      } catch (e) {
-        event.returnValue = app.getVersion();
-      }
-    } else {
-      event.returnValue = app.getVersion();
-    }
-  });
-
-  ipcMain.handle('get-live-exchange-rates', async () => {
-    try {
-      return await fetchLiveExchangeRates();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Güncel kur alınamadı.';
-      log.error('Güncel kur alınamadı:', err);
-      return { ok: false as const, error: message };
+      autoUpdater.checkForUpdates().catch((err: Error) => {
+        log.error('Güncelleme kontrolü başlatılamadı:', err);
+        BrowserWindow.getAllWindows().forEach(win => {
+          win.webContents.send('update-error', err.message);
+        });
+      });
     }
   });
   // --- End Auto-updater Section ---

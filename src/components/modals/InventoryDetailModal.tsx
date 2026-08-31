@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import {
   CurrencyCircleDollarIcon,
   PackageIcon,
@@ -18,12 +19,17 @@ import { toast } from '../../hooks/useToast';
 import { useAuthStore } from '../../store/authStore';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
+import CategoryDetailModal, { type CategoryModalSuccessResult } from './CategoryDetailModal';
 
 interface InventoryDetailModalProps {
   item: Inventory | null;
   categories: MaterialCategory[];
   isNew: boolean;
   startInEditMode?: boolean;
+  /** Üstte açık teklif/sözleşme veya ürün seçici varken modalın görünür kalması için */
+  stackAboveParent?: boolean;
+  /** Kategori listesi güncellendiğinde üst sayfanın da yenilenmesi için */
+  onCategoriesChanged?: () => void;
   onClose: () => void;
 }
 
@@ -79,6 +85,8 @@ export default function InventoryDetailModal({
   categories,
   isNew,
   startInEditMode = false,
+  stackAboveParent = false,
+  onCategoriesChanged,
   onClose,
 }: InventoryDetailModalProps) {
   const user = useAuthStore((state) => state.user);
@@ -134,6 +142,13 @@ export default function InventoryDetailModal({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showRestoreConfirm, setShowRestoreConfirm] = useState(false);
   const [restoreConflictMessage, setRestoreConflictMessage] = useState<string | null>(null);
+  const [localCategories, setLocalCategories] = useState<MaterialCategory[]>(categories);
+  const [showCategoryModal, setShowCategoryModal] = useState(false);
+  const [categoryModalFocus, setCategoryModalFocus] = useState<'category' | 'subcategory'>('category');
+
+  useEffect(() => {
+    setLocalCategories(categories);
+  }, [categories]);
 
   useEffect(() => {
     setResolvedItem(item);
@@ -349,6 +364,47 @@ export default function InventoryDetailModal({
       loadWarehouses();
     }
   }, [isNew]);
+
+  const refreshCategories = async () => {
+    try {
+      const data = await inventoryService.getAllCategoriesAsync();
+      setLocalCategories(data);
+      onCategoriesChanged?.();
+    } catch (error) {
+      console.error('Load categories error:', error);
+    }
+  };
+
+  const openCategoryModal = (focus: 'category' | 'subcategory') => {
+    if (focus === 'subcategory' && selectedCategoryIds.length === 0) {
+      toast.warning('Alt kategori eklemek için önce en az bir kategori seçin.');
+      return;
+    }
+    setCategoryModalFocus(focus);
+    setShowCategoryModal(true);
+  };
+
+  const handleCategoryModalSuccess = async (result: CategoryModalSuccessResult) => {
+    await refreshCategories();
+    await loadSubCategories();
+
+    if (result.type === 'category') {
+      setSelectedCategoryIds((prev) =>
+        prev.includes(result.categoryId) ? prev : [...prev, result.categoryId]
+      );
+      return;
+    }
+
+    if (selectedCategoryIds.includes(result.categoryId)) {
+      setSelectedSubCategoryIds((prev) =>
+        prev.includes(result.subCategoryId) ? prev : [...prev, result.subCategoryId]
+      );
+    }
+  };
+
+  const subCategoryModalParentId =
+    selectedCategoryIds.length === 1 ? selectedCategoryIds[0] : undefined;
+  const subCategoryModalLockParent = selectedCategoryIds.length === 1;
 
   const loadSubCategories = async () => {
     try {
@@ -607,9 +663,9 @@ export default function InventoryDetailModal({
 
   const filteredCategories = useMemo(() => {
     const q = categoryQuery.trim().toLocaleLowerCase('tr-TR');
-    if (!q) return categories;
-    return categories.filter((c) => (c.CategoryName ?? '').toLocaleLowerCase('tr-TR').includes(q));
-  }, [categories, categoryQuery]);
+    if (!q) return localCategories;
+    return localCategories.filter((c) => (c.CategoryName ?? '').toLocaleLowerCase('tr-TR').includes(q));
+  }, [localCategories, categoryQuery]);
 
   const filteredVisibleSubCategories = useMemo(() => {
     const q = subCategoryQuery.trim().toLocaleLowerCase('tr-TR');
@@ -621,11 +677,11 @@ export default function InventoryDetailModal({
 
   const selectedCategoryChips = useMemo(() => {
     if (selectedCategoryIds.length === 0) return [];
-    const map = new Map(categories.map((c) => [c.CategoryId, c.CategoryName] as const));
+    const map = new Map(localCategories.map((c) => [c.CategoryId, c.CategoryName] as const));
     return selectedCategoryIds
       .map((id) => ({ id, name: map.get(id) ?? `Kategori #${id}` }))
       .sort((a, b) => a.name.localeCompare(b.name, 'tr-TR'));
-  }, [categories, selectedCategoryIds]);
+  }, [localCategories, selectedCategoryIds]);
 
   const selectedSubCategoryChips = useMemo(() => {
     if (selectedSubCategoryIds.length === 0) return [];
@@ -684,9 +740,11 @@ export default function InventoryDetailModal({
     (selectedCategoryChipsVisible.length + selectedSubCategoryChipsVisible.length);
 
   const selectedUnitName = units.find((u) => u.UnitId === selectedUnitId)?.UnitName || 'kg';
+  const overlayZClass = stackAboveParent ? 'z-[70]' : 'z-50';
+  const confirmZClass = stackAboveParent ? 'z-[80]' : 'z-[70]';
 
-  return (
-    <div className="fixed inset-0 z-50 flex flex-col overflow-hidden bg-background-panel">
+  const modalTree = (
+    <div className={`fixed inset-0 flex flex-col overflow-hidden bg-background-panel ${overlayZClass}`}>
       <header className="shrink-0 border-b border-background-border px-3 py-2 sm:px-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -968,10 +1026,21 @@ export default function InventoryDetailModal({
 
                 <div className="grid min-h-0 flex-1 grid-cols-1 gap-2 md:grid-cols-2">
                   <div className="flex min-h-0 flex-col">
-                    <div className="mb-1 flex items-center justify-between">
+                    <div className="mb-1 flex items-center justify-between gap-2">
                       <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
                         Kategoriler *
                       </span>
+                      {!isReadOnly ? (
+                        <button
+                          type="button"
+                          onClick={() => openCategoryModal('category')}
+                          className="inline-flex items-center gap-1 rounded-md border border-background-border bg-background-panel px-2 py-0.5 text-[11px] font-medium text-accent hover:bg-background-hover"
+                          title="Yeni kategori ekle"
+                        >
+                          <Plus size={12} weight="bold" />
+                          Kategori Ekle
+                        </button>
+                      ) : null}
                     </div>
                     <input
                       type="text"
@@ -981,9 +1050,19 @@ export default function InventoryDetailModal({
                       placeholder="Kategori ara…"
                       className="input mb-1.5 w-full py-1.5 text-sm"
                     />
-                    {categories.length === 0 ? (
+                    {localCategories.length === 0 ? (
                       <div className="rounded-lg border border-background-border px-3 py-4 text-xs text-text-secondary">
-                        Henüz kategori yok. Envanter sayfasındaki kategori yönetiminden ekleyebilirsiniz.
+                        <p>Henüz kategori yok.</p>
+                        {!isReadOnly ? (
+                          <button
+                            type="button"
+                            onClick={() => openCategoryModal('category')}
+                            className="mt-2 inline-flex items-center gap-1 text-accent hover:underline"
+                          >
+                            <Plus size={12} weight="bold" />
+                            İlk kategoriyi ekle
+                          </button>
+                        ) : null}
                       </div>
                     ) : (
                       <div className="min-h-0 flex-1 overflow-y-auto rounded-lg border border-background-border bg-background-panel">
@@ -1021,19 +1100,39 @@ export default function InventoryDetailModal({
                   </div>
 
                   <div className="flex min-h-0 flex-col">
-                    <div className="mb-1 flex items-center justify-between">
+                    <div className="mb-1 flex items-center justify-between gap-2">
                       <span className="text-[11px] font-semibold uppercase tracking-wide text-text-secondary">
                         Alt kategoriler
                       </span>
-                      {selectedSubCategoryIds.length > 0 && !isReadOnly ? (
-                        <button
-                          type="button"
-                          onClick={() => setSelectedSubCategoryIds([])}
-                          className="text-[11px] text-accent hover:underline"
-                        >
-                          Temizle
-                        </button>
-                      ) : null}
+                      <div className="flex items-center gap-2">
+                        {!isReadOnly ? (
+                          <button
+                            type="button"
+                            onClick={() => openCategoryModal('subcategory')}
+                            disabled={selectedCategoryIds.length === 0}
+                            className="inline-flex items-center gap-1 rounded-md border border-background-border bg-background-panel px-2 py-0.5 text-[11px] font-medium text-accent hover:bg-background-hover disabled:cursor-not-allowed disabled:opacity-50"
+                            title={
+                              selectedCategoryIds.length === 0
+                                ? 'Önce en az bir kategori seçin'
+                                : selectedCategoryIds.length === 1
+                                  ? `${localCategories.find((c) => c.CategoryId === selectedCategoryIds[0])?.CategoryName ?? 'Seçili kategori'} için alt kategori ekle`
+                                  : 'Seçili kategorilerden birine alt kategori ekle'
+                            }
+                          >
+                            <Plus size={12} weight="bold" />
+                            Alt Kategori Ekle
+                          </button>
+                        ) : null}
+                        {selectedSubCategoryIds.length > 0 && !isReadOnly ? (
+                          <button
+                            type="button"
+                            onClick={() => setSelectedSubCategoryIds([])}
+                            className="text-[11px] text-accent hover:underline"
+                          >
+                            Temizle
+                          </button>
+                        ) : null}
+                      </div>
                     </div>
                     <input
                       type="text"
@@ -1356,7 +1455,7 @@ export default function InventoryDetailModal({
         confirmLabel="Listeden Kaldır"
         onConfirm={handleDeleteConfirm}
         onCancel={() => setShowDeleteConfirm(false)}
-        zIndexClass="z-[70]"
+        zIndexClass={confirmZClass}
       />
 
       <ConfirmModal
@@ -1375,7 +1474,7 @@ export default function InventoryDetailModal({
           if (isBusy) return;
           setShowRestoreConfirm(false);
         }}
-        zIndexClass="z-[70]"
+        zIndexClass={confirmZClass}
       />
 
       <ConfirmModal
@@ -1386,8 +1485,29 @@ export default function InventoryDetailModal({
         singleAction
         onConfirm={() => setRestoreConflictMessage(null)}
         onCancel={() => setRestoreConflictMessage(null)}
-        zIndexClass="z-[70]"
+        zIndexClass={confirmZClass}
       />
+
+      {showCategoryModal && (
+        <CategoryDetailModal
+          categories={localCategories}
+          focusMode={categoryModalFocus}
+          preselectedParentCategoryId={subCategoryModalParentId}
+          allowedParentCategoryIds={
+            categoryModalFocus === 'subcategory' ? selectedCategoryIds : undefined
+          }
+          lockParentCategory={categoryModalFocus === 'subcategory' && subCategoryModalLockParent}
+          stackAboveParent
+          onSuccess={(result) => void handleCategoryModalSuccess(result)}
+          onClose={() => setShowCategoryModal(false)}
+        />
+      )}
     </div>
   );
+
+  if (stackAboveParent && typeof document !== 'undefined') {
+    return createPortal(modalTree, document.body);
+  }
+
+  return modalTree;
 }

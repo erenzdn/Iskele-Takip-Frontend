@@ -114,15 +114,23 @@ class ApiClient {
    * Endpoint'in imza gerektirip gerektirmediğini kontrol eder
    */
   private isExcludedEndpoint(endpoint: string): boolean {
-    return this.excludedEndpoints.some(e => endpoint.startsWith(e));
+    const path = this.getSigningPath(endpoint);
+    return this.excludedEndpoints.some((e) => path === e || path.startsWith(`${e}/`) || path.startsWith(`${e}?`));
+  }
+
+  /**
+   * Backend’in gördüğü path (baseUrl path prefix + endpoint + query).
+   * İmza payload’ındaki path ile birebir aynı olmalı.
+   */
+  private getSigningPath(endpoint: string): string {
+    const base = this.baseUrl.replace(/\/$/, '');
+    const pathPart = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+    const full = new URL(`${base}${pathPart}`);
+    return `${full.pathname}${full.search}`;
   }
 
   /**
    * HMAC-SHA256 ile request imzası oluşturur (Web Crypto API)
-   * @param method HTTP method (GET, POST, vb.)
-   * @param path İstek path'i (örn: /customers)
-   * @param body İstek body'si
-   * @returns signature, timestamp, nonce
    */
   private async createSignature(
     method: string,
@@ -132,20 +140,17 @@ class ApiClient {
     const timestamp = Date.now().toString();
     const nonce = crypto.randomUUID();
 
-    // Body hash hesapla (Web Crypto API)
-    const bodyString = body && Object.keys(body as object).length > 0
-      ? JSON.stringify(body)
-      : '';
+    // Body hash: JSON body varsa SHA256(JSON.stringify(body)), yoksa SHA256('')
+    const bodyString =
+      body !== undefined && body !== null ? JSON.stringify(body) : '';
     const bodyBuffer = new TextEncoder().encode(bodyString);
     const bodyHashBuffer = await crypto.subtle.digest('SHA-256', bodyBuffer);
     const bodyHash = Array.from(new Uint8Array(bodyHashBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
+      .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
-    // Signature payload oluştur
     const signaturePayload = `${timestamp}:${nonce}:${method.toUpperCase()}:${path}:${bodyHash}`;
 
-    // HMAC-SHA256 imza (Web Crypto API)
     const encoder = new TextEncoder();
     const keyData = encoder.encode(this.signingSecret);
     const key = await crypto.subtle.importKey(
@@ -163,7 +168,7 @@ class ApiClient {
     );
 
     const signature = Array.from(new Uint8Array(signatureBuffer))
-      .map(b => b.toString(16).padStart(2, '0'))
+      .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
 
     return { signature, timestamp, nonce };
@@ -182,9 +187,10 @@ class ApiClient {
       return;
     }
 
+    const path = this.getSigningPath(endpoint);
     const { signature, timestamp, nonce } = await this.createSignature(
       method,
-      endpoint,
+      path,
       body
     );
 
@@ -192,21 +198,60 @@ class ApiClient {
     (headers as Record<string, string>)['X-Nonce'] = nonce;
     (headers as Record<string, string>)['X-Signature'] = signature;
 
-    devLog(`[API SIGNING] Endpoint: ${endpoint}, Timestamp: ${timestamp}, Nonce: ${nonce}`);
+    devLog(`[API SIGNING] Path: ${path}, Timestamp: ${timestamp}, Nonce: ${nonce}`);
+  }
+
+  /** Yerel oturumu temizle (API logout çağırmaz — 401 döngüsünü önler). */
+  private forceLogout(message = 'Oturumunuz sonlandı. Lütfen tekrar giriş yapın.'): never {
+    useAuthStore.setState({ accessToken: null, user: null, isAuthenticated: false });
+    if (typeof window !== 'undefined' && window.location) {
+      window.location.hash = '#/login';
+    }
+    throw new Error(message);
+  }
+
+  private parseErrorPayload(errorText: string): {
+    userMessage: string;
+    errorCode?: string;
+  } {
+    let userMessage = '';
+    let errorCode: string | undefined;
+    if (!errorText) return { userMessage, errorCode };
+    try {
+      const parsed = JSON.parse(errorText) as {
+        message?: string;
+        Message?: string;
+        error?: string;
+        Error?: string;
+        code?: string;
+      };
+      if (parsed && typeof parsed === 'object') {
+        userMessage =
+          (typeof parsed.message === 'string' && parsed.message) ||
+          (typeof parsed.Message === 'string' && parsed.Message) ||
+          (typeof parsed.error === 'string' && parsed.error) ||
+          (typeof parsed.Error === 'string' && parsed.Error) ||
+          '';
+        if (typeof parsed.code === 'string') errorCode = parsed.code;
+      }
+    } catch {
+      // plain text
+    }
+    return { userMessage, errorCode };
   }
 
   private async createRequest(
     method: HttpMethod,
     endpoint: string,
     body?: unknown
-  ): Promise<Request> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const token = useAuthStore.getState().token;
+  ): Promise<{ request: Request; endpoint: string; body?: unknown }> {
+    const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const accessToken = useAuthStore.getState().accessToken;
 
     const headers: HeadersInit = {};
 
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     // Body olmayan GET/DELETE isteklerinde Content-Type göndermeyerek gereksiz preflight tetiklerini azaltır.
@@ -214,44 +259,48 @@ class ApiClient {
       headers['Content-Type'] = 'application/json';
     }
 
-    // Request signing header'larını ekle
     await this.addSignatureHeaders(headers, method, endpoint, body);
 
     const config: RequestInit = {
       method,
       headers,
-      credentials: 'include', // Refresh token cookie'lerini backend'e ilet
+      credentials: 'include', // Refresh token cookie
     };
 
-    if (body) {
+    if (body !== undefined && body !== null) {
       config.body = JSON.stringify(body);
     }
 
     const request = new Request(url, config);
 
     devLog(`[API REQUEST] ${method} ${url}`);
-    if (body) devLog('[API REQUEST BODY]', body);
+    if (body != null) devLog('[API REQUEST BODY]', body);
 
-    return request;
+    return { request, endpoint, body };
   }
 
   /**
-   * Silent Refresh: Access token süresi dolduğunda otomatik olarak yeni token alır
+   * Silent Refresh: TOKEN_EXPIRED → POST /auth/refresh (credentials + signing)
    */
   private async attemptRefresh(): Promise<boolean> {
     if (this.isRefreshing && this.refreshPromise) {
-      // Başka bir istek zaten refresh yapıyorsa aynı promise'i döndür
       return this.refreshPromise;
     }
 
     this.isRefreshing = true;
     this.refreshPromise = (async () => {
       try {
-        devLog('[AUTH] Access token süresi doldu, refresh token ile yenileniyor...');
-        
-        const response = await fetch(`${this.baseUrl}/auth/refresh`, {
+        devLog('[AUTH] Access token süresi doldu, refresh deneniyor...');
+
+        const headers: HeadersInit = {
+          'Content-Type': 'application/json',
+        };
+        await this.addSignatureHeaders(headers, 'POST', '/auth/refresh');
+
+        const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/auth/refresh`, {
           method: 'POST',
-          credentials: 'include', // httpOnly refresh token cookie'sini gönder
+          headers,
+          credentials: 'include',
         });
 
         if (!response.ok) {
@@ -259,16 +308,13 @@ class ApiClient {
           return false;
         }
 
-        const data = await response.json() as { accessToken?: string; token?: string };
-        const newAccessToken = data.accessToken || data.token;
-
-        if (!newAccessToken) {
+        const data = (await response.json()) as { accessToken?: string };
+        if (!data.accessToken) {
           devLog('[AUTH] Refresh yanıtında accessToken bulunamadı');
           return false;
         }
 
-        // Yeni access token'ı store'a kaydet
-        useAuthStore.getState().setToken(newAccessToken);
+        useAuthStore.getState().setAccessToken(data.accessToken);
         devLog('[AUTH] Access token başarıyla yenilendi');
         return true;
       } catch (error) {
@@ -283,48 +329,65 @@ class ApiClient {
     return this.refreshPromise;
   }
 
-  async sendAsync<T>(request: Request): Promise<T> {
+  async sendAsync<T>(
+    prepared: { request: Request; endpoint: string; body?: unknown },
+    options: { allowRefreshRetry?: boolean } = {}
+  ): Promise<T> {
+    const { allowRefreshRetry = true } = options;
+    const { request, endpoint, body } = prepared;
+
     try {
       this.metrics.record(request.method, new URL(request.url).pathname);
-      let response = await fetch(request);
-      
+      const response = await fetch(request);
+
       devLog(`[API RESPONSE] ${response.status} for ${request.url}`);
 
-      // 401 Unauthorized - Access token süresi dolmuş olabilir
       if (response.status === 401) {
-        const pathname = new URL(request.url).pathname;
-        
-        // /auth/login ve /auth/refresh endpoint'lerinde retry yapma
-        if (pathname === '/auth/login' || pathname === '/auth/refresh') {
-          devLog('[AUTH] Login/Refresh endpoint 401 döndü, retry yapılmıyor');
-        } else {
-          devLog('[AUTH] 401 Unauthorized, silent refresh deneniyor...');
-          
-          const refreshSuccess = await this.attemptRefresh();
-          
-          if (refreshSuccess) {
-            // Yeni token ile orijinal isteği tekrarla
-            devLog('[AUTH] Refresh başarılı, orijinal istek tekrar gönderiliyor...');
-            const retryRequest = await this.createRequest(
-              request.method as HttpMethod,
-              pathname,
-              request.body ? JSON.parse(await request.clone().text()) : undefined
-            );
-            response = await fetch(retryRequest);
-            devLog(`[API RESPONSE RETRY] ${response.status} for ${request.url}`);
-          } else {
-            // Refresh başarısız, kullanıcıyı logout et ve login'e yönlendir
-            devLog('[AUTH] Refresh başarısız, oturum sonlandırılıyor...');
-            useAuthStore.getState().logout();
-            
-            // Kullanıcıyı login sayfasına yönlendir
-            if (typeof window !== 'undefined' && window.location) {
-              window.location.hash = '#/login';
-            }
-            
-            throw new Error('Oturumunuz sonlandı. Lütfen tekrar giriş yapın.');
-          }
+        const errorText = await response.text();
+        const { errorCode, userMessage } = this.parseErrorPayload(errorText);
+        const path = this.getSigningPath(endpoint);
+
+        if (
+          path.startsWith('/auth/login') ||
+          path.startsWith('/auth/refresh') ||
+          path.startsWith('/auth/logout')
+        ) {
+          const error = new Error(userMessage || errorText || 'API Error: 401');
+          (error as { status?: number }).status = 401;
+          (error as { code?: string }).code = errorCode;
+          throw error;
         }
+
+        // TOKEN_INVALID / TOKEN_MISSING → logout (refresh deneme)
+        if (errorCode === 'TOKEN_INVALID' || errorCode === 'TOKEN_MISSING') {
+          devLog(`[AUTH] ${errorCode}, oturum sonlandırılıyor`);
+          this.forceLogout();
+        }
+
+        // TOKEN_EXPIRED (veya kodsuz 401) → refresh + 1 kez retry
+        if (allowRefreshRetry && (errorCode === 'TOKEN_EXPIRED' || !errorCode)) {
+          devLog('[AUTH] 401 — silent refresh deneniyor...');
+          const refreshSuccess = await this.attemptRefresh();
+          if (refreshSuccess) {
+            const retryPrepared = await this.createRequest(
+              request.method as HttpMethod,
+              endpoint,
+              body
+            );
+            return this.sendAsync<T>(retryPrepared, { allowRefreshRetry: false });
+          }
+          this.forceLogout();
+        }
+
+        if (errorCode === 'TOKEN_EXPIRED') {
+          this.forceLogout();
+        }
+
+        const error = new Error(userMessage || errorText || 'API Error: 401');
+        (error as { status?: number }).status = 401;
+        (error as { responseText?: string }).responseText = errorText;
+        if (errorCode) (error as { code?: string }).code = errorCode;
+        throw error;
       }
 
       if (!response.ok) {
@@ -336,54 +399,7 @@ class ApiClient {
           errorText = 'Yanıt okunamadı';
         }
 
-        let userMessage = '';
-        let errorCode: string | undefined;
-        if (errorText) {
-          try {
-            const parsed = JSON.parse(errorText) as {
-              message?: string;
-              Message?: string;
-              error?: string;
-              Error?: string;
-              code?: string;
-            };
-            if (parsed && typeof parsed === 'object') {
-              userMessage =
-                (typeof parsed.message === 'string' && parsed.message) ||
-                (typeof parsed.Message === 'string' && parsed.Message) ||
-                (typeof parsed.error === 'string' && parsed.error) ||
-                (typeof parsed.Error === 'string' && parsed.Error) ||
-                '';
-              if (typeof parsed.code === 'string') errorCode = parsed.code;
-              
-              // TOKEN_EXPIRED kod kontrolü
-              if (errorCode === 'TOKEN_EXPIRED') {
-                devLog('[AUTH] TOKEN_EXPIRED hatası, silent refresh deneniyor...');
-                const refreshSuccess = await this.attemptRefresh();
-                
-                if (refreshSuccess) {
-                  // Retry logic
-                  const pathname = new URL(request.url).pathname;
-                  const retryRequest = await this.createRequest(
-                    request.method as HttpMethod,
-                    pathname,
-                    request.body ? JSON.parse(await request.clone().text()) : undefined
-                  );
-                  return this.sendAsync<T>(retryRequest);
-                } else {
-                  useAuthStore.getState().logout();
-                  if (typeof window !== 'undefined' && window.location) {
-                    window.location.hash = '#/login';
-                  }
-                  throw new Error('Oturumunuz sonlandı. Lütfen tekrar giriş yapın.');
-                }
-              }
-            }
-          } catch {
-            // plain text veya JSON değil
-          }
-        }
-
+        const { userMessage, errorCode } = this.parseErrorPayload(errorText);
         const error = new Error(userMessage || errorText || `API Error: ${response.status}`);
         (error as { status?: number }).status = response.status;
         (error as { responseText?: string }).responseText = errorText;
@@ -391,7 +407,6 @@ class ApiClient {
         throw error;
       }
 
-      // Handle empty responses (204 No Content)
       if (response.status === 204) {
         return null as T;
       }
@@ -411,7 +426,7 @@ class ApiClient {
         if (isDev) console.error('[API PARSE ERROR]', parseError, 'Raw text:', text);
         throw new Error('API yanıtı parse edilemedi');
       }
-      
+
       return data;
     } catch (error) {
       devLog('[API ERROR]', error);
@@ -420,28 +435,28 @@ class ApiClient {
   }
 
   async get<T>(endpoint: string): Promise<T> {
-    const request = await this.createRequest('GET', endpoint);
-    return this.sendAsync<T>(request);
+    const prepared = await this.createRequest('GET', endpoint);
+    return this.sendAsync<T>(prepared);
   }
 
   async post<T>(endpoint: string, body?: unknown): Promise<T> {
-    const request = await this.createRequest('POST', endpoint, body);
-    return this.sendAsync<T>(request);
+    const prepared = await this.createRequest('POST', endpoint, body);
+    return this.sendAsync<T>(prepared);
   }
 
   async patch<T>(endpoint: string, body?: unknown): Promise<T> {
-    const request = await this.createRequest('PATCH', endpoint, body);
-    return this.sendAsync<T>(request);
+    const prepared = await this.createRequest('PATCH', endpoint, body);
+    return this.sendAsync<T>(prepared);
   }
 
   async put<T>(endpoint: string, body?: unknown): Promise<T> {
-    const request = await this.createRequest('PUT', endpoint, body);
-    return this.sendAsync<T>(request);
+    const prepared = await this.createRequest('PUT', endpoint, body);
+    return this.sendAsync<T>(prepared);
   }
 
   async delete<T>(endpoint: string, body?: unknown): Promise<T> {
-    const request = await this.createRequest('DELETE', endpoint, body);
-    return this.sendAsync<T>(request);
+    const prepared = await this.createRequest('DELETE', endpoint, body);
+    return this.sendAsync<T>(prepared);
   }
 
   getRequestMetricsSnapshot() {
@@ -453,13 +468,13 @@ class ApiClient {
   }
 
   async getBlob(endpoint: string): Promise<Blob> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const token = useAuthStore.getState().token;
+    const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const accessToken = useAuthStore.getState().accessToken;
 
     const headers: HeadersInit = {};
 
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     // Request signing header'larını ekle
@@ -502,13 +517,13 @@ class ApiClient {
    * GET ile blob indirir; Content-Disposition içindeki dosya adını döner.
    */
   async getBlobDownload(endpoint: string): Promise<{ blob: Blob; filename: string | null }> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const token = useAuthStore.getState().token;
+    const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const accessToken = useAuthStore.getState().accessToken;
 
     const headers: HeadersInit = {};
 
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     await this.addSignatureHeaders(headers, 'GET', endpoint);
@@ -554,13 +569,13 @@ class ApiClient {
    * Excel import gibi JSON dönen uçlar için: success:false gövdesi HTTP 400 olsa bile parse edilip döndürülür.
    */
   async postFormData<T = unknown>(endpoint: string, formData: FormData): Promise<T> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const token = useAuthStore.getState().token;
+    const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const accessToken = useAuthStore.getState().accessToken;
 
     const headers: HeadersInit = {};
 
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     await this.addSignatureHeaders(headers, 'POST', endpoint, undefined);
@@ -624,15 +639,15 @@ class ApiClient {
   }
 
   async postBlob(endpoint: string, body?: unknown): Promise<Blob> {
-    const url = `${this.baseUrl}${endpoint}`;
-    const token = useAuthStore.getState().token;
+    const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
+    const accessToken = useAuthStore.getState().accessToken;
 
     const headers: HeadersInit = {
       'Content-Type': 'application/json',
     };
 
-    if (token) {
-      headers['Authorization'] = `Bearer ${token}`;
+    if (accessToken) {
+      headers['Authorization'] = `Bearer ${accessToken}`;
     }
 
     // Request signing header'larını ekle

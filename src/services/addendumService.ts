@@ -1,6 +1,6 @@
 import { apiClient } from './apiClient';
 import type { Addendum, AddendumDetail, ChangeType } from '../models';
-import { normalizeAddendumStatus } from '../utils/addendum';
+import { buildAddendumAddedLineSources, normalizeAddendumStatus, type AddendumLineSource } from '../utils/addendum';
 
 export interface CreateAddendumRequest {
   EffectiveDate: string;
@@ -108,6 +108,27 @@ export const addendumService = {
   async listByContractAsync(contractId: number): Promise<Addendum[]> {
     const raw = await apiClient.get<unknown>(`/contracts/${contractId}/addendums`);
     return asList(raw).map(normalizeAddendum);
+  },
+
+  /** Onaylı zeyilnamelerde ADD ile oluşan sözleşme kalemlerini eşleştirir */
+  async loadAddedLineSourcesAsync(contractId: number): Promise<Map<number, AddendumLineSource>> {
+    const list = await this.listByContractAsync(contractId);
+    const approved = list.filter((a) => a.Status === 'approved');
+    if (approved.length === 0) return new Map();
+
+    const enriched = await Promise.all(
+      approved.map(async (addendum) => {
+        const existingDetails = addendum.details ?? addendum.Details;
+        if (existingDetails && existingDetails.length > 0) return addendum;
+        try {
+          return await this.getByIdAsync(addendum.AddendumId);
+        } catch {
+          return addendum;
+        }
+      })
+    );
+
+    return buildAddendumAddedLineSources(enriched);
   },
 
   async getByIdAsync(id: number): Promise<Addendum> {

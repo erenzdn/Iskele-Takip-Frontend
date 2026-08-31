@@ -37,12 +37,15 @@ export default function LoginPage() {
         password: normalizeText(password)
       });
       console.log('[LOGIN] Başarılı, response:', response);
-      
-      if (!response || !response.token) {
-        throw new Error('Geçersiz yanıt: Token alınamadı');
+
+      if (!response?.accessToken) {
+        throw new Error('Geçersiz yanıt: accessToken alınamadı');
       }
-      
-      login(response.token, response.user);
+      if (!response.user || !Array.isArray(response.user.permissions)) {
+        throw new Error('Geçersiz yanıt: kullanıcı veya permissions alınamadı');
+      }
+
+      login(response.accessToken, response.user);
       navigate('/');
     } catch (error: any) {
       console.error('[LOGIN] Hata detayları:', error);

@@ -1,26 +1,52 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { TagIcon } from '@phosphor-icons/react';
 import { MaterialCategory, SubCategory } from '../../models';
 import { inventoryService } from '../../services/inventoryService';
 import { subcategoryService } from '../../services/subcategoryService';
 import ConfirmModal from './ConfirmModal';
 import { toast } from '../../hooks/useToast';
 
+export type CategoryModalSuccessResult =
+  | { type: 'category'; categoryId: number; categoryName: string }
+  | { type: 'subcategory'; subCategoryId: number; subCategoryName: string; categoryId: number };
+
 interface CategoryDetailModalProps {
   category?: MaterialCategory | null;
   categories?: MaterialCategory[];
+  /** Yeni modda hangi akışın gösterileceği; 'full' = mevcut sekmeli ekran */
+  focusMode?: 'full' | 'category' | 'subcategory';
+  initialTab?: 'addCategory' | 'addSubCategory';
+  preselectedParentCategoryId?: number;
+  /** Alt kategori eklerken yalnızca bu kategoriler seçilebilir (ör. ürün formunda seçili olanlar) */
+  allowedParentCategoryIds?: number[];
+  /** true ise üst kategori değiştirilemez, banner ile gösterilir */
+  lockParentCategory?: boolean;
+  stackAboveParent?: boolean;
+  onSuccess?: (result: CategoryModalSuccessResult) => void;
   onClose: () => void;
 }
 
 export default function CategoryDetailModal({
   category,
   categories: externalCategories,
+  focusMode = 'full',
+  initialTab = 'addCategory',
+  preselectedParentCategoryId,
+  allowedParentCategoryIds,
+  lockParentCategory = false,
+  stackAboveParent = false,
+  onSuccess,
   onClose,
 }: CategoryDetailModalProps) {
   const isNew = !category;
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
 
   // Yeni mod sekmesi: 'addCategory' veya 'addSubCategory'
-  const [newModeTab, setNewModeTab] = useState<'addCategory' | 'addSubCategory'>('addCategory');
+  const [newModeTab, setNewModeTab] = useState<'addCategory' | 'addSubCategory'>(() => {
+    if (focusMode === 'subcategory') return 'addSubCategory';
+    if (focusMode === 'category') return 'addCategory';
+    return initialTab;
+  });
 
   // Kategori form state'leri
   const [categoryName, setCategoryName] = useState('');
@@ -29,7 +55,10 @@ export default function CategoryDetailModal({
 
   // Alt kategori ekleme (yeni modda) state'leri
   const [allCategories, setAllCategories] = useState<MaterialCategory[]>(externalCategories || []);
-  const [selectedParentCategoryId, setSelectedParentCategoryId] = useState<number | ''>('');
+  const [selectedParentCategoryId, setSelectedParentCategoryId] = useState<number | ''>(() => {
+    if (preselectedParentCategoryId) return preselectedParentCategoryId;
+    return '';
+  });
   const [newSubCategoryName, setNewSubCategoryName] = useState('');
   const [subCategoryBusy, setSubCategoryBusy] = useState(false);
 
@@ -55,12 +84,24 @@ export default function CategoryDetailModal({
     }
   }, [category]);
 
+  useEffect(() => {
+    if (externalCategories && externalCategories.length > 0) {
+      setAllCategories(externalCategories);
+    }
+  }, [externalCategories]);
+
   // Yeni modda kategorileri yukle (eger disaridan gelmemisse)
   useEffect(() => {
     if (isNew && (!externalCategories || externalCategories.length === 0)) {
       loadCategories();
     }
-  }, [isNew]);
+  }, [isNew, externalCategories]);
+
+  useEffect(() => {
+    if (preselectedParentCategoryId) {
+      setSelectedParentCategoryId(preselectedParentCategoryId);
+    }
+  }, [preselectedParentCategoryId]);
 
   const loadCategories = async () => {
     try {
@@ -104,6 +145,21 @@ export default function CategoryDetailModal({
     }
   };
 
+  const selectableParentCategories = useMemo(() => {
+    if (!allowedParentCategoryIds || allowedParentCategoryIds.length === 0) {
+      return allCategories;
+    }
+    const allowed = new Set(allowedParentCategoryIds);
+    return allCategories.filter((cat) => allowed.has(cat.CategoryId));
+  }, [allCategories, allowedParentCategoryIds]);
+
+  const selectedParentCategory = useMemo(
+    () => allCategories.find((cat) => cat.CategoryId === Number(selectedParentCategoryId)),
+    [allCategories, selectedParentCategoryId]
+  );
+
+  const overlayZClass = stackAboveParent ? 'z-[80]' : 'z-50';
+
   // ---- Kategori kaydet (yeni veya guncelle) ----
   const handleSaveCategory = async () => {
     if (!categoryName.trim()) {
@@ -114,9 +170,15 @@ export default function CategoryDetailModal({
     try {
       setIsBusy(true);
       if (isNew) {
-        await inventoryService.createCategoryAsync({
-          CategoryName: categoryName,
+        const created = await inventoryService.createCategoryAsync({
+          CategoryName: categoryName.trim(),
           RentalUnit: rentalUnit || undefined,
+        });
+        toast.success('Kategori eklendi');
+        onSuccess?.({
+          type: 'category',
+          categoryId: created.CategoryId,
+          categoryName: categoryName.trim(),
         });
       } else if (category) {
         await inventoryService.updateCategoryAsync(category.CategoryId, {
@@ -166,12 +228,20 @@ export default function CategoryDetailModal({
 
     try {
       setSubCategoryBusy(true);
-      await subcategoryService.createAsync({
+      const created = await subcategoryService.createAsync({
         CategoryId: Number(selectedParentCategoryId),
         SubCategoryName: newSubCategoryName.trim(),
       });
+      const trimmedName = newSubCategoryName.trim();
       setNewSubCategoryName('');
       loadParentSubCategories(Number(selectedParentCategoryId));
+      toast.success('Alt kategori eklendi');
+      onSuccess?.({
+        type: 'subcategory',
+        subCategoryId: created.SubCategoryId,
+        subCategoryName: trimmedName,
+        categoryId: Number(selectedParentCategoryId),
+      });
     } catch (error) {
       console.error('Add subcategory error:', error);
       toast.error('Alt kategori ekleme hatası');
@@ -332,151 +402,205 @@ export default function CategoryDetailModal({
     );
   };
 
+  const showTabNavigation = isNew && focusMode === 'full';
+
+  const renderParentCategoryContext = () => {
+    if (!selectedParentCategory) return null;
+    return (
+      <div className="rounded-lg border border-accent/30 bg-accent/10 px-4 py-3">
+        <div className="flex items-start gap-3">
+          <div className="mt-0.5 rounded-md bg-accent/15 p-2 text-accent">
+            <TagIcon size={18} weight="duotone" />
+          </div>
+          <div className="min-w-0">
+            <p className="text-xs font-medium uppercase tracking-wide text-text-secondary">Ana kategori</p>
+            <p className="mt-0.5 text-base font-semibold text-text-primary">{selectedParentCategory.CategoryName}</p>
+            <p className="mt-1 text-xs text-text-secondary">
+              Eklediğiniz alt kategoriler bu kategoriye bağlanır ve ürün formunda bu grupta listelenir.
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderSubCategoryAddSection = () => (
+    <div className="space-y-4">
+      {!lockParentCategory && (
+        <div>
+          <label className="mb-2 block text-sm font-medium">
+            {allowedParentCategoryIds && allowedParentCategoryIds.length > 1
+              ? 'Alt kategori hangi kategoriye eklenecek? *'
+              : 'Kategori Seçin *'}
+          </label>
+          <select
+            value={selectedParentCategoryId}
+            onChange={(e) => setSelectedParentCategoryId(Number(e.target.value) || '')}
+            className="input w-full"
+          >
+            <option value="">Kategori seçin...</option>
+            {selectableParentCategories.map((cat) => (
+              <option key={cat.CategoryId} value={cat.CategoryId}>
+                {cat.CategoryName}
+              </option>
+            ))}
+          </select>
+          {allowedParentCategoryIds && allowedParentCategoryIds.length > 1 ? (
+            <p className="mt-1.5 text-xs text-text-secondary">
+              Ürün formunda seçtiğiniz kategoriler arasından birini seçin.
+            </p>
+          ) : null}
+        </div>
+      )}
+
+      {lockParentCategory && renderParentCategoryContext()}
+
+      {selectedParentCategoryId && !lockParentCategory ? renderParentCategoryContext() : null}
+
+      {selectedParentCategoryId && (
+        <>
+          <div>
+            <label className="mb-2 block text-sm font-medium">Yeni Alt Kategori Adı *</label>
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={newSubCategoryName}
+                onChange={(e) => setNewSubCategoryName(e.target.value)}
+                onKeyPress={(e) => e.key === 'Enter' && handleAddSubCategoryNew()}
+                placeholder="Alt kategori adı girin..."
+                className="input flex-1"
+                autoFocus={Boolean(lockParentCategory || preselectedParentCategoryId)}
+              />
+              <button
+                onClick={handleAddSubCategoryNew}
+                disabled={subCategoryBusy || !newSubCategoryName.trim()}
+                className="btn-primary px-4 text-sm"
+              >
+                {subCategoryBusy ? '...' : 'Ekle'}
+              </button>
+            </div>
+          </div>
+
+          <div className="border-t border-background-border pt-4">
+            <div className="mb-3 flex items-center justify-between">
+              <h3 className="text-sm font-semibold text-text-secondary">
+                {selectedParentCategory
+                  ? `"${selectedParentCategory.CategoryName}" altındaki mevcut alt kategoriler`
+                  : 'Mevcut Alt Kategoriler'}
+              </h3>
+              <span className="text-xs text-text-secondary">{parentSubCategories.length} adet</span>
+            </div>
+            {renderSubCategoryList(parentSubCategories, parentSubCategoriesLoading)}
+          </div>
+        </>
+      )}
+
+      {!selectedParentCategoryId && (
+        <div className="rounded-lg border border-dashed border-background-border py-8 text-center text-text-secondary">
+          Alt kategori eklemek için {lockParentCategory ? 'bir ana kategori seçili olmalı' : 'yukarıdan bir kategori seçin'}.
+        </div>
+      )}
+
+      <div className="mt-6 flex gap-3">
+        <button onClick={onClose} className="btn-secondary flex-1">
+          Kapat
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderNewCategorySection = () => (
+    <div className="space-y-4">
+      <div>
+        <label className="mb-2 block text-sm font-medium">Kategori Adı *</label>
+        <input
+          type="text"
+          value={categoryName}
+          onChange={(e) => setCategoryName(e.target.value)}
+          placeholder="Örn: Cephe İskelesi"
+          className="input w-full"
+          required
+          autoFocus
+        />
+      </div>
+      <div>
+        <label className="mb-2 block text-sm font-medium">Kiralama Birimi</label>
+        <input
+          type="text"
+          value={rentalUnit}
+          onChange={(e) => setRentalUnit(e.target.value)}
+          placeholder="Örn: adet, metre, m²"
+          className="input w-full"
+        />
+      </div>
+
+      <div className="mt-6 flex gap-3">
+        <button onClick={onClose} className="btn-secondary flex-1">
+          İptal
+        </button>
+        <button onClick={handleSaveCategory} disabled={isBusy} className="btn-primary flex-1">
+          {isBusy ? 'Kaydediliyor...' : 'Kategori Kaydet'}
+        </button>
+      </div>
+    </div>
+  );
+
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-background-panel rounded-panel w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
+    <div className={`fixed inset-0 flex items-center justify-center bg-black bg-opacity-50 ${overlayZClass}`}>
+      <div className="max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-panel bg-background-panel p-6">
 
         {/* ===== YENİ MOD: Kategori Ekle + Alt Kategori Ekle sekmeleri ===== */}
         {isNew && (
           <>
-            <h2 className="text-2xl font-bold mb-4">Kategori Yönetimi</h2>
+            <h2 className="mb-1 text-2xl font-bold">
+              {focusMode === 'subcategory'
+                ? 'Alt Kategori Ekle'
+                : focusMode === 'category'
+                  ? 'Yeni Kategori Ekle'
+                  : 'Kategori Yönetimi'}
+            </h2>
+            {focusMode === 'subcategory' ? (
+              <p className="mb-4 text-sm text-text-secondary">
+                Önce ana kategoriyi netleştirin, ardından alt kategori ekleyin.
+              </p>
+            ) : focusMode === 'category' ? (
+              <p className="mb-4 text-sm text-text-secondary">
+                Yeni kategori oluşturulduktan sonra ürün formunda seçilebilir hale gelir.
+              </p>
+            ) : (
+              <div className="mb-4" />
+            )}
 
-            {/* Sekme navigasyonu */}
-            <div className="flex gap-2 mb-6 border-b border-background-border">
-              <button
-                onClick={() => setNewModeTab('addCategory')}
-                className={`px-4 py-2 font-medium transition-colors ${
-                  newModeTab === 'addCategory'
-                    ? 'text-accent border-b-2 border-accent'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                Kategori Ekle
-              </button>
-              <button
-                onClick={() => setNewModeTab('addSubCategory')}
-                className={`px-4 py-2 font-medium transition-colors ${
-                  newModeTab === 'addSubCategory'
-                    ? 'text-accent border-b-2 border-accent'
-                    : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                Alt Kategori Ekle
-              </button>
-            </div>
-
-            {/* Sekme 1: Yeni Kategori Ekle */}
-            {newModeTab === 'addCategory' && (
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm font-medium mb-2">Kategori Adı *</label>
-                  <input
-                    type="text"
-                    value={categoryName}
-                    onChange={(e) => setCategoryName(e.target.value)}
-                    placeholder="Örn: Cephe İskelesi"
-                    className="input w-full"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium mb-2">Kiralama Birimi</label>
-                  <input
-                    type="text"
-                    value={rentalUnit}
-                    onChange={(e) => setRentalUnit(e.target.value)}
-                    placeholder="Örn: adet, metre, m²"
-                    className="input w-full"
-                  />
-                </div>
-
-                <div className="flex gap-3 mt-6">
-                  <button onClick={onClose} className="btn-secondary flex-1">
-                    İptal
-                  </button>
-                  <button
-                    onClick={handleSaveCategory}
-                    disabled={isBusy}
-                    className="btn-primary flex-1"
-                  >
-                    {isBusy ? 'Kaydediliyor...' : 'Kategori Kaydet'}
-                  </button>
-                </div>
+            {showTabNavigation && (
+              <div className="mb-6 flex gap-2 border-b border-background-border">
+                <button
+                  onClick={() => setNewModeTab('addCategory')}
+                  className={`px-4 py-2 font-medium transition-colors ${
+                    newModeTab === 'addCategory'
+                      ? 'border-b-2 border-accent text-accent'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  Kategori Ekle
+                </button>
+                <button
+                  onClick={() => setNewModeTab('addSubCategory')}
+                  className={`px-4 py-2 font-medium transition-colors ${
+                    newModeTab === 'addSubCategory'
+                      ? 'border-b-2 border-accent text-accent'
+                      : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  Alt Kategori Ekle
+                </button>
               </div>
             )}
 
-            {/* Sekme 2: Alt Kategori Ekle */}
-            {newModeTab === 'addSubCategory' && (
-              <div className="space-y-4">
-                {/* Kategori secimi */}
-                <div>
-                  <label className="block text-sm font-medium mb-2">Kategori Seçin *</label>
-                  <select
-                    value={selectedParentCategoryId}
-                    onChange={(e) => setSelectedParentCategoryId(Number(e.target.value) || '')}
-                    className="input w-full"
-                  >
-                    <option value="">Kategori seçin...</option>
-                    {allCategories.map((cat) => (
-                      <option key={cat.CategoryId} value={cat.CategoryId}>
-                        {cat.CategoryName}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            {(focusMode === 'category' || (focusMode === 'full' && newModeTab === 'addCategory')) &&
+              renderNewCategorySection()}
 
-                {/* Alt kategori ekleme formu */}
-                {selectedParentCategoryId && (
-                  <>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Yeni Alt Kategori Adı *</label>
-                      <div className="flex gap-2">
-                        <input
-                          type="text"
-                          value={newSubCategoryName}
-                          onChange={(e) => setNewSubCategoryName(e.target.value)}
-                          onKeyPress={(e) => e.key === 'Enter' && handleAddSubCategoryNew()}
-                          placeholder="Alt kategori adı girin..."
-                          className="input flex-1"
-                        />
-                        <button
-                          onClick={handleAddSubCategoryNew}
-                          disabled={subCategoryBusy || !newSubCategoryName.trim()}
-                          className="btn-primary text-sm px-4"
-                        >
-                          {subCategoryBusy ? '...' : 'Ekle'}
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Mevcut alt kategoriler */}
-                    <div className="border-t border-background-border pt-4">
-                      <div className="flex items-center justify-between mb-3">
-                        <h3 className="text-sm font-semibold text-text-secondary">
-                          Mevcut Alt Kategoriler
-                        </h3>
-                        <span className="text-xs text-text-secondary">
-                          {parentSubCategories.length} adet
-                        </span>
-                      </div>
-                      {renderSubCategoryList(parentSubCategories, parentSubCategoriesLoading)}
-                    </div>
-                  </>
-                )}
-
-                {!selectedParentCategoryId && (
-                  <div className="text-center py-8 text-text-secondary">
-                    Alt kategori eklemek için yukarıdan bir kategori seçin
-                  </div>
-                )}
-
-                <div className="flex gap-3 mt-6">
-                  <button onClick={onClose} className="btn-secondary flex-1">
-                    Kapat
-                  </button>
-                </div>
-              </div>
-            )}
+            {(focusMode === 'subcategory' || (focusMode === 'full' && newModeTab === 'addSubCategory')) &&
+              renderSubCategoryAddSection()}
           </>
         )}
 

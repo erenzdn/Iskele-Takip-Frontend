@@ -26,8 +26,8 @@ const ChecksPage = lazy(() => import('./pages/ChecksPage'));
 const CashPage = lazy(() => import('./pages/CashPage'));
 const CashAccountDetailPage = lazy(() => import('./pages/CashAccountDetailPage'));
 const SystemSettingsPage = lazy(() => import('./pages/SystemSettingsPage'));
+const DocumentTemplatesPage = lazy(() => import('./pages/DocumentTemplatesPage'));
 const OfferManagementPage = lazy(() => import('./pages/OfferManagementPage'));
-
 function App() {
   return (
     <HashRouter future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
@@ -66,7 +66,10 @@ function App() {
             <Route path="/reports/rental-movement" element={<Suspense fallback={<PageLoader />}><RentalMovementReportPage /></Suspense>} />
           </Route>
           <Route element={<ProtectedRoute requiredPermission="contracts_view"><MainLayout /></ProtectedRoute>}>
+            <Route path="/document-templates" element={<Suspense fallback={<PageLoader />}><DocumentTemplatesPage /></Suspense>} />
             <Route path="/offer-management" element={<Suspense fallback={<PageLoader />}><OfferManagementPage /></Suspense>} />
+            <Route path="/contract-management" element={<Navigate to="/document-templates?tab=contract" replace />} />
+            <Route path="/offer-management/templates" element={<Navigate to="/document-templates?tab=quote" replace />} />
           </Route>
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

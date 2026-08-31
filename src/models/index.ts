@@ -398,7 +398,7 @@ export interface LoginUserDto {
 }
 
 export interface LoginResponse {
-  token: string;
+  accessToken: string;
   user: LoginUserDto;
 }
 
@@ -536,12 +536,21 @@ export interface InventoryContractLineItem {
   PriceSource: PriceSource;
   /** Backend'den gelirse UI'da gösterilir (ISO 8601) */
   EffectiveStartDate?: string;
+  /** Onaylı zeyilname ile eklenen kalem (backend opsiyonel) */
+  SourceAddendumId?: number | null;
+  SourceAddendumNo?: number | null;
   ItemName: string;
   ItemNameEn?: string | null;
   /** Backend'den gelen çözümlenmiş kod (override dahil) */
   ItemCode?: string;
   /** UI state: satır bazlı ürün kodu override */
   ItemCodeOverride?: string | null;
+  /** UI state: satır bazlı ürün adı override */
+  ItemNameOverride?: string | null;
+  /** UI state: satış birim fiyat override */
+  OverrideUnitPrice?: number;
+  /** UI state: kiralama aylık fiyat override */
+  OverrideMonthlyPrice?: number;
 }
 
 export interface ManualContractLineItem {
@@ -549,6 +558,9 @@ export interface ManualContractLineItem {
   /** UI için benzersiz anahtar (backend DetailId yoksa) */
   ClientId: string;
   DetailId?: number;
+  /** Onaylı zeyilname ile eklenen kalem (backend opsiyonel) */
+  SourceAddendumId?: number | null;
+  SourceAddendumNo?: number | null;
   IsManual: true;
   Description: string;
   RentedQuantity: number;

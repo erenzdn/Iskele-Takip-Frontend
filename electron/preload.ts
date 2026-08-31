@@ -39,5 +39,9 @@ contextBridge.exposeInMainWorld('electron', {
     checkForUpdates: () => ipcRenderer.send('check-for-updates'),
   },
   getLiveExchangeRates: () => ipcRenderer.invoke('get-live-exchange-rates'),
+  saveFile: (options: { defaultPath?: string; filters?: { name: string; extensions: string[] }[] }) =>
+    ipcRenderer.invoke('save-file-dialog', options),
+  writeFile: (filePath: string, data: ArrayBuffer) =>
+    ipcRenderer.invoke('write-file', filePath, data),
 });
 

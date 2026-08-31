@@ -1,5 +1,10 @@
 import { apiClient } from './apiClient';
 import { ContractTemplate } from '../models';
+import {
+  buildKullanimExtresiTemplateContent,
+  isKullanimExtresiTemplateName,
+  KULLANIM_EXTRESI_TEMPLATE_NAME,
+} from '../constants/urunEkstresiTemplateContent';
 
 export interface CreateContractTemplateRequest {
   TemplateName: string;
@@ -65,5 +70,29 @@ export const contractTemplateService = {
 
   async previewContentAsync(content: any): Promise<Blob> {
     return apiClient.postBlob('/contract-templates/preview-content', { Content: content });
+  },
+
+  /**
+   * BERKA tarzı Kullanım Extresi şablonunu yoksa oluşturur, varsa mevcut kaydı döner.
+   */
+  async ensureKullanimExtresiTemplateAsync(): Promise<ContractTemplate> {
+    const list = await this.getAllAsync(true);
+    const existing = list.find((t) => isKullanimExtresiTemplateName(t.TemplateName));
+    const content = buildKullanimExtresiTemplateContent();
+
+    if (existing) {
+      await this.updateAsync(existing.TemplateId, {
+        TemplateName: existing.TemplateName || KULLANIM_EXTRESI_TEMPLATE_NAME,
+        Content: content,
+      });
+      return this.getByIdAsync(existing.TemplateId);
+    }
+
+    const created = await this.createAsync({
+      TemplateName: KULLANIM_EXTRESI_TEMPLATE_NAME,
+      Content: content,
+      IsDefault: false,
+    });
+    return this.getByIdAsync(created.TemplateId);
   },
 };

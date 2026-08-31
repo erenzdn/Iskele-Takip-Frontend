@@ -12,6 +12,19 @@ import { reportTemplateService } from '../../services/reportTemplateService';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import PdfPreviewModal from './PdfPreviewModal';
+import { prepareTemplateContentForExport } from './CustomTableExtensions';
+import {
+  LineHeight,
+  LINE_HEIGHT_OPTIONS,
+  getActiveLineHeight,
+} from './LineHeightExtension';
+import {
+  DEFAULT_PAGE_MARGINS,
+  getPageMargins,
+  getPageMarginsPaperStyle,
+  withPageMargins,
+  type PageMargins,
+} from './PageMargins';
 
 interface ReportTemplateEditorModalProps {
   template: ReportTemplate | null;
@@ -48,6 +61,8 @@ export default function ReportTemplateEditorModal({
   const [isBusy, setIsBusy] = useState(false);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [pageMargins, setPageMargins] = useState<PageMargins>(DEFAULT_PAGE_MARGINS);
+  const [, setToolbarTick] = useState(0);
 
   const editor = useEditor({
     extensions: [
@@ -62,6 +77,7 @@ export default function ReportTemplateEditorModal({
         types: ['heading', 'paragraph'],
       }),
       Underline,
+      LineHeight,
     ],
     content: template?.Content || {
       type: 'doc',
@@ -72,12 +88,38 @@ export default function ReportTemplateEditorModal({
       attributes: {
         class: 'focus:outline-none',
       },
+      handleKeyDown: (_view, event) => {
+        const isMeta = event.metaKey || event.ctrlKey;
+        if (!isMeta) return false;
+
+        const key = event.key.toLowerCase();
+        if (key === 'z' && !event.shiftKey) {
+          event.preventDefault();
+          editor.commands.undo();
+          return true;
+        }
+
+        if (key === 'y' || (key === 'z' && event.shiftKey)) {
+          event.preventDefault();
+          editor.commands.redo();
+          return true;
+        }
+
+        return false;
+      },
+    },
+    onSelectionUpdate: () => {
+      setToolbarTick((t) => t + 1);
+    },
+    onUpdate: () => {
+      setToolbarTick((t) => t + 1);
     },
   });
 
   useEffect(() => {
     if (template) {
       setTemplateName(template.TemplateName);
+      setPageMargins(getPageMargins(template.Content));
     }
   }, [template]);
 
@@ -103,7 +145,10 @@ export default function ReportTemplateEditorModal({
 
     try {
       setIsBusy(true);
-      const content = editor.getJSON();
+      const content = withPageMargins(
+        prepareTemplateContentForExport(editor.getJSON()),
+        pageMargins
+      );
 
       if (isNew) {
         const response = await reportTemplateService.createAsync({
@@ -137,7 +182,10 @@ export default function ReportTemplateEditorModal({
 
     try {
       setIsBusy(true);
-      const content = editor.getJSON();
+      const content = withPageMargins(
+        prepareTemplateContentForExport(editor.getJSON()),
+        pageMargins
+      );
       const blob = await reportTemplateService.previewContentAsync(content);
 
       if (blob.size === 0) {
@@ -259,6 +307,76 @@ export default function ReportTemplateEditorModal({
             >
               →
             </button>
+            <select
+              value={getActiveLineHeight(editor)}
+              onChange={(e) => {
+                const value = e.target.value;
+                if (value) {
+                  editor.chain().focus().setLineHeight(value).run();
+                } else {
+                  editor.chain().focus().unsetLineHeight().run();
+                }
+              }}
+              className="input text-sm px-2 py-1"
+              title="Satır Aralığı"
+            >
+              <option value="">Satır Aralığı</option>
+              {LINE_HEIGHT_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+              <label className="input flex items-center gap-1 px-2 text-xs" title="Üst ve alt sayfa boşluğu (mm)">
+                <span>Ü/A</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={pageMargins.top}
+                  onChange={(e) => setPageMargins({ ...pageMargins, top: Number(e.target.value) })}
+                  className="w-10 bg-transparent text-center outline-none"
+                  aria-label="Üst sayfa boşluğu (mm)"
+                />
+                <span>/</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={pageMargins.bottom}
+                  onChange={(e) => setPageMargins({ ...pageMargins, bottom: Number(e.target.value) })}
+                  className="w-10 bg-transparent text-center outline-none"
+                  aria-label="Alt sayfa boşluğu (mm)"
+                />
+                <span>mm</span>
+              </label>
+              <label className="input flex items-center gap-1 px-2 text-xs" title="Sol ve sağ sayfa boşluğu (mm)">
+                <span>Y/S</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={pageMargins.left}
+                  onChange={(e) => setPageMargins({ ...pageMargins, left: Number(e.target.value) })}
+                  className="w-10 bg-transparent text-center outline-none"
+                  aria-label="Sol sayfa boşluğu (mm)"
+                />
+                <span>/</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={pageMargins.right}
+                  onChange={(e) => setPageMargins({ ...pageMargins, right: Number(e.target.value) })}
+                  className="w-10 bg-transparent text-center outline-none"
+                  aria-label="Sağ sayfa boşluğu (mm)"
+                />
+                <span>mm</span>
+              </label>
             <div className="w-px bg-background-border mx-1" />
 
             <select
@@ -287,7 +405,10 @@ export default function ReportTemplateEditorModal({
         </div>
 
         <div className="template-editor-workspace flex-1 p-2 md:p-4 flex justify-center overflow-auto min-h-0">
-          <div className="template-editor-paper text-text-primary my-2">
+          <div
+            className="template-editor-paper text-text-primary my-2"
+            style={getPageMarginsPaperStyle(pageMargins)}
+          >
             <EditorContent editor={editor} />
           </div>
         </div>
