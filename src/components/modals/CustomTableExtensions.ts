@@ -80,6 +80,18 @@ function tableLooksBorderless(node: {
   return cellCount > 0 && borderlessCellCount === cellCount;
 }
 
+function stripVerticalTableMargins(existing: string | null | undefined): string | null {
+  if (!existing) return null;
+  const cleaned = existing
+    .replace(/margin-top\s*:[^;]+;?/gi, '')
+    .replace(/margin-bottom\s*:[^;]+;?/gi, '')
+    .replace(/margin\s*:\s*[^;]+;?/gi, '')
+    .replace(/;\s*;/g, ';')
+    .trim()
+    .replace(/^;|;$/g, '')
+    .trim();
+  return cleaned || null;
+}
 function stripOutlineFromStyle(existing: string | null | undefined): string | null {
   if (!existing) return null;
   const cleaned = existing
@@ -123,6 +135,16 @@ export function prepareTemplateContentForExport(content: unknown): unknown {
       if (imageId) {
         node.attrs.src = `image:${imageId}`;
         delete node.attrs['data-image-id'];
+      }
+    }
+
+    if (node.type === 'table') {
+      if (!node.attrs) node.attrs = {};
+      const strippedStyle = stripVerticalTableMargins(node.attrs.style as string | undefined);
+      if (strippedStyle) {
+        node.attrs.style = strippedStyle;
+      } else {
+        delete node.attrs.style;
       }
     }
 
@@ -274,20 +296,20 @@ export const CustomTable = Table.extend({
             return {
               align: 'center',
               style:
-                'margin-left: auto !important; margin-right: auto !important; margin-top: 1rem !important; margin-bottom: 1rem !important;',
+                'margin-left: auto !important; margin-right: auto !important; margin-top: 0 !important; margin-bottom: 0 !important;',
             };
           }
           if (attributes.align === 'right') {
             return {
               align: 'right',
               style:
-                'margin-left: auto !important; margin-right: 0 !important; margin-top: 1rem !important; margin-bottom: 1rem !important;',
+                'margin-left: auto !important; margin-right: 0 !important; margin-top: 0 !important; margin-bottom: 0 !important;',
             };
           }
           return {
             align: 'left',
             style:
-              'margin-right: auto !important; margin-left: 0 !important; margin-top: 1rem !important; margin-bottom: 1rem !important;',
+              'margin-right: auto !important; margin-left: 0 !important; margin-top: 0 !important; margin-bottom: 0 !important;',
           };
         },
       },

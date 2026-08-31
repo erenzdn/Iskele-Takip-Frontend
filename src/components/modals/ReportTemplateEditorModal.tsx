@@ -21,6 +21,7 @@ import {
 import {
   DEFAULT_PAGE_MARGINS,
   getPageMargins,
+  getPageMarginsPaperStyle,
   withPageMargins,
   type PageMargins,
 } from './PageMargins';
@@ -326,6 +327,31 @@ export default function ReportTemplateEditorModal({
                 </option>
               ))}
             </select>
+              <label className="input flex items-center gap-1 px-2 text-xs" title="Üst ve alt sayfa boşluğu (mm)">
+                <span>Ü/A</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={pageMargins.top}
+                  onChange={(e) => setPageMargins({ ...pageMargins, top: Number(e.target.value) })}
+                  className="w-10 bg-transparent text-center outline-none"
+                  aria-label="Üst sayfa boşluğu (mm)"
+                />
+                <span>/</span>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="1"
+                  value={pageMargins.bottom}
+                  onChange={(e) => setPageMargins({ ...pageMargins, bottom: Number(e.target.value) })}
+                  className="w-10 bg-transparent text-center outline-none"
+                  aria-label="Alt sayfa boşluğu (mm)"
+                />
+                <span>mm</span>
+              </label>
               <label className="input flex items-center gap-1 px-2 text-xs" title="Sol ve sağ sayfa boşluğu (mm)">
                 <span>Y/S</span>
                 <input
@@ -381,10 +407,7 @@ export default function ReportTemplateEditorModal({
         <div className="template-editor-workspace flex-1 p-2 md:p-4 flex justify-center overflow-auto min-h-0">
           <div
             className="template-editor-paper text-text-primary my-2"
-            style={{
-              paddingLeft: `${pageMargins.left}mm`,
-              paddingRight: `${pageMargins.right}mm`,
-            }}
+            style={getPageMarginsPaperStyle(pageMargins)}
           >
             <EditorContent editor={editor} />
           </div>

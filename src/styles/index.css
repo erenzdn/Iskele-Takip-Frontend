@@ -160,7 +160,7 @@
 
 .ProseMirror table {
   border-collapse: collapse !important;
-  margin: 1rem 0 !important;
+  margin: 0 !important;
   border: 2px solid var(--color-text-primary) !important;
 }
 
@@ -310,10 +310,11 @@
 }
 
 .template-editor-paper {
+  --page-margin-top: 15mm;
+  --page-margin-bottom: 15mm;
   width: 21cm;
   max-width: calc(100vw - 2rem);
   min-height: 29.7cm;
-  padding: 1.5cm;
   box-sizing: border-box;
   background: var(--color-bg-panel);
   box-shadow:
@@ -327,23 +328,24 @@
 }
 
 .template-editor-paper .ProseMirror {
-  min-height: calc(29.7cm - 3cm);
+  min-height: calc(29.7cm - var(--page-margin-top) - var(--page-margin-bottom));
 }
 
 /* A4 sayfa kılavuz çizgileri — yalnızca kılavuz modu açıkken */
 .show-gridlines .template-editor-paper .ProseMirror {
+  --page-content-height: calc(29.7cm - var(--page-margin-top) - var(--page-margin-bottom));
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
-    transparent calc(26.7cm - 2px),
-    rgba(59, 130, 246, 0.22) calc(26.7cm - 2px),
-    rgba(59, 130, 246, 0.22) calc(26.7cm - 1px),
-    rgba(0, 0, 0, 0.1) calc(26.7cm - 1px),
-    rgba(0, 0, 0, 0.1) 26.7cm,
-    transparent 26.7cm,
-    transparent calc(26.7cm + 18px)
+    transparent calc(var(--page-content-height) - 2px),
+    rgba(59, 130, 246, 0.22) calc(var(--page-content-height) - 2px),
+    rgba(59, 130, 246, 0.22) calc(var(--page-content-height) - 1px),
+    rgba(0, 0, 0, 0.1) calc(var(--page-content-height) - 1px),
+    rgba(0, 0, 0, 0.1) var(--page-content-height),
+    transparent var(--page-content-height),
+    transparent calc(var(--page-content-height) + 18px)
   );
-  background-size: 100% calc(26.7cm + 18px);
+  background-size: 100% calc(var(--page-content-height) + 18px);
   background-repeat: repeat-y;
   padding-bottom: 18px;
 }

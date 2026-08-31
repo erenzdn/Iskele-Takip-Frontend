@@ -37,7 +37,7 @@ function heading(level: 1 | 2 | 3, value: string) {
 export function buildKullanimExtresiTemplateContent() {
   return {
     type: 'doc',
-    pageMargins: { left: 10, right: 10 },
+    pageMargins: { top: 10, bottom: 10, left: 10, right: 10 },
     content: [
       heading(
         2,

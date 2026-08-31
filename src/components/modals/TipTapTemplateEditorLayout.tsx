@@ -45,7 +45,7 @@ import {
   getActiveLineHeight,
 } from './LineHeightExtension';
 import { FONT_SIZE_OPTIONS, getActiveFontSize } from './FontSizeExtension';
-import type { PageMargins } from './PageMargins';
+import { getPageMarginsPaperStyle, type PageMargins } from './PageMargins';
 import {
   BORDERLESS_STYLE,
   toggleTableNoBorder,
@@ -514,6 +514,39 @@ export default function TipTapTemplateEditorLayout({
 
           <label
             className="flex h-8 items-center gap-1 rounded-lg border border-background-border bg-background-surface/60 px-2 text-xs text-text-secondary"
+            title="Üst ve alt sayfa boşluğu (mm)"
+          >
+            <span>Ü/A</span>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={pageMargins.top}
+              onChange={(e) =>
+                onPageMarginsChange({ ...pageMargins, top: Number(e.target.value) })
+              }
+              className="w-10 bg-transparent text-center text-text-primary outline-none"
+              aria-label="Üst sayfa boşluğu (mm)"
+            />
+            <span>/</span>
+            <input
+              type="number"
+              min="0"
+              max="100"
+              step="1"
+              value={pageMargins.bottom}
+              onChange={(e) =>
+                onPageMarginsChange({ ...pageMargins, bottom: Number(e.target.value) })
+              }
+              className="w-10 bg-transparent text-center text-text-primary outline-none"
+              aria-label="Alt sayfa boşluğu (mm)"
+            />
+            <span>mm</span>
+          </label>
+
+          <label
+            className="flex h-8 items-center gap-1 rounded-lg border border-background-border bg-background-surface/60 px-2 text-xs text-text-secondary"
             title="Sol ve sağ sayfa boşluğu (mm)"
           >
             <span>Y/S</span>
@@ -893,10 +926,7 @@ export default function TipTapTemplateEditorLayout({
           <div className="flex min-h-full justify-center px-3 py-6 md:px-8 md:py-8">
             <div
               className="template-editor-paper text-text-primary"
-              style={{
-                paddingLeft: `${pageMargins.left}mm`,
-                paddingRight: `${pageMargins.right}mm`,
-              }}
+              style={getPageMarginsPaperStyle(pageMargins)}
             >
               <EditorContent editor={editor} />
             </div>
