@@ -2012,217 +2012,255 @@ export default function ContractDetailModal({
       )}
 
       {isRentalContract && activeTab === 'return' && !isNew && (
-        <div className="flex-1 overflow-auto p-3">
-          <h3 className="text-lg font-semibold mb-3">Ürün İade Al</h3>
-            <p className="text-sm text-text-secondary mb-4">
-              Müşteriden gelen ürünleri iade almak için aşağıdaki listeden ürün seçin, miktar ve tarih girin.
-            </p>
-            {contractItems.length === 0 ? (
-              <div className="text-center py-8 text-text-secondary">
-                Bu sözleşmede kiralanan malzeme bulunmuyor veya yükleniyor...
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {contractItems.filter((i) => i.kind === 'inventory').map((item) => {
-                  const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
-                  const itemKey = `${item.ItemId}-${item.WarehouseId}`;
-                  const isReturnFormOpen = returnDetailKey === itemKey;
-
-                  return (
-                    <div key={itemKey} className="card">
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-2">
-                            <span className="font-medium">
-                              {formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
-                            </span>
-                            {item.WarehouseName && (
-                              <span className="text-xs px-2 py-0.5 bg-background-secondary rounded text-text-secondary">
-                                {item.WarehouseName}
-                              </span>
-                            )}
-                          </div>
-                          <div className="text-sm text-text-secondary">
-                            Kirada:{' '}
-                            {remainingOnRent} / {item.RentedQuantity} adet
-                            {item.ReturnedQuantity > 0 && (
-                              <span className="ml-2 inline-flex items-center gap-1 text-green-400"><CheckIcon size={14} weight="bold" aria-hidden /> İade: {item.ReturnedQuantity}</span>
-                            )}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-3">
-                          {remainingOnRent > 0 ? (
-                            <>
-                              <button
-                                type="button"
-                                onClick={() => setSettleItem({ item, remainingOnRent })}
-                                className="btn-secondary text-sm px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30"
-                                disabled={isReturning}
-                              >
-                                Zayi / Satış (Sanal İade)
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => openReturnForm(item)}
-                                className="btn-success text-sm px-4 py-2"
-                                disabled={isReturning}
-                              >
-                                İade Al
-                              </button>
-                            </>
-                          ) : (
-                            <span className="text-sm text-green-400">Tamamı iade edildi</span>
-                          )}
-                        </div>
-                      </div>
-
-                      {isReturnFormOpen && remainingOnRent > 0 && (
-                        <div className="mt-3 pt-3 border-t border-background-border">
-                          <div className="flex flex-wrap items-center gap-3">
-                            <label className="text-sm">İade Miktarı:</label>
-                            <input
-                              type="text"
-                              inputMode="numeric"
-                              autoComplete="off"
-                              value={returnQuantityStr}
-                              onChange={(e) => handleNumericInput(setReturnQuantityStr, e)}
-                              className="input w-24"
-                              placeholder="1"
-                              disabled={isReturning}
-                              aria-label="İade miktarı"
-                            />
-                            <span className="text-sm text-text-secondary">/ {remainingOnRent} adet</span>
-                            <label className="text-sm ml-2">İade Tarihi:</label>
-                            <input
-                              type="date"
-                              value={returnDate}
-                              onChange={(e) => setReturnDate(e.target.value)}
-                              className="input w-40"
-                              disabled={isReturning}
-                            />
-                            <label className="text-sm ml-2">Hedef Depo:</label>
-                            <select
-                              value={returnWarehouseId}
-                              onChange={(e) => setReturnWarehouseId(Number(e.target.value) || '')}
-                              className="input w-40"
-                              disabled={isReturning}
-                            >
-                              <option value="">Kaynak depoya iade</option>
-                              {warehouses.map((wh) => (
-                                <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                                  {wh.WarehouseName}
-                                </option>
-                              ))}
-                            </select>
-                            <div className="flex-1" />
-                            <button
-                              onClick={closeReturnForm}
-                              className="btn-secondary text-sm px-3 py-1"
-                              disabled={isReturning}
-                            >
-                              İptal
-                            </button>
-                            <button
-                              onClick={handleReturnClick}
-                              className="btn-success text-sm px-3 py-1"
-                              disabled={isReturning}
-                            >
-                              {isReturning ? 'İşleniyor...' : 'Onayla'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-            <div className="flex gap-3 mt-6">
-              <button onClick={onClose} className="btn-secondary flex-1">
-                Kapat
-              </button>
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+          <p className="mb-2 shrink-0 text-xs text-text-secondary">
+            Kirada bekleyen ürünleri seçin; miktar, tarih ve hedef depoyu girerek iade alın.
+          </p>
+          {contractItems.length === 0 ? (
+            <div className="py-8 text-center text-sm text-text-secondary">
+              Bu sözleşmede kiralanan malzeme bulunmuyor veya yükleniyor...
             </div>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border">
+              <table className="w-full table-compact text-text-primary">
+                <thead className="sticky top-0 z-10 bg-background-surface">
+                  <tr className="border-b border-background-border">
+                    <th className="text-left">Ürün</th>
+                    <th className="text-left">Depo</th>
+                    <th className="text-right">Kirada</th>
+                    <th className="text-right">İade</th>
+                    <th className="text-center">İşlem</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {contractItems.filter((i) => i.kind === 'inventory').map((item) => {
+                    const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+                    const itemKey = `${item.ItemId}-${item.WarehouseId}`;
+                    const isReturnFormOpen = returnDetailKey === itemKey;
+
+                    return (
+                      <Fragment key={itemKey}>
+                        <tr
+                          className={`border-b border-background-border hover:bg-background-hover ${
+                            isReturnFormOpen ? 'bg-accent/5' : ''
+                          }`}
+                        >
+                          <td className="max-w-[220px]">
+                            <div className="truncate font-medium" title={formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}>
+                              {formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
+                            </div>
+                          </td>
+                          <td className="text-text-secondary">{item.WarehouseName ?? '—'}</td>
+                          <td className="text-right tabular-nums">
+                            <span className={remainingOnRent > 0 ? 'font-medium text-orange-400' : 'text-text-secondary'}>
+                              {remainingOnRent}
+                            </span>
+                            <span className="text-text-secondary"> / {item.RentedQuantity}</span>
+                          </td>
+                          <td className="text-right tabular-nums">
+                            {item.ReturnedQuantity > 0 ? (
+                              <span className="inline-flex items-center gap-0.5 text-green-400">
+                                <CheckIcon size={12} weight="bold" aria-hidden />
+                                {item.ReturnedQuantity}
+                              </span>
+                            ) : (
+                              <span className="text-text-secondary">0</span>
+                            )}
+                          </td>
+                          <td className="text-center whitespace-nowrap">
+                            {remainingOnRent > 0 ? (
+                              <div className="inline-flex items-center gap-1">
+                                <button
+                                  type="button"
+                                  onClick={() => setSettleItem({ item, remainingOnRent })}
+                                  className={`btn-secondary ${compactBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30`}
+                                  disabled={isReturning}
+                                  title="Zayi / Satış (Sanal İade)"
+                                >
+                                  Zayi
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => openReturnForm(item)}
+                                  className={`btn-success ${compactBtn}`}
+                                  disabled={isReturning}
+                                >
+                                  İade Al
+                                </button>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-green-400">Tamamlandı</span>
+                            )}
+                          </td>
+                        </tr>
+                        {isReturnFormOpen && remainingOnRent > 0 && (
+                          <tr className="bg-background-surface">
+                            <td colSpan={5} className="border-b border-background-border px-2 py-2">
+                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+                                <label className="text-xs text-text-secondary">Miktar</label>
+                                <input
+                                  type="text"
+                                  inputMode="numeric"
+                                  autoComplete="off"
+                                  value={returnQuantityStr}
+                                  onChange={(e) => handleNumericInput(setReturnQuantityStr, e)}
+                                  className="input w-16 py-1 text-sm"
+                                  placeholder="1"
+                                  disabled={isReturning}
+                                  aria-label="İade miktarı"
+                                />
+                                <span className="text-xs text-text-secondary">/ {remainingOnRent}</span>
+                                <label className="text-xs text-text-secondary">Tarih</label>
+                                <input
+                                  type="date"
+                                  value={returnDate}
+                                  onChange={(e) => setReturnDate(e.target.value)}
+                                  className="input w-32 py-1 text-sm"
+                                  disabled={isReturning}
+                                />
+                                <label className="text-xs text-text-secondary">Hedef Depo</label>
+                                <select
+                                  value={returnWarehouseId}
+                                  onChange={(e) => setReturnWarehouseId(Number(e.target.value) || '')}
+                                  className="input min-w-[140px] py-1 text-sm"
+                                  disabled={isReturning}
+                                >
+                                  <option value="">Kaynak depo</option>
+                                  {warehouses.map((wh) => (
+                                    <option key={wh.WarehouseId} value={wh.WarehouseId}>
+                                      {wh.WarehouseName}
+                                    </option>
+                                  ))}
+                                </select>
+                                <div className="flex-1" />
+                                <button
+                                  type="button"
+                                  onClick={closeReturnForm}
+                                  className={`btn-secondary ${compactBtn}`}
+                                  disabled={isReturning}
+                                >
+                                  İptal
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={handleReturnClick}
+                                  className={`btn-success ${compactBtn}`}
+                                  disabled={isReturning}
+                                >
+                                  {isReturning ? 'İşleniyor...' : 'Onayla'}
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+          <div className="mt-3 flex shrink-0 gap-2">
+            <button type="button" onClick={onClose} className={`btn-secondary flex-1 ${compactBtn}`}>
+              Kapat
+            </button>
+          </div>
         </div>
       )}
 
       {isRentalContract && activeTab === 'returns' && !isNew && (
-        <div className="flex-1 overflow-auto p-3">
-            <h3 className="text-lg font-semibold mb-3">İade Geçmişi</h3>
-            {returnsLoading ? (
-              <div className="text-center py-8 text-text-secondary">Yükleniyor...</div>
-            ) : contractReturns.length === 0 ? (
-              <div className="text-center py-8 text-text-secondary">
-                Bu sözleşmede henüz iade kaydı bulunmuyor.
-              </div>
-            ) : (
-              <div className="space-y-3">
-                {contractReturns.map((ret) => (
-                  <div key={ret.ReturnId} className={`card ${ret.IsNonPhysicalSettlement ? 'border-l-4 border-red-500 bg-red-500/5' : ''}`}>
-                    <div className="flex items-center justify-between">
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="font-medium text-text-primary">{ret.ItemName}</span>
-                          {ret.WarehouseName && (
-                            <span className="text-xs px-2 py-0.5 bg-background-secondary rounded text-text-secondary">
-                              {ret.WarehouseName}
-                            </span>
-                          )}
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+          {returnsLoading ? (
+            <div className="py-8 text-center text-sm text-text-secondary">Yükleniyor...</div>
+          ) : contractReturns.length === 0 ? (
+            <div className="py-8 text-center text-sm text-text-secondary">
+              Bu sözleşmede henüz iade kaydı bulunmuyor.
+            </div>
+          ) : (
+            <>
+              <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border">
+                <table className="w-full table-compact text-text-primary">
+                  <thead className="sticky top-0 z-10 bg-background-surface">
+                    <tr className="border-b border-background-border">
+                      <th className="text-left">Ürün</th>
+                      <th className="text-left">Depo</th>
+                      <th className="text-right">Miktar</th>
+                      <th className="text-left">İade Tarihi</th>
+                      <th className="text-left">Tür</th>
+                      <th className="text-left">Detay</th>
+                      <th className="text-right whitespace-nowrap">Kayıt</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {contractReturns.map((ret) => (
+                      <tr
+                        key={ret.ReturnId}
+                        className={`border-b border-background-border hover:bg-background-hover ${
+                          ret.IsNonPhysicalSettlement ? 'bg-red-500/5' : ''
+                        }`}
+                      >
+                        <td className="max-w-[180px]">
+                          <div className="truncate font-medium" title={ret.ItemName}>{ret.ItemName}</div>
+                        </td>
+                        <td className="text-text-secondary">{ret.WarehouseName ?? '—'}</td>
+                        <td className="text-right tabular-nums">{ret.ReturnQuantity}</td>
+                        <td className="whitespace-nowrap">{new Date(ret.ReturnDate).toLocaleDateString('tr-TR')}</td>
+                        <td>
                           {ret.IsNonPhysicalSettlement ? (
-                            <span className="text-xs px-2.5 py-0.5 bg-red-500 text-white font-semibold rounded-full shadow-sm">
-                              Zayi / Satış (Sanal İade)
+                            <span className="inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold bg-red-500/20 text-red-300">
+                              Zayi / Satış
                             </span>
                           ) : (
-                            <span className="text-xs px-2.5 py-0.5 bg-green-500/20 text-green-400 font-semibold rounded-full">
-                              Normal İade
+                            <span className="inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold bg-green-500/20 text-green-400">
+                              Normal
                             </span>
                           )}
-                        </div>
-                        <div className="text-sm text-text-secondary mt-1 flex flex-wrap gap-4">
-                          <span><strong>Miktar:</strong> {ret.ReturnQuantity} adet {ret.IsNonPhysicalSettlement ? 'stoktan düşüldü' : 'iade alındı'}</span>
-                          <span><strong>Tarih:</strong> {new Date(ret.ReturnDate).toLocaleDateString('tr-TR')}</span>
-                          {ret.IsNonPhysicalSettlement && ret.SettlementReason && (
-                            <span><strong>Nedeni:</strong> {ret.SettlementReason === 'SALE' ? 'Satış' : ret.SettlementReason === 'DEFECT' ? 'Hurda / Defo' : ret.SettlementReason}</span>
+                        </td>
+                        <td className="text-text-secondary">
+                          {ret.IsNonPhysicalSettlement ? (
+                            <div className="space-y-0.5">
+                              {ret.SettlementReason && (
+                                <div>
+                                  {ret.SettlementReason === 'SALE' ? 'Satış' : ret.SettlementReason === 'DEFECT' ? 'Hurda / Defo' : ret.SettlementReason}
+                                </div>
+                              )}
+                              {ret.SettlementCharge != null && (
+                                <div className="text-red-300">Bedel: {formatMoney(ret.SettlementCharge, currency)}</div>
+                              )}
+                            </div>
+                          ) : ret.LateDays > 0 ? (
+                            <span className="text-orange-400">
+                              {ret.LateDays} gün · {formatMoney(ret.LateFee, currency)}
+                            </span>
+                          ) : (
+                            <span>—</span>
                           )}
-                          {ret.IsNonPhysicalSettlement && ret.InventoryUnitPriceSnapshot != null && ret.PriceBasis && (
-                            <span><strong>Birim Fiyat:</strong> {formatMoney(ret.InventoryUnitPriceSnapshot, ret.PriceBasis as any)}</span>
-                          )}
-                        </div>
-                        {ret.LateDays > 0 && !ret.IsNonPhysicalSettlement && (
-                          <div className="text-xs mt-1.5 flex gap-3 p-1.5 bg-orange-950/30 rounded border border-orange-900/20">
-                            <span className="text-orange-400 font-medium">Gecikme: {ret.LateDays} gün</span>
-                            <span className="text-red-400 font-medium">Gecikme ücreti: {formatMoney(ret.LateFee, currency)}</span>
-                          </div>
-                        )}
-                        {ret.IsNonPhysicalSettlement && ret.SettlementCharge != null && (
-                          <div className="text-xs mt-1.5 p-1.5 bg-red-950/30 rounded border border-red-900/20 text-red-300 font-medium">
-                            Sözleşmeye Yansıyan Bedel: {formatMoney(ret.SettlementCharge, currency)}
-                          </div>
-                        )}
-                      </div>
-                      <div className="text-xs text-text-secondary shrink-0 ml-4">
-                        {new Date(ret.CreatedAt).toLocaleString('tr-TR')}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-                {/* Toplam gecikme ücreti özeti */}
-                {contractReturns.some(r => r.LateFee > 0) && (
-                  <div className="card bg-orange-900/30 p-3">
-                    <div className="flex items-center justify-between">
-                      <span className="text-sm font-medium">Toplam Gecikme Ücreti</span>
-                      <span className="font-bold text-orange-300">
-                        {formatCurrency(contractReturns.reduce((sum, r) => sum + r.LateFee, 0))}
-                      </span>
-                    </div>
-                  </div>
-                )}
+                        </td>
+                        <td className="text-right text-text-secondary whitespace-nowrap text-[11px]">
+                          {formatShortDateTime(ret.CreatedAt)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  {contractReturns.some((r) => r.LateFee > 0) && (
+                    <tfoot className="sticky bottom-0 bg-orange-900/40 border-t border-orange-800/40">
+                      <tr>
+                        <td colSpan={6} className="text-right font-medium">Toplam Gecikme Ücreti</td>
+                        <td className="text-right font-bold text-orange-300 tabular-nums">
+                          {formatCurrency(contractReturns.reduce((sum, r) => sum + r.LateFee, 0))}
+                        </td>
+                      </tr>
+                    </tfoot>
+                  )}
+                </table>
               </div>
-            )}
-            <div className="flex gap-3 mt-6">
-              <button onClick={onClose} className="btn-secondary flex-1">
-                Kapat
-              </button>
-            </div>
+            </>
+          )}
+          <div className="mt-3 flex shrink-0 gap-2">
+            <button type="button" onClick={onClose} className={`btn-secondary flex-1 ${compactBtn}`}>
+              Kapat
+            </button>
+          </div>
         </div>
       )}
 
