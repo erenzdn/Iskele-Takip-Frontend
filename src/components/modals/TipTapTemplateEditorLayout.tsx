@@ -46,6 +46,8 @@ import {
   getActiveLineHeight,
 } from './LineHeightExtension';
 import { FONT_SIZE_OPTIONS, getActiveFontSize } from './FontSizeExtension';
+import { useDocumentTheme } from '../../hooks/useDocumentTheme';
+import { editorPaginationPluginKey } from './EditorPaginationExtension';
 import { getPageMarginsPaperStyle, type PageMargins } from './PageMargins';
 import {
   BORDERLESS_STYLE,
@@ -173,6 +175,13 @@ export default function TipTapTemplateEditorLayout({
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(placeholderGroups.map((g, i) => [g.id, i < 2]))
   );
+
+  useDocumentTheme();
+
+  useEffect(() => {
+    if (!editor?.view) return;
+    editor.view.dispatch(editor.state.tr.setMeta(editorPaginationPluginKey, { refresh: true }));
+  }, [editor, pageMargins]);
 
   useEffect(() => {
     const refreshToolbar = () => {
@@ -515,7 +524,7 @@ export default function TipTapTemplateEditorLayout({
 
           <label
             className="flex h-8 items-center gap-1 rounded-lg border border-background-border bg-background-surface/60 px-2 text-xs text-text-secondary"
-            title="Üst ve alt sayfa boşluğu (mm)"
+            title="Üst ve alt sayfa boşluğu (mm) — 0 = tam A4 yüksekliği"
           >
             <span>Ü/A</span>
             <input
@@ -548,7 +557,7 @@ export default function TipTapTemplateEditorLayout({
 
           <label
             className="flex h-8 items-center gap-1 rounded-lg border border-background-border bg-background-surface/60 px-2 text-xs text-text-secondary"
-            title="Sol ve sağ sayfa boşluğu (mm)"
+            title="Sol ve sağ sayfa boşluğu (mm) — 0 = tam A4 genişliği"
           >
             <span>Y/S</span>
             <input
@@ -646,8 +655,8 @@ export default function TipTapTemplateEditorLayout({
           <ToolbarButton
             title={
               showGridlines
-                ? 'Düzen kılavuzlarını gizle (sadece editör)'
-                : 'Düzen kılavuzlarını göster (sadece editör)'
+                ? 'A4 kılavuz çizgisini gizle (mavi çizgi sayfa kesiti değildir)'
+                : 'A4 kılavuz çizgisini göster (içerik alanı sonu; PDF\'te yok)'
             }
             active={showGridlines}
             onClick={onToggleGridlines}
@@ -921,8 +930,11 @@ export default function TipTapTemplateEditorLayout({
                   Logo hücresine tıklayıp <strong>Kayıtlı görsel</strong> listesinden logoyu ekleyebilirsiniz.
                   Yeni sayfa başlatmak için araç çubuğundaki <strong>Sayfa Sonu</strong> düğmesini veya{' '}
                   <strong>Ctrl+Enter</strong> kısayolunu kullanın.
-                  Gri kılavuz çizgileri yalnızca editörde görünür; önizleme ve PDF&apos;te çıkmaz.
-                  İsterseniz araç çubuğundaki <strong>Kılavuz</strong> ile açıp kapatabilirsiniz.
+                  Sayfalar arasındaki <strong>gri bant</strong> gerçek sayfa kesitidir.
+                  Tam A4 kullanmak için araç çubuğundaki <strong>Ü/A</strong> ve <strong>Y/S</strong> değerlerini{' '}
+                  <strong>0</strong> bırakın; kenar boşluğu eklemek isterseniz mm olarak artırın.
+                  Araç çubuğundaki <strong>Kılavuz</strong> yalnızca A4 içerik sınırını mavi ince çizgiyle
+                  gösterir; sayfa sonu değildir ve PDF&apos;te çıkmaz.
                 </p>
               </div>
             </div>
@@ -937,7 +949,7 @@ export default function TipTapTemplateEditorLayout({
         >
           <div className="flex min-h-full justify-center px-3 py-6 md:px-8 md:py-8">
             <div
-              className="template-editor-paper text-text-primary"
+              className="template-editor-paper doc-root"
               style={getPageMarginsPaperStyle(pageMargins)}
             >
               <EditorContent editor={editor} />

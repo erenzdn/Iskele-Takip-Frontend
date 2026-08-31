@@ -1,0 +1,217 @@
+/*
+ * Kanonik belge stil sayfası — Iskele-Takip-Backend/src/services/documentStyles.js ile
+ * BİREBİR AYNI olmalıdır. Bu dosya yalnızca fallback amaçlıdır: editör açılışında
+ * GET /document-styles.css çekilebiliyorsa canlı sürüm bunun yerine kullanılır
+ * (bkz. src/hooks/useDocumentTheme.ts). Backend'de bu CSS değişirse burası da güncellenmeli.
+ */
+.doc-root {
+  box-sizing: border-box;
+  font-family: Arial, 'Liberation Sans', Helvetica, sans-serif;
+  font-size: 16px;
+  line-height: 1.5;
+  color: #0f172a;
+  background: #ffffff;
+}
+.doc-root *,
+.doc-root *::before,
+.doc-root *::after {
+  box-sizing: border-box;
+}
+
+.doc-root p,
+.doc-root h1,
+.doc-root h2,
+.doc-root h3,
+.doc-root h4,
+.doc-root h5,
+.doc-root h6,
+.doc-root blockquote,
+.doc-root pre,
+.doc-root figure {
+  margin: 0;
+}
+.doc-root b,
+.doc-root strong {
+  font-weight: 700;
+}
+
+.doc-root p {
+  margin: 0 0 0.15rem;
+  line-height: 1.15;
+}
+
+.doc-root h1 { font-size: 30px; font-weight: 700; margin-bottom: 1rem; }
+.doc-root h2 { font-size: 24px; font-weight: 700; margin-bottom: 0.75rem; }
+.doc-root h3 { font-size: 20px; font-weight: 700; margin-bottom: 0.5rem; }
+.doc-root h4 { font-size: 18px; font-weight: 700; margin-bottom: 0.5rem; }
+.doc-root h5 { font-size: 16px; font-weight: 700; margin-bottom: 0.5rem; }
+.doc-root h6 { font-size: 14px; font-weight: 700; margin-bottom: 0.5rem; }
+
+.doc-root ul,
+.doc-root ol {
+  margin: 8px 0;
+  padding-left: 24px;
+}
+.doc-root ul { list-style-type: disc; }
+.doc-root ol { list-style-type: decimal; }
+.doc-root li > p { margin: 0; }
+
+.doc-root blockquote {
+  padding-left: 1rem;
+  border-left: 3px solid #cbd5e1;
+  color: #475569;
+}
+.doc-root hr {
+  border: none;
+  border-top: 1px solid #cbd5e1;
+  margin: 1rem 0;
+}
+.doc-root pre,
+.doc-root code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+.doc-root pre {
+  background: #f1f5f9;
+  padding: 0.75rem;
+  border-radius: 4px;
+  overflow-x: auto;
+}
+.doc-root a {
+  color: #0f766e;
+  text-decoration: underline;
+}
+
+.doc-root table {
+  border-collapse: collapse;
+  table-layout: fixed;
+  width: 100%;
+  margin: 0;
+  border: 2px solid #0f172a;
+}
+.doc-root td,
+.doc-root th {
+  border: 1px solid #0f172a;
+  padding: 8px;
+  vertical-align: top;
+  overflow-wrap: break-word;
+  position: relative;
+}
+.doc-root th {
+  background: #f8fafc;
+  font-weight: 600;
+  text-align: left;
+}
+
+.doc-root table.border-none,
+.doc-root table[data-no-border="true"] {
+  border: none;
+}
+.doc-root table.border-none td,
+.doc-root table.border-none th,
+.doc-root table[data-no-border="true"] td,
+.doc-root table[data-no-border="true"] th {
+  border: none;
+  padding: 8px;
+}
+
+.doc-root img[data-align="left"] {
+  float: left;
+  margin-right: 1.5rem;
+  margin-bottom: 0.5rem;
+  display: inline-block;
+}
+.doc-root img[data-align="right"] {
+  float: right;
+  margin-left: 1.5rem;
+  margin-bottom: 0.5rem;
+  display: inline-block;
+}
+.doc-root img[data-align="center"] {
+  display: block;
+  margin-left: auto;
+  margin-right: auto;
+  clear: both;
+  float: none;
+}
+.doc-root img[data-align="none"] {
+  display: inline-block;
+  clear: both;
+}
+
+.doc-root td img,
+.doc-root th img {
+  float: none !important;
+  clear: none !important;
+  margin-top: 0 !important;
+  margin-bottom: 0 !important;
+  display: block !important;
+  vertical-align: top !important;
+  max-width: 100%;
+  height: auto;
+}
+.doc-root td[style*="text-align: left"] img,
+.doc-root th[style*="text-align: left"] img,
+.doc-root td img[data-align="left"],
+.doc-root th img[data-align="left"] {
+  margin-left: 0 !important;
+  margin-right: auto !important;
+}
+.doc-root td[style*="text-align: center"] img,
+.doc-root th[style*="text-align: center"] img,
+.doc-root td img[data-align="center"],
+.doc-root th img[data-align="center"] {
+  margin-left: auto !important;
+  margin-right: auto !important;
+}
+.doc-root td[style*="text-align: right"] img,
+.doc-root th[style*="text-align: right"] img,
+.doc-root td img[data-align="right"],
+.doc-root th img[data-align="right"] {
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}
+
+.doc-root .page-break {
+  page-break-after: always;
+  break-after: page;
+  height: 0;
+  margin: 0;
+  padding: 0;
+  border: none;
+}
+
+.doc-root table.widget-table {
+  margin: 10px 0;
+}
+.doc-root table.widget-table thead tr {
+  background: #f0f0f0;
+}
+.doc-root table.widget-table thead tr.widget-table-header-dark {
+  background: #1a3c5e;
+  color: #ffffff;
+}
+.doc-root table.widget-table tfoot tr {
+  background: #f0f0f0;
+  font-weight: 700;
+}
+.doc-root table.widget-table tbody tr.widget-zebra {
+  background: #f7f9fc;
+}
+.doc-root table.widget-table tfoot tr.widget-total-row-accent td {
+  border-top: 2px solid #1a3c5e;
+}
+
+.doc-root tr,
+.doc-root td,
+.doc-root th {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
+.doc-root thead {
+  display: table-header-group;
+}
+.doc-root h1,
+.doc-root h2,
+.doc-root h3 {
+  break-after: avoid-page;
+}

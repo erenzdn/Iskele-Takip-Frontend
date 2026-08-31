@@ -18,6 +18,7 @@ import {
   LINE_HEIGHT_OPTIONS,
   getActiveLineHeight,
 } from './LineHeightExtension';
+import { EditorPagination, editorPaginationPluginKey } from './EditorPaginationExtension';
 import {
   DEFAULT_PAGE_MARGINS,
   getPageMargins,
@@ -78,6 +79,7 @@ export default function ReportTemplateEditorModal({
       }),
       Underline,
       LineHeight,
+      EditorPagination,
     ],
     content: template?.Content || {
       type: 'doc',
@@ -122,6 +124,11 @@ export default function ReportTemplateEditorModal({
       setPageMargins(getPageMargins(template.Content));
     }
   }, [template]);
+
+  useEffect(() => {
+    if (!editor?.view) return;
+    editor.view.dispatch(editor.state.tr.setMeta(editorPaginationPluginKey, { refresh: true }));
+  }, [editor, pageMargins]);
 
   const insertPlaceholder = (key: string) => {
     if (!editor) return;

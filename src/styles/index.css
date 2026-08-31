@@ -140,46 +140,14 @@
   min-height: 300px;
 }
 
-.ProseMirror p {
-  margin-top: 0;
-  margin-bottom: 0.15rem;
-  line-height: 1.15;
-}
-
-.ProseMirror h1 {
-  font-size: 1.875rem;
-  font-weight: 700;
-  margin-bottom: 1rem;
-}
-
-.ProseMirror h2 {
-  font-size: 1.5rem;
-  font-weight: 700;
-  margin-bottom: 0.75rem;
-}
-
-.ProseMirror table {
-  border-collapse: collapse !important;
-  margin: 0 !important;
-  border: 2px solid var(--color-text-primary) !important;
+/* TipTap Table Resize Handles — sütun yeniden boyutlandırma yalnızca editörde çalışır */
+.ProseMirror .tableWrapper {
+  overflow-x: auto;
 }
 
 .ProseMirror table td,
 .ProseMirror table th {
-  border: 1px solid var(--color-text-primary) !important;
-  padding: 0.5rem !important;
   min-width: 2em !important;
-  position: relative !important;
-}
-
-.ProseMirror table th {
-  background-color: var(--color-bg-elevated) !important;
-  font-weight: 600 !important;
-}
-
-/* TipTap Table Resize Handles */
-.ProseMirror .tableWrapper {
-  overflow-x: auto;
 }
 
 .ProseMirror .column-resize-handle {
@@ -201,21 +169,6 @@
 .ProseMirror th.selectedCell {
   background-color: rgba(59, 130, 246, 0.2) !important;
   outline: 2px solid rgb(59, 130, 246) !important;
-}
-
-.ProseMirror ul,
-.ProseMirror ol {
-  margin-top: 0.5rem;
-  margin-bottom: 0.5rem;
-  padding-left: 1.5rem;
-}
-
-.ProseMirror ul {
-  list-style-type: disc;
-}
-
-.ProseMirror ol {
-  list-style-type: decimal;
 }
 
 /* Liste/tablo satırlarını daha kompakt gösterir – sayfada daha fazla veri görünür */
@@ -399,32 +352,6 @@
   color: #dc2626;
 }
 
-/* Sınırları Gizlenmiş (Borderless) Tablo — editörde çizgi yok */
-.ProseMirror table.border-none,
-.ProseMirror table.border-none td,
-.ProseMirror table.border-none th,
-.ProseMirror table[data-no-border="true"],
-.ProseMirror table[data-no-border="true"] td,
-.ProseMirror table[data-no-border="true"] th {
-  border: none !important;
-}
-
-.ProseMirror table.border-none,
-.ProseMirror table[data-no-border="true"] {
-  border-style: none !important;
-  border-collapse: separate !important;
-  border-spacing: 0 !important;
-  box-shadow: none !important;
-}
-
-.ProseMirror table.border-none td,
-.ProseMirror table.border-none th,
-.ProseMirror table[data-no-border="true"] td,
-.ProseMirror table[data-no-border="true"] th {
-  border-style: none !important;
-  box-shadow: none !important;
-}
-
 /* Kılavuz modu açıkken: hücre sınırlarını noktalı göster (sadece editör) */
 .show-gridlines .ProseMirror table.border-none td,
 .show-gridlines .ProseMirror table.border-none th,
@@ -433,7 +360,15 @@
   outline: 1px dotted rgba(156, 163, 175, 0.4) !important;
 }
 
-/* Görsel Konumlandırma ve Hizalama (Float ve Blok Kontrolleri) */
+/*
+ * Görsel Konumlandırma ve Hizalama — yalnızca editörde gerekli.
+ * tiptap-extension-resize-image, <img>'i editörde wrapper/container div'leriyle
+ * sarar (yeniden boyutlandırma tutamaçları için); PDF'teki generateHTML çıktısında
+ * bu sarmalayıcılar yoktur, çıplak <img data-align="..."> üretilir ve .doc-root'taki
+ * img[data-align] kuralları yeterlidir. Editörde ise float/metin sarma davranışının
+ * doğru çalışması için sarmalayıcı div'in de hizalanması gerekir — bu yüzden bu
+ * :has() kuralları .doc-root'a taşınmadı, burada kalıyor.
+ */
 .ProseMirror [data-align="left"],
 .ProseMirror :has(> [data-align="left"]),
 .ProseMirror .image-resizer:has(img[data-align="left"]) {
@@ -472,52 +407,79 @@
   clear: both !important;
 }
 
-/* A4 şablon editörü – sayfa kılavuz çizgileri ve sayfa aralığı */
+/* A4 şablon editörü – Word benzeri sayfa görünümü (yalnızca editör) */
 .template-editor-workspace {
-  background:
-    radial-gradient(ellipse at top, color-mix(in srgb, var(--color-primary) 6%, transparent), transparent 55%),
-    var(--color-bg-elevated);
+  --page-height: 29.7cm;
+  --page-gap: 36px;
+  --page-canvas: #80868b;
+  --page-sheet-color: #ffffff;
+  background: var(--page-canvas);
 }
 
 .template-editor-paper {
-  --page-margin-top: 15mm;
-  --page-margin-bottom: 15mm;
+  --page-margin-top: 0mm;
+  --page-margin-bottom: 0mm;
+  --page-content-height: calc(var(--page-height) - var(--page-margin-top) - var(--page-margin-bottom));
   width: 21cm;
   max-width: calc(100vw - 2rem);
-  min-height: 29.7cm;
+  min-height: var(--page-height);
   box-sizing: border-box;
-  background: var(--color-bg-panel);
-  box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.04),
-    0 12px 28px -8px rgba(15, 23, 42, 0.14),
-    0 0 0 1px color-mix(in srgb, var(--color-border) 70%, transparent);
+  background: var(--page-sheet-color);
   border: none;
   border-radius: 2px;
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.08),
+    0 10px 28px -6px rgba(15, 23, 42, 0.18);
   flex-shrink: 0;
   align-self: flex-start;
+  overflow: visible;
+}
+
+.template-editor-workspace .template-editor-paper.doc-root {
+  background: var(--page-sheet-color);
 }
 
 .template-editor-paper .ProseMirror {
-  min-height: calc(29.7cm - var(--page-margin-top) - var(--page-margin-bottom));
+  min-height: var(--page-content-height);
+  background: transparent;
 }
 
-/* A4 sayfa kılavuz çizgileri — yalnızca kılavuz modu açıkken */
+/* Kılavuz — A4 içerik alanı sonu (gri sayfa kesiti değil; yalnızca editör) */
 .show-gridlines .template-editor-paper .ProseMirror {
-  --page-content-height: calc(29.7cm - var(--page-margin-top) - var(--page-margin-bottom));
+  --page-flow-step: calc(var(--page-content-height) + var(--page-gap));
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
     transparent calc(var(--page-content-height) - 2px),
-    rgba(59, 130, 246, 0.22) calc(var(--page-content-height) - 2px),
-    rgba(59, 130, 246, 0.22) calc(var(--page-content-height) - 1px),
-    rgba(0, 0, 0, 0.1) calc(var(--page-content-height) - 1px),
-    rgba(0, 0, 0, 0.1) var(--page-content-height),
-    transparent var(--page-content-height),
-    transparent calc(var(--page-content-height) + 18px)
+    rgba(59, 130, 246, 0.2) calc(var(--page-content-height) - 2px),
+    rgba(59, 130, 246, 0.2) calc(var(--page-content-height) - 1px),
+    rgba(59, 130, 246, 0.08) var(--page-content-height),
+    transparent calc(var(--page-content-height) + 1px),
+    transparent var(--page-flow-step)
   );
-  background-size: 100% calc(var(--page-content-height) + 18px);
+  background-size: 100% var(--page-flow-step);
   background-repeat: repeat-y;
-  padding-bottom: 18px;
+}
+
+/* Otomatik sayfa aralığı — gri kesit (akış + görünüm) */
+.template-editor-paper .ProseMirror .editor-page-gap {
+  display: block;
+  height: var(--page-gap);
+  margin-left: calc(-1 * var(--page-margin-left, 15mm));
+  margin-right: calc(-1 * var(--page-margin-right, 15mm));
+  background: var(--page-canvas);
+  box-shadow:
+    inset 0 5px 8px -5px rgba(0, 0, 0, 0.35),
+    inset 0 -5px 8px -5px rgba(0, 0, 0, 0.28);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Tablo satırı sayfa geçişi */
+.template-editor-paper .ProseMirror tr.editor-table-page-break > td,
+.template-editor-paper .ProseMirror tr.editor-table-page-break > th {
+  border-top: var(--page-gap) solid var(--page-canvas);
+  box-shadow: inset 0 8px 10px -10px rgba(0, 0, 0, 0.3);
 }
 
 /* Şablon editörü — alan paneli */
@@ -540,7 +502,7 @@
   position: relative;
   display: block;
   height: 0;
-  margin: 28px calc(-1 * var(--page-margin-left, 15mm));
+  margin: 0 calc(-1 * var(--page-margin-right, 15mm)) 0 calc(-1 * var(--page-margin-left, 15mm));
   padding: 0;
   border: none;
   page-break-after: auto !important;
@@ -552,12 +514,12 @@
 .template-editor-paper .ProseMirror .page-break::before {
   content: '';
   display: block;
-  height: 20px;
+  height: var(--page-gap, 36px);
   margin: 0;
-  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--color-bg-panel));
+  background: var(--page-canvas, #80868b);
   box-shadow:
-    inset 0 1px 0 color-mix(in srgb, var(--color-border) 80%, transparent),
-    inset 0 -1px 0 color-mix(in srgb, var(--color-border) 80%, transparent);
+    inset 0 5px 8px -5px rgba(0, 0, 0, 0.35),
+    inset 0 -5px 8px -5px rgba(0, 0, 0, 0.28);
 }
 
 .template-editor-paper .ProseMirror .page-break::after {

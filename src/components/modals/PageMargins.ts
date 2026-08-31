@@ -6,10 +6,10 @@ export interface PageMargins {
 }
 
 export const DEFAULT_PAGE_MARGINS: PageMargins = {
-  top: 15,
-  bottom: 15,
-  left: 15,
-  right: 15,
+  top: 0,
+  bottom: 0,
+  left: 0,
+  right: 0,
 };
 
 function normalizeMargin(margin: unknown, fallback: number): number {
@@ -60,5 +60,6 @@ export function getPageMarginsPaperStyle(pageMargins: PageMargins): Record<strin
     '--page-margin-bottom': `${margins.bottom}mm`,
     '--page-margin-left': `${margins.left}mm`,
     '--page-margin-right': `${margins.right}mm`,
+    '--page-content-height': `calc(var(--page-height) - ${margins.top}mm - ${margins.bottom}mm)`,
   };
 }

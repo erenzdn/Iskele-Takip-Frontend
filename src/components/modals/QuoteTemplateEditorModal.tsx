@@ -22,6 +22,7 @@ import {
   ensureLayoutTablesBorderless,
 } from './CustomTableExtensions';
 import { PageBreak } from './PageBreakExtension';
+import { EditorPagination } from './EditorPaginationExtension';
 import TipTapTemplateEditorLayout, {
   type TipTapPlaceholderGroup,
 } from './TipTapTemplateEditorLayout';
@@ -111,7 +112,7 @@ export default function QuoteTemplateEditorModal({
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [isTableActive, setIsTableActive] = useState(false);
   const [isImageActive, setIsImageActive] = useState(false);
-  const [showGridlines, setShowGridlines] = useState(true);
+  const [showGridlines, setShowGridlines] = useState(false);
   const [pageMargins, setPageMargins] = useState<PageMargins>(DEFAULT_PAGE_MARGINS);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -133,6 +134,7 @@ export default function QuoteTemplateEditorModal({
       FontSize,
       LineHeight,
       PageBreak,
+      EditorPagination,
     ],
     content: {
       type: 'doc',
