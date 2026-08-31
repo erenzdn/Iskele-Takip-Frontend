@@ -28,6 +28,7 @@ import { discountPercentFromNet, lineDiscountAmount, lineNetFromGross } from '..
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
+import { LINE_ITEM_COL } from '../../constants/lineItemTableColumns';
 import StockErrorPanel from '../StockErrorPanel';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
@@ -2905,36 +2906,35 @@ export default function QuoteDetailModal({
               </div>
             </div>
             <div className="overflow-auto flex-1 min-h-0">
-              <table className="w-full text-sm border-collapse text-text-primary">
-                <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
+              <table className="table-data-grid table-excel-rows text-text-primary">
+                <thead>
                   <tr>
                     {!isReadOnly && (
-                      <th className="w-8 px-1 py-1.5" aria-label="Sırala" />
+                      <th className="drag-col" aria-label="Sırala" />
                     )}
-                    <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
+                    <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
                       Ürün Kodu
                     </th>
-                    <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">
+                    <th className="text-left" style={{ width: LINE_ITEM_COL.itemName }}>
                       Ürün Adı
                     </th>
-                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-24 text-xs">
+                    <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.quantity }}>
                       Miktar
                     </th>
-                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
+                    <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.unitPrice }}>
                       {quoteType === 'SALE' ? 'Birim Fiyat' : 'Aylık Fiyat'}
                     </th>
-                    <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-20 text-xs">
+                    <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.discount }}>
                       İskonto (%)
                     </th>
                     <th
-                      className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs"
+                      className="text-right whitespace-nowrap"
+                      style={{ width: LINE_ITEM_COL.total }}
                       title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
                     >
                       Toplam
                     </th>
-                    <th className="text-center px-2 py-1.5 font-semibold text-text-secondary w-16 text-xs">
-                      İşlem
-                    </th>
+                    <th className="action-col" aria-label="İşlem" title="İşlem" />
                   </tr>
                 </thead>
                 <tbody>
@@ -2942,7 +2942,7 @@ export default function QuoteDetailModal({
                     <tr>
                       <td
                         colSpan={isReadOnly ? 7 : 8}
-                        className="px-3 py-6 text-center text-sm text-text-secondary"
+                        className="py-6 text-center text-text-secondary"
                       >
                         Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
                       </td>
@@ -2974,33 +2974,41 @@ export default function QuoteDetailModal({
                           key={item.kind === 'inventory' ? `inv-${item.ItemId}` : `man-${item.ClientId}`}
                           onDragOver={!isReadOnly ? (e) => handleQuoteItemDragOver(e, rowIndex) : undefined}
                           onDrop={!isReadOnly ? (e) => handleQuoteItemDrop(e, rowIndex) : undefined}
-                          className={`border-b border-background-border bg-background-surface hover:bg-background-hover transition-colors duration-300 ${
-                            justAdded ? 'bg-green-500/20' : ''
-                          } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''} ${
-                            isDragging ? 'opacity-40' : ''
-                          } ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
+                          className={`${
+                            justAdded
+                              ? 'bg-green-500/20'
+                              : isRowActive
+                                ? 'ring-2 ring-inset ring-primary/60 bg-primary/15'
+                                : rowIndex % 2 === 0
+                                  ? 'bg-background-panel'
+                                  : 'bg-background-secondary/35'
+                          } ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
                         >
                           {!isReadOnly && (
-                            <td className="px-1 py-1 align-middle">
+                            <td className="drag-col">
                               <span
                                 draggable
                                 onDragStart={(e) => handleQuoteItemDragStart(e, rowIndex)}
                                 onDragEnd={handleQuoteItemDragEnd}
-                                className="cursor-grab active:cursor-grabbing touch-none inline-flex items-center justify-center p-1 rounded text-text-secondary/70 hover:text-text-primary hover:bg-background-hover select-none"
+                                className="drag-handle"
                                 title="Sürükleyerek sırala"
                                 aria-label="Sürükleyerek sırala"
                                 role="button"
                                 tabIndex={0}
                               >
-                                <DotsSixVerticalIcon size={16} weight="bold" aria-hidden />
+                                <DotsSixVerticalIcon size={10} weight="bold" aria-hidden />
                               </span>
                             </td>
                           )}
-                          <td className="px-3 py-1 text-text-secondary">
+                          <td className="text-text-secondary">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
                                 <span className="inline-flex items-center gap-1.5 flex-wrap">
-                                  <span className="font-mono">{displayItemCode}</span>
+                                  {displayItemCode !== '—' ? (
+                                    <span className="item-code-badge" title={displayItemCode}>{displayItemCode}</span>
+                                  ) : (
+                                    <span className="text-text-secondary">—</span>
+                                  )}
                                   {hasCodeOverride && (
                                     <span
                                       className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
@@ -3025,7 +3033,7 @@ export default function QuoteDetailModal({
                                         )
                                       );
                                     }}
-                                    className="input w-full py-1 text-sm font-mono"
+                                    className="input w-full py-0.5 text-xs font-mono"
                                     aria-label="Ürün Kodu Override"
                                     placeholder="Boş bırakılırsa orijinal ürün kodu kullanılır"
                                     maxLength={50}
@@ -3053,7 +3061,7 @@ export default function QuoteDetailModal({
                               '—'
                             )}
                           </td>
-                          <td className="px-3 py-1 font-medium">
+                          <td className="font-medium">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
                                 <button
@@ -3096,7 +3104,7 @@ export default function QuoteDetailModal({
                                           )
                                         );
                                       }}
-                                      className="input w-full py-1 text-sm"
+                                      className="input w-full py-0.5 text-xs"
                                       aria-label="Ürün Adı"
                                       placeholder={canonicalItemName}
                                     />
@@ -3137,7 +3145,7 @@ export default function QuoteDetailModal({
                               item.Description
                             )}
                           </td>
-                          <td className="px-3 py-1 text-right">
+                          <td className="text-right tabular-nums">
                             {isReadOnly ? (
                               item.Quantity
                             ) : (
@@ -3186,12 +3194,12 @@ export default function QuoteDetailModal({
                                     );
                                   }
                                 }}
-                                className="input w-28 text-right py-1 text-sm"
+                                className="input w-full text-right py-0.5 text-xs"
                                 aria-label="Miktar"
                               />
                             )}
                           </td>
-                          <td className="px-3 py-1 text-right text-text-secondary">
+                          <td className="text-right tabular-nums text-text-secondary">
                             {item.kind === 'manual' ? (
                               quoteType === 'SALE' ? (
                                 formatCurrency(item.UnitPriceSnapshot)
@@ -3264,7 +3272,7 @@ export default function QuoteDetailModal({
                                   }
                                   setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: masked }));
                                 }}
-                                className="input w-36 text-right py-1 text-sm"
+                                className="input w-full text-right py-0.5 text-xs"
                                 placeholder={formatCurrency(item.UnitPriceSnapshot)}
                                 aria-label="Birim Fiyat"
                               />
@@ -3326,13 +3334,13 @@ export default function QuoteDetailModal({
                                   }
                                   setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: masked }));
                                 }}
-                                className="input w-36 text-right py-1 text-sm"
+                                className="input w-full text-right py-0.5 text-xs"
                                 placeholder={formatCurrency(item.UnitPriceSnapshot * 30)}
                                 aria-label="Aylık Fiyat"
                               />
                             )}
                           </td>
-                          <td className="px-3 py-1 text-right">
+                          <td className="text-right tabular-nums">
                             {isReadOnly ? (
                               Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto) || 0
                             ) : (
@@ -3366,12 +3374,12 @@ export default function QuoteDetailModal({
                                     return next;
                                   });
                                 }}
-                                className="input w-24 text-right py-1 text-sm"
+                                className="input w-full text-right py-0.5 text-xs"
                                 aria-label="İskonto %"
                               />
                             )}
                           </td>
-                          <td className="px-3 py-1 text-right font-medium text-green-500">
+                          <td className="text-right tabular-nums font-medium text-green-500">
                             {isReadOnly ? (
                               formatCurrency(lineNet)
                             ) : (
@@ -3426,13 +3434,13 @@ export default function QuoteDetailModal({
                                     return next;
                                   });
                                 }}
-                                className="input w-32 text-right py-1 text-sm font-medium text-green-500"
+                                className="input w-full text-right py-0.5 text-xs font-medium text-green-500"
                                 aria-label="İskontolu satır tutarı"
                                 title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
                               />
                             )}
                           </td>
-                          <td className="px-2 py-1 text-center">
+                          <td className="action-col">
                             {!isReadOnly && (
                               <button
                                 type="button"
@@ -3448,10 +3456,11 @@ export default function QuoteDetailModal({
                                     ? handleRemoveItem(item.ItemId)
                                     : handleRemoveManualItem(item.ClientId)
                                 }
-                                className="text-error hover:text-red-700 inline-flex p-1"
+                                className="action-remove-btn"
                                 aria-label="Kaldır"
+                                title="Kaldır"
                               >
-                                <XIcon size={18} weight="regular" />
+                                <XIcon size={12} weight="bold" aria-hidden />
                               </button>
                             )}
                           </td>
@@ -4261,6 +4270,10 @@ export default function QuoteDetailModal({
             setIsContractModalOpen(false);
             setConvertedContract(null);
             await refreshQuoteDetail();
+          }}
+          onOpenSourceQuote={async () => {
+            setIsContractModalOpen(false);
+            setConvertedContract(null);
           }}
         />
       )}

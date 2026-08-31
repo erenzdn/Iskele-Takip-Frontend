@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckIcon, ClipboardIcon, ClockIcon, XIcon } from '@phosphor-icons/react';
+import { CheckIcon, ClipboardIcon, DotsSixVerticalIcon, XIcon } from '@phosphor-icons/react';
 import { useNavigate } from 'react-router-dom';
 import {
   AuditLog,
@@ -68,6 +68,7 @@ import {
   NewSiteFormState,
   validateSiteSelection,
 } from '../../utils/siteSelection';
+import { LINE_ITEM_COL, LINE_ITEM_COL_SPAN } from '../../constants/lineItemTableColumns';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -82,6 +83,8 @@ interface ContractDetailModalProps {
   onDataChanged?: (hint?: { quoteReleased?: boolean }) => void | Promise<void>;
   /** Teklif modalı üzerinden açıldığında üst katmanda göster */
   stackAboveParent?: boolean;
+  /** Kaynak teklife git — parent doğrudan teklif modalını açar */
+  onOpenSourceQuote?: (quoteId: number) => void | Promise<void>;
 }
 
 function unitPriceForContractInventory(
@@ -113,6 +116,7 @@ export default function ContractDetailModal({
   initiallyFullScreen,
   onDataChanged,
   stackAboveParent = false,
+  onOpenSourceQuote,
 }: ContractDetailModalProps) {
   const navigate = useNavigate();
   const [isFullScreen] = useState(Boolean(initiallyFullScreen));
@@ -222,7 +226,11 @@ export default function ContractDetailModal({
 
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
   const [lastAddedKeys, setLastAddedKeys] = useState<string[]>([]);
-  const [activeItemsGridCell, setActiveItemsGridCell] = useState<{ row: number; col: 4 | 6 | 7 | 8 } | null>(null);
+  const [priceOverrideInputs, setPriceOverrideInputs] = useState<Record<string, string>>({});
+  const [dragItemIndex, setDragItemIndex] = useState<number | null>(null);
+  const [dragOverItemIndex, setDragOverItemIndex] = useState<number | null>(null);
+  const dragItemIndexRef = useRef<number | null>(null);
+  const [activeItemsGridCell, setActiveItemsGridCell] = useState<{ row: number; col: 3 | 4 | 5 | 6 | 7 } | null>(null);
   const itemsGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
@@ -588,6 +596,15 @@ export default function ContractDetailModal({
                 detail.ItemCode_Override ??
                 detail.item_code_override ??
                 null) as string | null,
+            ItemNameOverride:
+              (detail.ItemNameOverride ??
+                detail.itemNameOverride ??
+                null) as string | null,
+            OverrideUnitPrice: undefined,
+            OverrideMonthlyPrice:
+              detail.MonthlyPriceOverride != null && Number.isFinite(Number(detail.MonthlyPriceOverride))
+                ? Number(detail.MonthlyPriceOverride)
+                : undefined,
           };
         });
         setContractItems(items);
@@ -780,11 +797,88 @@ export default function ContractDetailModal({
       )
     : 0;
 
+  const formatPriceInput = (value: number | undefined): string => {
+    if (value == null || !Number.isFinite(value)) return '';
+    return String(value).replace('.', ',');
+  };
+
+  const formatThousandsTR = (digits: string): string => {
+    const d = (digits ?? '').replace(/\D/g, '').replace(/^0+(?=\d)/, '');
+    if (!d) return '';
+    return d.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  };
+
+  const coerceDecimalDotToComma = (raw: string): string => {
+    const s = String(raw ?? '').trim();
+    if (!s || s.includes(',')) return s;
+    const compact = s.replace(/\s+/g, '');
+    const dotCount = (compact.match(/\./g) ?? []).length;
+    if (dotCount === 0) return s;
+    if (dotCount > 1 || /^\d{1,3}(\.\d{3})+$/.test(compact)) return s;
+    return compact.replace('.', ',');
+  };
+
+  const normalizeMaskedDecimalTR = (
+    raw: string,
+    opts?: { maxIntDigits?: number; maxFracDigits?: number }
+  ): { masked: string; numeric: number | undefined | null } => {
+    const maxIntDigits = opts?.maxIntDigits ?? 9;
+    const maxFracDigits = opts?.maxFracDigits ?? 2;
+    const s = coerceDecimalDotToComma(String(raw ?? '').trim());
+    if (!s) return { masked: '', numeric: undefined };
+    const decimalSep = s.includes(',') ? ',' : null;
+    const hasTrailingDecimalSep = /,$/.test(s.replace(/\s+/g, ''));
+    let intPart = '';
+    let fracPart = '';
+    if (decimalSep) {
+      const idx = s.lastIndexOf(decimalSep);
+      intPart = s.slice(0, idx);
+      fracPart = s.slice(idx + 1);
+    } else {
+      intPart = s;
+      fracPart = '';
+    }
+    const intDigits = intPart.replace(/\D/g, '').slice(0, maxIntDigits);
+    const fracDigits = fracPart.replace(/\D/g, '').slice(0, maxFracDigits);
+    const maskedInt = formatThousandsTR(intDigits);
+    const masked = fracDigits || hasTrailingDecimalSep ? `${maskedInt},${fracDigits}` : maskedInt;
+    if (!intDigits && !fracDigits && !hasTrailingDecimalSep) return { masked: '', numeric: undefined };
+    const normalized = `${intDigits || '0'}.${fracDigits || '0'}`;
+    const v = Number(normalized);
+    if (!Number.isFinite(v) || v < 0) return { masked, numeric: null };
+    return { masked, numeric: v };
+  };
+
+  const normalizeMaskedIntegerTR = (
+    raw: string,
+    opts?: { maxDigits?: number; min?: number }
+  ): { masked: string; numeric: number } => {
+    const maxDigits = opts?.maxDigits ?? 9;
+    const min = opts?.min ?? 0;
+    const digits = String(raw ?? '').replace(/\D/g, '').slice(0, maxDigits);
+    const masked = formatThousandsTR(digits);
+    const numeric = Math.max(min, digits ? Number(digits) : 0);
+    return { masked, numeric };
+  };
+
+  const priceOverrideKey = (item: ContractLineItem) =>
+    item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : `man-${item.ClientId}`;
+
+  const effectiveDailyPrice = (item: ContractLineItem): number => {
+    if (item.kind === 'manual') return item.UnitPriceSnapshot;
+    if (contractType === 'SALE') {
+      return item.OverrideUnitPrice != null ? item.OverrideUnitPrice : item.UnitPriceSnapshot;
+    }
+    if (item.OverrideMonthlyPrice != null) return item.OverrideMonthlyPrice / 30;
+    if (item.MonthlyPriceOverride != null) return item.MonthlyPriceOverride / 30;
+    return item.UnitPriceSnapshot;
+  };
+
   const getLineTotal = (item: ContractLineItem) => {
-    const unit = item.UnitPriceSnapshot;
-    if (item.kind === 'manual') return unit * item.RentedQuantity;
-    if (contractType === 'SALE') return unit * item.RentedQuantity;
-    return unit * item.RentedQuantity * billedDays;
+    const daily = effectiveDailyPrice(item);
+    if (item.kind === 'manual') return daily * item.RentedQuantity;
+    if (contractType === 'SALE') return daily * item.RentedQuantity;
+    return daily * item.RentedQuantity * billedDays;
   };
 
   const initialTotalPrice = contractItems.reduce((sum, item) => sum + getLineTotal(item), 0);
@@ -897,7 +991,10 @@ export default function ContractDetailModal({
           ItemName: item.ItemName,
           ItemCode: item.ItemCode,
           ItemCodeOverride: null,
+          ItemNameOverride: null,
           ItemNameEn: item.ItemNameEn ?? undefined,
+          OverrideUnitPrice: undefined,
+          OverrideMonthlyPrice: undefined,
         },
       ]);
       setItemIskonto((prev) => ({ ...prev, [`${itemId}-${whId}`]: iskonto }));
@@ -919,8 +1016,9 @@ export default function ContractDetailModal({
       return;
     }
     setActiveItemsGridCell((prev) => {
-      if (!prev) return { row: 0, col: 4 };
+      if (!prev) return { row: 0, col: 3 };
       const nextRow = Math.min(prev.row, contractItems.length - 1);
+      if (nextRow === prev.row) return prev;
       return { row: nextRow, col: prev.col };
     });
   }, [isReadOnly, contractItems]);
@@ -934,17 +1032,55 @@ export default function ContractDetailModal({
     }
   }, [activeItemsGridCell]);
 
+  const handleContractItemDragStart = (e: React.DragEvent, index: number) => {
+    dragItemIndexRef.current = index;
+    setDragItemIndex(index);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleContractItemDragOver = (e: React.DragEvent, index: number) => {
+    e.preventDefault();
+    if (dragItemIndexRef.current !== null && dragItemIndexRef.current !== index) {
+      setDragOverItemIndex(index);
+    }
+  };
+
+  const handleContractItemDrop = (e: React.DragEvent, toIndex: number) => {
+    e.preventDefault();
+    const fromIndex = dragItemIndexRef.current;
+    setDragItemIndex(null);
+    setDragOverItemIndex(null);
+    dragItemIndexRef.current = null;
+    if (fromIndex == null || fromIndex === toIndex) return;
+    setContractItems((prev) => {
+      const next = [...prev];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const handleContractItemDragEnd = () => {
+    setDragItemIndex(null);
+    setDragOverItemIndex(null);
+    dragItemIndexRef.current = null;
+  };
+
   const handleItemsGridKeyDown = (
     e: React.KeyboardEvent<HTMLElement>,
     row: number,
-    col: 4 | 6 | 7 | 8
+    col: 3 | 4 | 5 | 6 | 7
   ) => {
-    const colOrder: Array<4 | 6 | 7 | 8> = [4, 6, 7, 8];
+    const colOrder: Array<3 | 4 | 5 | 6 | 7> = [3, 4, 5, 6, 7];
     const colIndex = colOrder.indexOf(col);
     if (colIndex < 0 || contractItems.length === 0) return;
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
 
-    e.preventDefault();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+      e.preventDefault();
+    } else {
+      return;
+    }
+
     let nextRow = row;
     let nextColIndex = colIndex;
 
@@ -953,7 +1089,25 @@ export default function ContractDetailModal({
     if (e.key === 'ArrowRight') nextColIndex = Math.min(colOrder.length - 1, colIndex + 1);
     if (e.key === 'ArrowLeft') nextColIndex = Math.max(0, colIndex - 1);
 
-    setActiveItemsGridCell({ row: nextRow, col: colOrder[nextColIndex] });
+    const stepRow = e.key === 'ArrowDown' ? 1 : e.key === 'ArrowUp' ? -1 : 0;
+    const stepCol = e.key === 'ArrowRight' ? 1 : e.key === 'ArrowLeft' ? -1 : 0;
+
+    let probeRow = nextRow;
+    let probeColIndex = nextColIndex;
+    const maxProbe = contractItems.length * colOrder.length;
+    for (let i = 0; i < maxProbe; i++) {
+      const key = `${probeRow}-${colOrder[probeColIndex]}`;
+      if (itemsGridRefs.current.get(key)) {
+        setActiveItemsGridCell({ row: probeRow, col: colOrder[probeColIndex] });
+        return;
+      }
+      probeColIndex += stepCol;
+      if (probeColIndex < 0 || probeColIndex >= colOrder.length) {
+        probeColIndex = Math.max(0, Math.min(colOrder.length - 1, probeColIndex));
+        probeRow = Math.min(contractItems.length - 1, Math.max(0, probeRow + stepRow));
+        if (probeRow === 0 || probeRow === contractItems.length - 1) break;
+      }
+    }
   };
 
   useEffect(() => {
@@ -1762,9 +1916,16 @@ export default function ContractDetailModal({
 
   const handleOpenSourceQuote = () => {
     if (!sourceQuoteId) return;
-    const path = contractType === 'SALE' ? '/contracts/sale' : '/contracts/rental';
+    if (onOpenSourceQuote) {
+      void Promise.resolve(onOpenSourceQuote(sourceQuoteId));
+      return;
+    }
     onClose();
-    navigate(path, { replace: false, state: { openQuoteId: sourceQuoteId } });
+    const path = contractType === 'SALE' ? '/contracts/sale' : '/contracts/rental';
+    navigate(path, {
+      replace: false,
+      state: { openQuoteId: sourceQuoteId, openQuoteNonce: Date.now() },
+    });
   };
 
   const compactBtn = '!py-1.5 !px-3 text-xs';
@@ -2760,31 +2921,44 @@ export default function ContractDetailModal({
               </div>
             </div>
             <div className="overflow-auto flex-1 min-h-0">
-                <table className="w-full text-sm border-collapse text-text-primary">
-                  <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
+              <table className="table-data-grid table-excel-rows text-text-primary">
+                  <thead>
                     <tr>
-                      <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">Ürün Kodu</th>
-                      <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">Ürün Adı</th>
-                      <th className="text-left px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">Depo</th>
-                      {isNew && <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">Müsait Stok</th>}
-                      <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-24 text-xs">Miktar</th>
-                      <th className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs">
-                        {contractType === 'SALE' ? 'Birim Fiyat' : 'Günlük Fiyat'}
+                      {!isReadOnly && (
+                        <th className="w-8 text-center" aria-label="Sırala" />
+                      )}
+                      <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
+                        Ürün Kodu
                       </th>
-                      <th className="text-right px-3 py-1.5 font-semibold text-text-secondary w-20 text-xs">İskonto (%)</th>
+                      <th className="text-left" style={{ width: LINE_ITEM_COL.itemNameWithWarehouse }}>
+                        Ürün Adı
+                      </th>
+                      <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.warehouse }}>
+                        Depo
+                      </th>
+                      <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.quantity }}>
+                        Miktar
+                      </th>
+                      <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.unitPrice }}>
+                        {contractType === 'SALE' ? 'Birim Fiyat' : 'Aylık Fiyat'}
+                      </th>
+                      <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.discount }}>
+                        İskonto (%)
+                      </th>
                       <th
-                        className="text-right px-3 py-1.5 font-semibold text-text-secondary whitespace-nowrap text-xs"
+                        className="text-right whitespace-nowrap"
+                        style={{ width: LINE_ITEM_COL.total }}
                         title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
                       >
                         Toplam
                       </th>
-                      <th className="text-center px-2 py-1.5 font-semibold text-text-secondary w-20 text-xs">İşlem</th>
+                      <th className="text-center w-12">İşlem</th>
                     </tr>
                   </thead>
                   <tbody>
                     {contractItems.length === 0 ? (
                       <tr>
-                        <td colSpan={isNew ? 9 : 8} className="px-3 py-6 text-center text-sm text-text-secondary">
+                        <td colSpan={isReadOnly ? LINE_ITEM_COL_SPAN.contract.readOnly : LINE_ITEM_COL_SPAN.contract.editable} className="py-6 text-center text-text-secondary">
                           Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
                         </td>
                       </tr>
@@ -2792,15 +2966,9 @@ export default function ContractDetailModal({
                     contractItemDisplayEntries.map((entry, rowIndex) => {
                       if (entry.kind === 'separator') {
                         return (
-                          <tr key="addendum-separator" className="bg-background-panel">
-                            <td colSpan={isNew ? 9 : 8} className="px-3 py-2.5">
-                              <div className="flex items-center gap-3">
-                                <div className="flex-1 border-t-2 border-dashed border-amber-500/40" />
-                                <span className="text-[11px] font-semibold uppercase tracking-wider text-amber-400/90 whitespace-nowrap">
-                                  Zeyilname ile Eklenen Kalemler
-                                </span>
-                                <div className="flex-1 border-t-2 border-dashed border-amber-500/40" />
-                              </div>
+                          <tr key="addendum-separator" className="addendum-separator-row">
+                            <td colSpan={isReadOnly ? LINE_ITEM_COL_SPAN.contract.readOnly : LINE_ITEM_COL_SPAN.contract.editable}>
+                              Zeyilname ile eklenen kalemler
                             </td>
                           </tr>
                         );
@@ -2831,50 +2999,172 @@ export default function ContractDetailModal({
                         item.kind === 'inventory' &&
                         item.ItemCodeOverride != null &&
                         String(item.ItemCodeOverride).trim() !== '';
+                      const itemEnName =
+                        item.kind === 'inventory' ? (invItem?.ItemNameEn ?? item.ItemNameEn) : undefined;
+                      const canonicalItemName =
+                        invItem?.ItemName ?? (item.kind === 'inventory' ? item.ItemName : '');
+                      const lineNet = getLineNetTotal(item);
+                      const netKey = lineNetInputKey(item);
+                      const overrideKey = priceOverrideKey(item);
                       const justAdded = item.kind === 'inventory' ? lastAddedKeys.includes(itemKey) : false;
                       const isRowActive = activeItemsGridCell?.row === rowIndex;
+                      const isDragging = dragItemIndex === rowIndex;
+                      const isDragOver = dragOverItemIndex === rowIndex && dragItemIndex !== rowIndex;
                       return (
                         <Fragment key={rowKey}>
                           <tr
-                            className={`border-b border-background-border bg-background-surface hover:bg-background-hover transition-colors duration-300 ${
-                              justAdded ? 'bg-green-500/20' : ''
-                            } ${isRowActive ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''}`}
+                            onDragOver={!isReadOnly ? (e) => handleContractItemDragOver(e, rowIndex) : undefined}
+                            onDrop={!isReadOnly ? (e) => handleContractItemDrop(e, rowIndex) : undefined}
+                            className={`${
+                              isAddendumRow ? 'addendum-row ' : ''
+                            }${
+                              justAdded
+                                ? 'bg-green-500/20'
+                                : isRowActive
+                                  ? 'ring-2 ring-inset ring-primary/60 bg-primary/15'
+                                  : !isAddendumRow && rowIndex % 2 === 0
+                                    ? 'bg-background-panel'
+                                    : !isAddendumRow
+                                      ? 'bg-background-secondary/35'
+                                      : ''
+                            } ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
                           >
-                            <td className="px-3 py-2 text-text-secondary">
-                              {item.kind === 'inventory' ? (
-                                isReadOnly || !isNew ? (
-                                  <span className="inline-flex items-center gap-1.5 flex-wrap">
-                                    <span className="font-mono">{displayItemCode}</span>
-                                    {hasCodeOverride && (
-                                      <span
-                                        className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300"
-                                        title="Bu belge için özel ürün kodu tanımlı"
-                                      >
-                                        Özel kod
-                                      </span>
-                                    )}
+                            {!isReadOnly && (
+                              <td className="px-1 align-middle">
+                                <span
+                                  draggable
+                                  onDragStart={(e) => handleContractItemDragStart(e, rowIndex)}
+                                  onDragEnd={handleContractItemDragEnd}
+                                  className="cursor-grab active:cursor-grabbing touch-none inline-flex items-center justify-center p-1 rounded text-text-secondary/70 hover:text-text-primary hover:bg-background-hover select-none"
+                                  title="Sürükleyerek sırala"
+                                  aria-label="Sürükleyerek sırala"
+                                  role="button"
+                                  tabIndex={0}
+                                >
+                                  <DotsSixVerticalIcon size={16} weight="bold" aria-hidden />
+                                </span>
+                              </td>
+                            )}
+                            <td className="text-text-secondary">
+                              <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
+                                {isAddendumRow ? (
+                                  <span
+                                    className="addendum-badge"
+                                    title="Bu kalem onaylı zeyilname ile sözleşmeye eklenmiştir"
+                                  >
+                                    Z{addendumNo != null ? addendumNo : ''}
                                   </span>
+                                ) : null}
+                                {item.kind === 'inventory' ? (
+                                  isReadOnly ? (
+                                    <span className="inline-flex items-center gap-1 min-w-0 flex-1">
+                                      {displayItemCode !== '—' ? (
+                                        <span className="item-code-badge cell-clip" title={displayItemCode}>{displayItemCode}</span>
+                                      ) : (
+                                        <span className="text-text-secondary">—</span>
+                                      )}
+                                      {hasCodeOverride ? (
+                                        <span
+                                          className="addendum-badge"
+                                          title="Bu belge için özel ürün kodu tanımlı"
+                                        >
+                                          Ö
+                                        </span>
+                                      ) : null}
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 min-w-0 flex-1">
+                                      <input
+                                        type="text"
+                                        value={item.ItemCodeOverride ?? originalItemCode}
+                                        onChange={(e) => {
+                                          const v = e.target.value.slice(0, 50);
+                                          setContractItems((prev) =>
+                                            prev.map((x) =>
+                                              x.kind === 'inventory' &&
+                                              x.ItemId === item.ItemId &&
+                                              x.WarehouseId === item.WarehouseId
+                                                ? { ...x, ItemCodeOverride: v }
+                                                : x
+                                            )
+                                          );
+                                        }}
+                                        className="input w-full py-0.5 text-xs font-mono min-w-0"
+                                        aria-label="Ürün Kodu Override"
+                                        placeholder="Boş bırakılırsa orijinal ürün kodu kullanılır"
+                                        maxLength={50}
+                                      />
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setContractItems((prev) =>
+                                            prev.map((x) =>
+                                              x.kind === 'inventory' &&
+                                              x.ItemId === item.ItemId &&
+                                              x.WarehouseId === item.WarehouseId
+                                                ? { ...x, ItemCodeOverride: null }
+                                                : x
+                                            )
+                                          );
+                                        }}
+                                        className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap shrink-0"
+                                        disabled={isBusy}
+                                        title="Varsayılana dön"
+                                      >
+                                        Reset
+                                      </button>
+                                    </span>
+                                  )
                                 ) : (
-                                  <div className="flex items-center gap-2 min-w-[160px]">
+                                  '—'
+                                )}
+                              </span>
+                            </td>
+                            <td className="font-medium">
+                              {item.kind === 'inventory' ? (
+                                isReadOnly ? (
+                                  <button
+                                    type="button"
+                                    className="cell-clip text-left hover:text-primary hover:underline transition-colors cursor-pointer max-w-full"
+                                    title={
+                                      language === 'EN' && !itemEnName
+                                        ? `${item.ItemNameOverride ?? canonicalItemName} (Bu ürünün İngilizce adı yoktur)`
+                                        : (item.ItemNameOverride ?? (language === 'EN' ? itemEnName : canonicalItemName) ?? canonicalItemName)
+                                    }
+                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                  >
+                                    {language === 'EN' ? (
+                                      item.ItemNameOverride ?? itemEnName ?? canonicalItemName
+                                    ) : (
+                                      item.ItemNameOverride ?? canonicalItemName
+                                    )}
+                                  </button>
+                                ) : (
+                                  <span className="inline-flex items-center gap-1 min-w-0 w-full">
                                     <input
                                       type="text"
-                                      value={item.ItemCodeOverride ?? originalItemCode}
+                                      value={
+                                        item.ItemNameOverride ??
+                                        (language === 'EN'
+                                          ? itemEnName || canonicalItemName
+                                          : canonicalItemName)
+                                      }
                                       onChange={(e) => {
-                                        const v = e.target.value.slice(0, 50);
+                                        const v = e.target.value;
                                         setContractItems((prev) =>
                                           prev.map((x) =>
                                             x.kind === 'inventory' &&
                                             x.ItemId === item.ItemId &&
                                             x.WarehouseId === item.WarehouseId
-                                              ? { ...x, ItemCodeOverride: v }
+                                              ? { ...x, ItemNameOverride: v }
                                               : x
                                           )
                                         );
                                       }}
-                                      className="input w-full py-1 text-sm font-mono"
-                                      aria-label="Ürün Kodu Override"
-                                      placeholder="Boş bırakılırsa orijinal ürün kodu kullanılır"
-                                      maxLength={50}
+                                      className="input w-full py-0.5 text-xs min-w-0 flex-1"
+                                      aria-label="Ürün Adı"
+                                      placeholder={canonicalItemName}
+                                      title={language === 'EN' && !itemEnName ? 'Bu ürünün İngilizce adı yoktur' : undefined}
                                     />
                                     <button
                                       type="button"
@@ -2884,81 +3174,130 @@ export default function ContractDetailModal({
                                             x.kind === 'inventory' &&
                                             x.ItemId === item.ItemId &&
                                             x.WarehouseId === item.WarehouseId
-                                              ? { ...x, ItemCodeOverride: null }
+                                              ? { ...x, ItemNameOverride: null }
                                               : x
                                           )
                                         );
                                       }}
-                                      className="btn-secondary text-xs whitespace-nowrap"
+                                      className="btn-secondary shrink-0"
                                       disabled={isBusy}
                                       title="Varsayılana dön"
                                     >
-                                      Reset
+                                      ↺
                                     </button>
-                                  </div>
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                      className="btn-secondary shrink-0"
+                                      title="Ürün detayını görüntüle"
+                                    >
+                                      …
+                                    </button>
+                                  </span>
                                 )
                               ) : (
-                                '—'
+                                <span className="cell-clip" title={item.Description}>{item.Description}</span>
                               )}
                             </td>
-                            <td className="px-3 py-2">
-                              <div className="font-medium">
-                                {isAddendumRow && (
-                                  <span
-                                    className="inline-flex items-center mr-2 text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 border border-amber-500/30"
-                                    title="Bu kalem onaylı zeyilname ile sözleşmeye eklenmiştir"
-                                  >
-                                    Zeyilname{addendumNo != null ? ` #${addendumNo}` : ''}
-                                  </span>
-                                )}
-                                {item.kind === 'inventory' ? (
-                                  <button
-                                    type="button"
-                                    className="text-left hover:text-primary hover:underline transition-colors cursor-pointer"
-                                    title="Ürün detayını görüntüle"
-                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
-                                  >
-                                    {formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
-                                  </button>
-                                ) : (
-                                  item.Description
-                                )}
-                              </div>
-                              {isRentalContract && item.kind === 'inventory' && item.EffectiveStartDate && (
-                                <div className="text-[11px] text-text-secondary mt-0.5">
-                                  Ücret başlangıç: {new Date(item.EffectiveStartDate).toLocaleDateString('tr-TR')}
-                                </div>
-                              )}
-                              {item.kind === 'inventory' && item.ReturnedQuantity > 0 && (
-                                <div className="text-xs text-text-secondary mt-0.5 flex gap-2">
-                                  <span className="text-green-400"><CheckIcon size={10} weight="bold" className="inline" aria-hidden /> İade: {item.ReturnedQuantity}</span>
-                                  <span className="text-orange-400"><ClockIcon size={10} weight="regular" className="inline" aria-hidden /> {contractType === 'SALE' ? 'Net satışta kalan:' : 'Kirada:'} {remainingOnRent}</span>
-                                </div>
-                              )}
+                            <td className="text-text-secondary">
+                              <span
+                                className="cell-clip"
+                                title={
+                                  item.kind === 'inventory'
+                                    ? [
+                                        item.WarehouseName,
+                                        isRentalContract && item.EffectiveStartDate
+                                          ? `Başlangıç: ${new Date(item.EffectiveStartDate).toLocaleDateString('tr-TR')}`
+                                          : null,
+                                      ]
+                                        .filter(Boolean)
+                                        .join(' • ') || undefined
+                                    : undefined
+                                }
+                              >
+                                {item.kind === 'inventory' ? (item.WarehouseName ?? '—') : '—'}
+                              </span>
                             </td>
-                            <td className="px-3 py-2 text-text-secondary">{item.kind === 'inventory' ? (item.WarehouseName ?? '—') : '—'}</td>
-                            {isNew && (
-                              item.kind === 'inventory' ? (() => {
-                                const cacheKey = `${item.ItemId}-${item.WarehouseId}`;
-                                const stock = warehouseStockCache[cacheKey];
-                                const isOverStock = stock !== undefined && item.RentedQuantity > stock;
-                                return (
-                                  <td className={`px-3 py-2 text-right text-sm ${isOverStock ? 'text-red-400 font-semibold' : 'text-text-secondary'}`}>
-                                    {stock !== undefined ? stock : '—'}
-                                  </td>
-                                );
-                              })() : (
-                                <td className="px-3 py-2 text-right text-sm text-text-secondary">—</td>
-                              )
-                            )}
-                            <td className="px-3 py-2 text-right">
+                            <td className="text-right tabular-nums">
                               {isReadOnly ? (
                                 item.RentedQuantity
                               ) : (
                                 <input
-                                  type="number"
-                                  min={1}
-                                  value={item.RentedQuantity}
+                                  type="text"
+                                  inputMode="numeric"
+                                  pattern="[0-9.]*"
+                                  value={item.RentedQuantity === 0 ? '' : formatThousandsTR(String(item.RentedQuantity))}
+                                  ref={(el) => {
+                                    const key = `${rowIndex}-3`;
+                                    if (el) itemsGridRefs.current.set(key, el);
+                                    else itemsGridRefs.current.delete(key);
+                                  }}
+                                  onFocus={(e) => {
+                                    setActiveItemsGridCell({ row: rowIndex, col: 3 });
+                                    e.currentTarget.select();
+                                  }}
+                                  onBlur={() => {
+                                    if (item.RentedQuantity === 0) {
+                                      if (item.kind === 'inventory') {
+                                        updateItemQuantity(item.ItemId, item.WarehouseId, 1);
+                                      } else {
+                                        setContractItems((prev) =>
+                                          prev.map((x) =>
+                                            x.kind === 'manual' && x.ClientId === item.ClientId
+                                              ? { ...x, RentedQuantity: 1 }
+                                              : x
+                                          )
+                                        );
+                                      }
+                                    }
+                                  }}
+                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 3)}
+                                  onChange={(e) => {
+                                    const { numeric } = normalizeMaskedIntegerTR(e.target.value, { maxDigits: 9, min: 0 });
+                                    const v = numeric;
+                                    if (item.kind === 'inventory') {
+                                      updateItemQuantity(item.ItemId, item.WarehouseId, v);
+                                    } else {
+                                      setContractItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'manual' && x.ClientId === item.ClientId
+                                            ? { ...x, RentedQuantity: Math.max(0, Math.floor(v)) }
+                                            : x
+                                        )
+                                      );
+                                    }
+                                  }}
+                                  className="input w-full text-right py-0.5 text-xs"
+                                  aria-label="Miktar"
+                                />
+                              )}
+                            </td>
+                            <td className="text-right tabular-nums text-text-secondary">
+                              {item.kind === 'manual' ? (
+                                contractType === 'SALE' ? (
+                                  formatCurrency(item.UnitPriceSnapshot)
+                                ) : (
+                                  `${formatCurrency(item.UnitPriceSnapshot)}/gün`
+                                )
+                              ) : isReadOnly ? (
+                                contractType === 'SALE' ? (
+                                  formatCurrency(item.OverrideUnitPrice ?? item.UnitPriceSnapshot)
+                                ) : (
+                                  <span className="font-medium cell-clip">
+                                    {formatCurrency(
+                                      item.OverrideMonthlyPrice ??
+                                        (item.MonthlyPriceOverride ?? item.UnitPriceSnapshot * 30)
+                                    )}
+                                  </span>
+                                )
+                              ) : contractType === 'SALE' ? (
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={
+                                    priceOverrideInputs[overrideKey] ??
+                                    formatPriceInput(item.OverrideUnitPrice ?? item.UnitPriceSnapshot)
+                                  }
                                   ref={(el) => {
                                     const key = `${rowIndex}-4`;
                                     if (el) itemsGridRefs.current.set(key, el);
@@ -2970,30 +3309,117 @@ export default function ContractDetailModal({
                                   }}
                                   onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 4)}
                                   onChange={(e) => {
-                                    const v = Number(e.target.value) || 1;
-                                    if (item.kind === 'inventory') {
-                                      updateItemQuantity(item.ItemId, item.WarehouseId, v);
-                                    } else {
+                                    const raw = e.target.value;
+                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
+                                    if (numeric === null) return;
+                                    setContractItems((prev) =>
+                                      prev.map((x) =>
+                                        x.kind === 'inventory' &&
+                                        x.ItemId === item.ItemId &&
+                                        x.WarehouseId === item.WarehouseId
+                                          ? { ...x, OverrideUnitPrice: numeric }
+                                          : x
+                                      )
+                                    );
+                                    setLineNetInputs((prev) => {
+                                      if (!(netKey in prev)) return prev;
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
+                                  }}
+                                  onBlur={() => {
+                                    const raw = priceOverrideInputs[overrideKey] ?? '';
+                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                    if (numeric === null) {
+                                      toast.warning('Birim fiyat negatif olamaz ve sayı olmalıdır.');
+                                      setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: '' }));
                                       setContractItems((prev) =>
                                         prev.map((x) =>
-                                          x.kind === 'manual' && x.ClientId === item.ClientId
-                                            ? { ...x, RentedQuantity: Math.max(1, Math.floor(v)) }
+                                          x.kind === 'inventory' &&
+                                          x.ItemId === item.ItemId &&
+                                          x.WarehouseId === item.WarehouseId
+                                            ? { ...x, OverrideUnitPrice: undefined }
                                             : x
                                         )
                                       );
+                                      return;
                                     }
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
                                   }}
-                                  className="input w-16 text-right py-1 text-sm"
-                                  aria-label="Miktar"
+                                  className="input w-full text-right py-0.5 text-xs"
+                                  placeholder={formatCurrency(item.UnitPriceSnapshot)}
+                                  aria-label="Birim Fiyat"
+                                />
+                              ) : (
+                                <input
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={
+                                    priceOverrideInputs[overrideKey] ??
+                                    formatPriceInput(
+                                      item.OverrideMonthlyPrice ??
+                                        (item.MonthlyPriceOverride ?? item.UnitPriceSnapshot * 30)
+                                    )
+                                  }
+                                  ref={(el) => {
+                                    const key = `${rowIndex}-4`;
+                                    if (el) itemsGridRefs.current.set(key, el);
+                                    else itemsGridRefs.current.delete(key);
+                                  }}
+                                  onFocus={(e) => {
+                                    setActiveItemsGridCell({ row: rowIndex, col: 4 });
+                                    e.currentTarget.select();
+                                  }}
+                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 4)}
+                                  onChange={(e) => {
+                                    const raw = e.target.value;
+                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
+                                    if (numeric === null) return;
+                                    setContractItems((prev) =>
+                                      prev.map((x) =>
+                                        x.kind === 'inventory' &&
+                                        x.ItemId === item.ItemId &&
+                                        x.WarehouseId === item.WarehouseId
+                                          ? { ...x, OverrideMonthlyPrice: numeric }
+                                          : x
+                                      )
+                                    );
+                                    setLineNetInputs((prev) => {
+                                      if (!(netKey in prev)) return prev;
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
+                                  }}
+                                  onBlur={() => {
+                                    const raw = priceOverrideInputs[overrideKey] ?? '';
+                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                    if (numeric === null) {
+                                      toast.warning('Aylık fiyat negatif olamaz ve sayı olmalıdır.');
+                                      setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: '' }));
+                                      setContractItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'inventory' &&
+                                          x.ItemId === item.ItemId &&
+                                          x.WarehouseId === item.WarehouseId
+                                            ? { ...x, OverrideMonthlyPrice: undefined }
+                                            : x
+                                        )
+                                      );
+                                      return;
+                                    }
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
+                                  }}
+                                  className="input w-full text-right py-0.5 text-xs"
+                                  placeholder={formatCurrency(item.UnitPriceSnapshot * 30)}
+                                  aria-label="Aylık Fiyat"
                                 />
                               )}
                             </td>
-                            <td className="px-3 py-2 text-right text-text-secondary">
-                              {contractType === 'SALE'
-                                ? formatCurrency(item.UnitPriceSnapshot)
-                                : `${formatCurrency(item.UnitPriceSnapshot)}/gün`}
-                            </td>
-                            <td className="px-3 py-2 text-right">
+                            <td className="text-right tabular-nums">
                               {isReadOnly ? (
                                 Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0
                               ) : (
@@ -3004,18 +3430,17 @@ export default function ContractDetailModal({
                                   step={0.01}
                                   value={Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0}
                                   ref={(el) => {
-                                    const key = `${rowIndex}-6`;
+                                    const key = `${rowIndex}-5`;
                                     if (el) itemsGridRefs.current.set(key, el);
                                     else itemsGridRefs.current.delete(key);
                                   }}
                                   onFocus={(e) => {
-                                    setActiveItemsGridCell({ row: rowIndex, col: 6 });
+                                    setActiveItemsGridCell({ row: rowIndex, col: 5 });
                                     e.currentTarget.select();
                                   }}
-                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 6)}
+                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 5)}
                                   onChange={(e) => {
                                     const v = parseFloat(e.target.value);
-                                    const netKey = lineNetInputKey(item);
                                     if (item.kind === 'inventory') {
                                       updateContractItemIskonto(
                                         item.ItemId,
@@ -3032,45 +3457,45 @@ export default function ContractDetailModal({
                                       return next;
                                     });
                                   }}
-                                  className="input w-16 text-right py-1 text-sm"
+                                  className="input w-full text-right py-0.5 text-xs"
                                   aria-label="İskonto %"
                                 />
                               )}
                             </td>
-                            <td className="px-3 py-2 text-right font-medium text-green-500">
+                            <td className="text-right tabular-nums font-medium text-green-500">
                               {isReadOnly ? (
-                                formatCurrency(getLineNetTotal(item))
+                                formatCurrency(lineNet)
                               ) : (
                                 <input
-                                  type="number"
-                                  min={0}
-                                  step={0.01}
-                                  value={
-                                    lineNetInputs[lineNetInputKey(item)] !== undefined
-                                      ? lineNetInputs[lineNetInputKey(item)]
-                                      : getLineNetTotal(item)
-                                  }
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={lineNetInputs[netKey] ?? formatPriceInput(lineNet)}
                                   ref={(el) => {
-                                    const key = `${rowIndex}-7`;
+                                    const key = `${rowIndex}-6`;
                                     if (el) itemsGridRefs.current.set(key, el);
                                     else itemsGridRefs.current.delete(key);
                                   }}
                                   onFocus={(e) => {
-                                    setActiveItemsGridCell({ row: rowIndex, col: 7 });
+                                    setActiveItemsGridCell({ row: rowIndex, col: 6 });
                                     e.currentTarget.select();
                                   }}
-                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 7)}
+                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 6)}
                                   onChange={(e) => {
                                     const raw = e.target.value;
-                                    const netKey = lineNetInputKey(item);
-                                    setLineNetInputs((prev) => ({ ...prev, [netKey]: raw }));
+                                    const { masked } = normalizeMaskedDecimalTR(raw, {
+                                      maxIntDigits: 12,
+                                      maxFracDigits: 2,
+                                    });
+                                    setLineNetInputs((prev) => ({ ...prev, [netKey]: masked }));
                                   }}
                                   onBlur={(e) => {
-                                    const netKey = lineNetInputKey(item);
                                     const raw = e.currentTarget.value;
-                                    const v = parseFloat(raw);
-                                    if (!Number.isFinite(v) || v < 0) {
-                                      if (String(raw).trim() !== '') {
+                                    const { numeric } = normalizeMaskedDecimalTR(raw, {
+                                      maxIntDigits: 12,
+                                      maxFracDigits: 2,
+                                    });
+                                    if (numeric === null || numeric === undefined) {
+                                      if (raw.trim() !== '') {
                                         toast.warning('Satır tutarı negatif olamaz ve sayı olmalıdır.');
                                       }
                                       setLineNetInputs((prev) => {
@@ -3080,7 +3505,7 @@ export default function ContractDetailModal({
                                       });
                                       return;
                                     }
-                                    const result = applyLineNetTarget(item, v);
+                                    const result = applyLineNetTarget(item, numeric);
                                     if (result.reason === 'net_above_gross') {
                                       toast.warning('Satır tutarı brüt tutarı aşamaz; iskonto %0 yapıldı.');
                                     } else if (result.reason === 'gross_zero') {
@@ -3092,38 +3517,57 @@ export default function ContractDetailModal({
                                       return next;
                                     });
                                   }}
-                                  className="input w-28 text-right py-1 text-sm font-medium text-green-500"
+                                  className="input w-full text-right py-0.5 text-xs font-medium text-green-500"
                                   aria-label="İskontolu satır tutarı"
                                   title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
                                 />
                               )}
                             </td>
-                            <td className="px-2 py-2 text-center">
-                              {isRentalContract && !isNew && item.kind === 'inventory' && active && remainingOnRent > 0 && isReadOnly && (
-                                <button type="button" onClick={() => openReturnForm(item)} className="btn-secondary text-xs px-2 py-1" disabled={isReturning}>İade Et</button>
-                              )}
-                              {!isReadOnly && (
+                            <td className="text-center">
+                              {isRentalContract && !isNew && item.kind === 'inventory' && active && remainingOnRent > 0 && isReadOnly ? (
+                                <button
+                                  type="button"
+                                  onClick={() => openReturnForm(item)}
+                                  className="btn-secondary text-[10px] px-1 py-0 leading-none h-[1.125rem] min-h-0"
+                                  disabled={isReturning}
+                                  title={
+                                    item.ReturnedQuantity > 0
+                                      ? `İade: ${item.ReturnedQuantity}, Kirada: ${remainingOnRent}`
+                                      : 'İade et'
+                                  }
+                                >
+                                  İade
+                                </button>
+                              ) : !isReadOnly ? (
                                 <button
                                   type="button"
                                   ref={(el) => {
-                                    const key = `${rowIndex}-8`;
+                                    const key = `${rowIndex}-7`;
                                     if (el) itemsGridRefs.current.set(key, el);
                                     else itemsGridRefs.current.delete(key);
                                   }}
-                                  onFocus={() => setActiveItemsGridCell({ row: rowIndex, col: 8 })}
-                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 8)}
+                                  onFocus={() => setActiveItemsGridCell({ row: rowIndex, col: 7 })}
+                                  onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 7)}
                                   onClick={() => (item.kind === 'inventory' ? handleRemoveItem(item.ItemId, item.WarehouseId) : handleRemoveManualItem(item.ClientId))}
-                                  className="text-error hover:text-red-700 inline-flex p-1"
+                                  className="action-remove-btn"
                                   aria-label="Kaldır"
+                                  title="Kaldır"
                                 >
-                                  <XIcon size={18} weight="regular" />
+                                  <XIcon size={12} weight="bold" aria-hidden />
                                 </button>
-                              )}
+                              ) : item.kind === 'inventory' && item.ReturnedQuantity > 0 ? (
+                                <span
+                                  className="text-[10px] text-text-secondary tabular-nums"
+                                  title={`İade: ${item.ReturnedQuantity}, ${contractType === 'SALE' ? 'Kalan' : 'Kirada'}: ${remainingOnRent}`}
+                                >
+                                  {item.ReturnedQuantity}/{remainingOnRent}
+                                </span>
+                              ) : null}
                             </td>
                           </tr>
                           {isRentalContract && item.kind === 'inventory' && isReturnFormOpen && (
                             <tr className="bg-background-surface">
-                              <td colSpan={isNew ? 9 : 8} className="px-3 py-3 border-b border-background-border">
+                              <td colSpan={isReadOnly ? LINE_ITEM_COL_SPAN.contract.readOnly : LINE_ITEM_COL_SPAN.contract.editable} className="px-3 py-3 border-b border-background-border">
                                 <div className="flex flex-wrap items-center gap-3">
                                   <label className="text-sm">İade Miktarı:</label>
                                   <input type="text" inputMode="numeric" autoComplete="off" value={returnQuantityStr} onChange={(e) => handleNumericInput(setReturnQuantityStr, e)} className="input w-24" placeholder="1" disabled={isReturning} aria-label="İade miktarı" />

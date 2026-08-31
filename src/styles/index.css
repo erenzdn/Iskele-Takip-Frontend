@@ -229,6 +229,176 @@
   font-weight: 600;
 }
 
+/* Envanter / müşteri sayfalarıyla uyumlu veri tablosu */
+.table-data-grid {
+  width: 100%;
+  table-layout: fixed;
+  font-size: 0.75rem;
+  line-height: 1rem;
+  border-collapse: collapse;
+}
+.table-data-grid thead {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  border-bottom: 1px solid var(--color-border);
+}
+.table-data-grid thead th {
+  padding: 0.125rem 0.375rem;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  border-right: 1px solid var(--color-border);
+  background: var(--color-bg-hover);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table-data-grid thead th:last-child {
+  border-right: none;
+}
+.table-data-grid tbody tr {
+  border-bottom: 1px solid var(--color-border);
+  transition: background-color 0.15s;
+}
+.table-data-grid tbody tr:hover {
+  background: var(--color-bg-hover);
+}
+.table-data-grid tbody td {
+  padding: 0 0.375rem;
+  vertical-align: middle;
+  border-right: 1px solid color-mix(in srgb, var(--color-border) 60%, transparent);
+  overflow: hidden;
+}
+.table-data-grid tbody td:last-child {
+  border-right: none;
+}
+.table-data-grid .item-code-badge {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-weight: 500;
+  color: var(--color-primary);
+  background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.table-data-grid .addendum-badge {
+  font-size: 0.625rem;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--color-warning);
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
+  padding: 0.125rem 0.25rem;
+  border-radius: 0.25rem;
+  white-space: nowrap;
+  display: inline-block;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+.table-data-grid.table-excel-rows tbody tr {
+  height: 1.375rem;
+}
+.table-data-grid.table-excel-rows tbody td {
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  height: 1.375rem;
+  max-height: 1.375rem;
+  line-height: 1.25rem;
+}
+.table-data-grid.table-excel-rows tbody td .input {
+  height: 1.25rem;
+  min-height: 1.25rem;
+  padding-top: 0;
+  padding-bottom: 0;
+  line-height: 1.25rem;
+  font-size: 0.75rem;
+}
+.table-data-grid.table-excel-rows tbody td .btn-secondary {
+  padding: 0 0.25rem;
+  font-size: 0.625rem;
+  line-height: 1.25rem;
+  min-height: 1.25rem;
+}
+.table-data-grid.table-excel-rows .cell-clip {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
+}
+.table-data-grid.table-excel-rows tr.addendum-row td {
+  background: color-mix(in srgb, var(--color-warning) 7%, var(--color-bg-panel));
+}
+.table-data-grid.table-excel-rows tr.addendum-separator-row td {
+  height: 1.125rem;
+  max-height: 1.125rem;
+  padding: 0 0.375rem;
+  font-size: 0.625rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--color-warning) 85%, var(--color-text-secondary));
+  background: color-mix(in srgb, var(--color-warning) 10%, var(--color-bg-panel));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.table-data-grid .drag-col {
+  width: 0.75rem;
+  max-width: 0.75rem;
+  min-width: 0.75rem;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  text-align: center;
+  vertical-align: middle;
+}
+.table-data-grid .drag-handle {
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  border-radius: 0.125rem;
+  color: color-mix(in srgb, var(--color-text-secondary) 70%, transparent);
+}
+.table-data-grid .drag-handle:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+}
+.table-data-grid .drag-handle:active {
+  cursor: grabbing;
+}
+.table-data-grid .action-col {
+  width: 1.25rem;
+  max-width: 1.25rem;
+  min-width: 1.25rem;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+  text-align: center;
+  vertical-align: middle;
+}
+.table-data-grid .action-remove-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  margin: 0;
+  line-height: 1;
+  color: var(--color-error);
+}
+.table-data-grid .action-remove-btn:hover {
+  color: #dc2626;
+}
+
 /* Sınırları Gizlenmiş (Borderless) Tablo — editörde çizgi yok */
 .ProseMirror table.border-none,
 .ProseMirror table.border-none td,
@@ -363,5 +533,55 @@
 .template-editor-fields *::-webkit-scrollbar-thumb {
   background: var(--color-border);
   border-radius: 999px;
+}
+
+/* Şablon editörü — sayfa sonu işaretçisi (yalnızca editörde görünür) */
+.template-editor-paper .ProseMirror .page-break {
+  position: relative;
+  display: block;
+  height: 0;
+  margin: 28px calc(-1 * var(--page-margin-left, 15mm));
+  padding: 0;
+  border: none;
+  page-break-after: auto !important;
+  break-after: auto !important;
+  user-select: none;
+  cursor: default;
+}
+
+.template-editor-paper .ProseMirror .page-break::before {
+  content: '';
+  display: block;
+  height: 20px;
+  margin: 0;
+  background: color-mix(in srgb, var(--color-bg-elevated) 88%, var(--color-bg-panel));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--color-border) 80%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--color-border) 80%, transparent);
+}
+
+.template-editor-paper .ProseMirror .page-break::after {
+  content: '— Sayfa Sonu —';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 10px;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-text-secondary);
+  background: var(--color-bg-panel);
+  border: 1px solid color-mix(in srgb, var(--color-border) 85%, transparent);
+  border-radius: 999px;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.template-editor-paper .ProseMirror .page-break.ProseMirror-selectednode::after {
+  color: var(--color-primary);
+  border-color: color-mix(in srgb, var(--color-primary) 35%, var(--color-border));
+  background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-panel));
 }
 

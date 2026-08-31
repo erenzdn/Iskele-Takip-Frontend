@@ -186,8 +186,9 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     if (!openQuoteId) return;
     const idNum = Number(openQuoteId);
     if (!Number.isFinite(idNum) || idNum <= 0) return;
-    if (consumedOpenQuoteIdRef.current === idNum) return;
-    consumedOpenQuoteIdRef.current = idNum;
+    const openKey = st?.openQuoteNonce ?? idNum;
+    if (consumedOpenQuoteIdRef.current === openKey) return;
+    consumedOpenQuoteIdRef.current = openKey;
 
     void (async () => {
       try {
@@ -544,8 +545,27 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     setIsQuoteModalOpen(false);
     setSelectedQuote(null);
     setIsQuoteClonedDraft(false);
+    consumedOpenQuoteIdRef.current = null;
     loadData();
   };
+
+  const handleOpenSourceQuoteFromContract = useCallback(async (quoteId: number) => {
+    consumedOpenQuoteIdRef.current = null;
+    setIsContractModalOpen(false);
+    setSelectedContract(null);
+    setContractInitialTab('info');
+    try {
+      const quote = await quoteService.getByIdAsync(quoteId);
+      setActiveTab(isQuoteConverted(quote) ? 'quotesConverted' : 'quotes');
+      setSelectedQuote(quote);
+      setIsNewQuote(false);
+      setIsQuoteClonedDraft(false);
+      setIsQuoteModalOpen(true);
+    } catch (error) {
+      console.error('Open source quote error:', error);
+      toast.error(getApiErrorMessage(error) || 'Teklif açılamadı.');
+    }
+  }, []);
 
   const formatCurrency = (amount: number | null | undefined) => {
     if (amount == null) return '₺0,00';
@@ -1352,6 +1372,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           isNew={isNewContract}
           initialTab={contractInitialTab}
           onClose={handleContractModalClose}
+          onOpenSourceQuote={handleOpenSourceQuoteFromContract}
           onDataChanged={handleContractDataChanged}
           defaultTypeForNew={scopeType}
           initiallyFullScreen={contractInitiallyFullScreen}

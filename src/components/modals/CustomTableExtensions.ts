@@ -103,6 +103,173 @@ function stripOutlineFromStyle(existing: string | null | undefined): string | nu
   return cleaned || null;
 }
 
+type ImageExportAlignment = 'left' | 'right' | 'center' | 'none';
+
+type TemplateWalkNode = {
+  type?: string;
+  attrs?: Record<string, unknown>;
+  content?: unknown[];
+};
+
+/** Görsel hizası: yalnızca görsel attrs'ından çözülür; paragraf/hücre text-align kullanılmaz. */
+export function resolveImageExportAlignment(
+  attrs: Record<string, unknown>
+): ImageExportAlignment {
+  const explicit = attrs.align;
+  if (explicit === 'left' || explicit === 'right' || explicit === 'center') {
+    return explicit;
+  }
+
+  const wrapperStyle = String(attrs.wrapperStyle || '');
+  const containerStyle = String(attrs.containerStyle || '');
+
+  if (/float\s*:\s*left/i.test(wrapperStyle)) return 'left';
+  if (/float\s*:\s*right/i.test(wrapperStyle)) return 'right';
+  if (/margin\s*:\s*0\s+auto\s+0\s+0/i.test(containerStyle)) return 'left';
+  if (/margin\s*:\s*0\s+0\s+0\s+auto/i.test(containerStyle)) return 'right';
+  if (/margin\s*:\s*0\s+auto/i.test(containerStyle)) return 'center';
+
+  // Editörde inline görsel varsayılanı sola yaslı görünür
+  return 'left';
+}
+
+function buildImageBlockAlignStyle(
+  attrs: Record<string, unknown>,
+  align: ImageExportAlignment
+): string {
+  const parts: string[] = [];
+  const width = extractImageWidth(attrs);
+  if (width) parts.push(`width: ${width}`);
+
+  const height = attrs.height;
+  if (height != null && height !== '') {
+    const asString = String(height);
+    parts.push(`height: ${asString.endsWith('px') ? asString : `${asString}px`}`);
+  }
+
+  parts.push('display: block', 'max-width: 100%');
+  if (align === 'left') {
+    parts.push('margin-left: 0', 'margin-right: auto');
+  } else if (align === 'right') {
+    parts.push('margin-left: auto', 'margin-right: 0');
+  } else if (align === 'center') {
+    parts.push('margin-left: auto', 'margin-right: auto');
+  }
+
+  return parts.join('; ') + ';';
+}
+
+function syncTextAlignForImageExport(
+  paragraph: TemplateWalkNode | undefined,
+  cell: TemplateWalkNode | undefined,
+  align: ImageExportAlignment
+) {
+  if (paragraph?.attrs) {
+    paragraph.attrs.textAlign = align;
+  }
+
+  if (!cell?.attrs) return;
+
+  const rawStyle = String(cell.attrs.style || '')
+    .replace(/text-align\s*:\s*[^;]+;?/gi, '')
+    .replace(/;\s*;/g, ';')
+    .trim()
+    .replace(/^;|;$/g, '')
+    .trim();
+
+  cell.attrs.style = rawStyle ? `${rawStyle}; text-align: ${align}` : `text-align: ${align}`;
+}
+
+function ensureTableCellExportStyle(node: TemplateWalkNode) {
+  if (node.type !== 'tableCell' && node.type !== 'tableHeader') return;
+  if (!node.attrs) node.attrs = {};
+
+  let style = String(node.attrs.style || '')
+    .replace(/border-collapse\s*:\s*separate\s*!important\s*;?/gi, '')
+    .trim();
+
+  const colwidth = node.attrs.colwidth;
+  if (!/width\s*:/i.test(style) && Array.isArray(colwidth) && colwidth[0]) {
+    style = style ? `${style}; width: ${colwidth[0]}px` : `width: ${colwidth[0]}px`;
+  }
+
+  node.attrs.style = style;
+}
+
+function ensureTableExportStyle(node: TemplateWalkNode) {
+  if (node.type !== 'table' || !node.attrs) return;
+  const style = String(node.attrs.style || '');
+  if (!/width\s*:/i.test(style)) {
+    node.attrs.style = style ? `${style}; width: 100%` : 'width: 100%';
+  }
+}
+
+function extractImageWidth(attrs: Record<string, unknown>): string | null {
+  const width = attrs.width;
+  if (width != null && width !== '') {
+    const asString = String(width);
+    return asString.endsWith('px') ? asString : `${asString}px`;
+  }
+
+  const containerStyle = String(attrs.containerStyle || '');
+  const match = containerStyle.match(/width:\s*([0-9.]+)px/i);
+  return match ? `${match[1]}px` : null;
+}
+
+function buildImageExportStyle(
+  attrs: Record<string, unknown>,
+  align: ImageExportAlignment
+): string {
+  const parts: string[] = [];
+  const width = extractImageWidth(attrs);
+  if (width) parts.push(`width: ${width}`);
+
+  const height = attrs.height;
+  if (height != null && height !== '') {
+    const asString = String(height);
+    parts.push(`height: ${asString.endsWith('px') ? asString : `${asString}px`}`);
+  }
+
+  if (align === 'left') {
+    parts.push('float: left', 'margin-right: 1.5rem', 'margin-bottom: 0.5rem', 'display: inline-block');
+  } else if (align === 'right') {
+    parts.push('float: right', 'margin-left: 1.5rem', 'margin-bottom: 0.5rem', 'display: inline-block');
+  } else if (align === 'center') {
+    parts.push('display: block', 'margin-left: auto', 'margin-right: auto', 'clear: both');
+  } else {
+    parts.push('display: inline-block');
+  }
+
+  return parts.join('; ') + ';';
+}
+
+function normalizeImageNodeForExport(
+  node: { attrs?: Record<string, unknown> },
+  insideTableCell: boolean,
+  paragraph?: TemplateWalkNode,
+  cell?: TemplateWalkNode
+) {
+  if (!node.attrs) node.attrs = {};
+
+  const imageId = node.attrs['data-image-id'];
+  if (imageId) {
+    node.attrs.src = `image:${imageId}`;
+    delete node.attrs['data-image-id'];
+  }
+
+  const align = resolveImageExportAlignment(node.attrs);
+
+  if (insideTableCell) {
+    node.attrs.align = align;
+    node.attrs.style = buildImageBlockAlignStyle(node.attrs, align);
+    syncTextAlignForImageExport(paragraph, cell, align);
+    return;
+  }
+
+  node.attrs.align = align;
+  node.attrs.style = buildImageExportStyle(node.attrs, align);
+}
+
 function applyBorderlessToCells(node: {
   type?: string;
   attrs?: Record<string, unknown>;
@@ -125,21 +292,26 @@ function applyBorderlessToCells(node: {
 export function prepareTemplateContentForExport(content: unknown): unknown {
   const cloned = JSON.parse(JSON.stringify(content));
 
-  const processNodes = (node: {
-    type?: string;
-    attrs?: Record<string, unknown>;
-    content?: unknown[];
-  }) => {
+  const walkNode = (node: TemplateWalkNode, ancestors: TemplateWalkNode[]) => {
+    if (!node || typeof node !== 'object') return;
+
+    const cell = [...ancestors]
+      .reverse()
+      .find((ancestor) => ancestor.type === 'tableCell' || ancestor.type === 'tableHeader');
+    const paragraph = [...ancestors].reverse().find((ancestor) => ancestor.type === 'paragraph');
+    const insideTableCell = Boolean(cell);
+
+    if (node.type === 'tableCell' || node.type === 'tableHeader') {
+      ensureTableCellExportStyle(node);
+    }
+
     if ((node.type === 'image' || node.type === 'imageResize') && node.attrs) {
-      const imageId = node.attrs['data-image-id'];
-      if (imageId) {
-        node.attrs.src = `image:${imageId}`;
-        delete node.attrs['data-image-id'];
-      }
+      normalizeImageNodeForExport(node, insideTableCell, paragraph, cell);
     }
 
     if (node.type === 'table') {
       if (!node.attrs) node.attrs = {};
+      ensureTableExportStyle(node);
       const strippedStyle = stripVerticalTableMargins(node.attrs.style as string | undefined);
       if (strippedStyle) {
         node.attrs.style = strippedStyle;
@@ -162,12 +334,12 @@ export function prepareTemplateContentForExport(content: unknown): unknown {
 
     if (Array.isArray(node.content)) {
       for (const child of node.content) {
-        processNodes(child as typeof node);
+        walkNode(child as TemplateWalkNode, [...ancestors, node]);
       }
     }
   };
 
-  processNodes(cloned);
+  walkNode(cloned as TemplateWalkNode, []);
   return cloned;
 }
 

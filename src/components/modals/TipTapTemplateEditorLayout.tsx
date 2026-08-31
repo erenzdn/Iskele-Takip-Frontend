@@ -38,6 +38,7 @@ import {
   TrashIcon,
   GridFourIcon,
   LayoutIcon,
+  SquareSplitHorizontalIcon,
 } from '@phosphor-icons/react';
 import type { TemplateImage } from '../../models';
 import {
@@ -241,7 +242,7 @@ export default function TipTapTemplateEditorLayout({
             <table class="border-none" data-no-border="true" style="width: 100%; ${BORDERLESS_STYLE}">
               <tbody>
                 <tr>
-                  <td style="width: 30%; vertical-align: middle; text-align: center; ${BORDERLESS_STYLE}"><p style="text-align: center;"><br></p></td>
+                  <td style="width: 30%; vertical-align: top; text-align: left; ${BORDERLESS_STYLE}"><p style="text-align: left;"><br></p></td>
                   <td style="width: 70%; vertical-align: middle; text-align: center; ${BORDERLESS_STYLE}"><h2 style="text-align: center;">ŞİRKET UNVANI / BAŞLIK</h2><p style="text-align: center;">${documentNumberLabel}: {{${documentNumberKey}}}<br>Tarih: {{bugunTarihi}}</p></td>
                 </tr>
               </tbody>
@@ -634,6 +635,15 @@ export default function TipTapTemplateEditorLayout({
           </select>
 
           <ToolbarButton
+            title="Sayfa sonu ekle (Ctrl+Enter)"
+            active={editor.isActive('pageBreak')}
+            onClick={() => editor.chain().focus().setPageBreak().run()}
+          >
+            <SquareSplitHorizontalIcon size={15} />
+            <span className="hidden lg:inline">Sayfa Sonu</span>
+          </ToolbarButton>
+
+          <ToolbarButton
             title={
               showGridlines
                 ? 'Düzen kılavuzlarını gizle (sadece editör)'
@@ -909,6 +919,8 @@ export default function TipTapTemplateEditorLayout({
                 <p>
                   Logo ve yan yana içerikler için <strong>Düzen / Tablo</strong> menüsünü kullanın.
                   Logo hücresine tıklayıp <strong>Kayıtlı görsel</strong> listesinden logoyu ekleyebilirsiniz.
+                  Yeni sayfa başlatmak için araç çubuğundaki <strong>Sayfa Sonu</strong> düğmesini veya{' '}
+                  <strong>Ctrl+Enter</strong> kısayolunu kullanın.
                   Gri kılavuz çizgileri yalnızca editörde görünür; önizleme ve PDF&apos;te çıkmaz.
                   İsterseniz araç çubuğundaki <strong>Kılavuz</strong> ile açıp kapatabilirsiniz.
                 </p>

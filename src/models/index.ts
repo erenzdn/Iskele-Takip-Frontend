@@ -545,6 +545,12 @@ export interface InventoryContractLineItem {
   ItemCode?: string;
   /** UI state: satır bazlı ürün kodu override */
   ItemCodeOverride?: string | null;
+  /** UI state: satır bazlı ürün adı override */
+  ItemNameOverride?: string | null;
+  /** UI state: satış birim fiyat override */
+  OverrideUnitPrice?: number;
+  /** UI state: kiralama aylık fiyat override */
+  OverrideMonthlyPrice?: number;
 }
 
 export interface ManualContractLineItem {

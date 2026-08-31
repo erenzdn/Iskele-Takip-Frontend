@@ -21,6 +21,7 @@ import {
   prepareTemplateContentForExport,
   ensureLayoutTablesBorderless,
 } from './CustomTableExtensions';
+import { PageBreak } from './PageBreakExtension';
 import TipTapTemplateEditorLayout, {
   type TipTapPlaceholderGroup,
 } from './TipTapTemplateEditorLayout';
@@ -70,7 +71,7 @@ export default function ContractTemplateEditorModal({
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [isTableActive, setIsTableActive] = useState(false);
   const [isImageActive, setIsImageActive] = useState(false);
-  const [showGridlines, setShowGridlines] = useState(false);
+  const [showGridlines, setShowGridlines] = useState(true);
   const [pageMargins, setPageMargins] = useState<PageMargins>(DEFAULT_PAGE_MARGINS);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -91,6 +92,7 @@ export default function ContractTemplateEditorModal({
       TextStyle,
       FontSize,
       LineHeight,
+      PageBreak,
     ],
     content: {
       type: 'doc',

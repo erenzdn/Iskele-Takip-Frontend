@@ -58,5 +58,7 @@ export function getPageMarginsPaperStyle(pageMargins: PageMargins): Record<strin
     paddingRight: `${margins.right}mm`,
     '--page-margin-top': `${margins.top}mm`,
     '--page-margin-bottom': `${margins.bottom}mm`,
+    '--page-margin-left': `${margins.left}mm`,
+    '--page-margin-right': `${margins.right}mm`,
   };
 }
