@@ -1,5 +1,5 @@
 /*
- * Kanonik belge stil sayfası — Iskele-Takip-Backend/src/services/documentStyles.js ile
+ * Kanonik belge stil sayfası — IskeleTakipAPI/src/services/documentStyles.js ile
  * BİREBİR AYNI olmalıdır. Bu dosya yalnızca fallback amaçlıdır: editör açılışında
  * GET /document-styles.css çekilebiliyorsa canlı sürüm bunun yerine kullanılır
  * (bkz. src/hooks/useDocumentTheme.ts). Backend'de bu CSS değişirse burası da güncellenmeli.
@@ -55,6 +55,10 @@
 .doc-root ul { list-style-type: disc; }
 .doc-root ol { list-style-type: decimal; }
 .doc-root li > p { margin: 0; }
+.doc-root li {
+  page-break-inside: avoid;
+  break-inside: avoid;
+}
 
 .doc-root blockquote {
   padding-left: 1rem;
@@ -180,25 +184,29 @@
   border: none;
 }
 
-.doc-root table.widget-table {
-  margin: 10px 0;
+.doc-root table.malzeme-tablosu {
+  margin: 4px 0 !important;
+  font-size: 8.5pt !important;
+  line-height: 1.15 !important;
+  table-layout: fixed !important;
+  border: none;
 }
-.doc-root table.widget-table thead tr {
-  background: #f0f0f0;
+.doc-root table.malzeme-tablosu th,
+.doc-root table.malzeme-tablosu td {
+  border: 0.5pt solid #bbb !important;
+  padding: 1px 4px !important;
+  font-size: 8.5pt !important;
+  line-height: 1.15 !important;
+  vertical-align: middle !important;
 }
-.doc-root table.widget-table thead tr.widget-table-header-dark {
-  background: #1a3c5e;
-  color: #ffffff;
+.doc-root table.malzeme-tablosu th {
+  border-color: #888 !important;
+  background-color: #eee !important;
 }
-.doc-root table.widget-table tfoot tr {
-  background: #f0f0f0;
-  font-weight: 700;
-}
-.doc-root table.widget-table tbody tr.widget-zebra {
-  background: #f7f9fc;
-}
-.doc-root table.widget-table tfoot tr.widget-total-row-accent td {
-  border-top: 2px solid #1a3c5e;
+
+.doc-root img {
+  max-width: 100%;
+  height: auto;
 }
 
 .doc-root tr,

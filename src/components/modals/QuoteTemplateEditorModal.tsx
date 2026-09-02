@@ -23,6 +23,7 @@ import {
 } from './CustomTableExtensions';
 import { PageBreak } from './PageBreakExtension';
 import { EditorPagination } from './EditorPaginationExtension';
+import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
 import TipTapTemplateEditorLayout, {
   type TipTapPlaceholderGroup,
 } from './TipTapTemplateEditorLayout';
@@ -32,6 +33,7 @@ import {
   withPageMargins,
   type PageMargins,
 } from './PageMargins';
+import { DOCUMENT_TEMPLATE_PLACEHOLDERS } from '../../constants/documentTemplatePlaceholders';
 
 interface QuoteTemplateEditorModalProps {
   template: QuoteTemplate | null;
@@ -41,55 +43,10 @@ interface QuoteTemplateEditorModalProps {
 }
 
 const PLACEHOLDER_GROUPS: TipTapPlaceholderGroup[] = [
-  {
-    id: 'musteri',
-    title: 'Müşteri',
-    items: [
-      { key: 'musteriAdi', label: 'Müşteri Adı' },
-      { key: 'musteriAdres', label: 'Müşteri Adres' },
-      { key: 'musteriTelefon', label: 'Müşteri Telefon' },
-      { key: 'musteriEmail', label: 'Müşteri Email' },
-      { key: 'musteriVergiNo', label: 'Müşteri Vergi No' },
-    ],
-  },
-  {
-    id: 'santiye',
-    title: 'Şantiye',
-    items: [
-      { key: 'santiyeAdi', label: 'Şantiye Adı' },
-      { key: 'santiyeAdres', label: 'Şantiye Adres' },
-    ],
-  },
-  {
-    id: 'teklif',
-    title: 'Teklif',
-    items: [
-      { key: 'teklifNo', label: 'Teklif No' },
-      { key: 'teklifKodu', label: 'Teklif Kodu' },
-      { key: 'baslangicTarihi', label: 'Başlangıç Tarihi' },
-      { key: 'bitisTarihi', label: 'Bitiş Tarihi' },
-      { key: 'toplamTutar', label: 'Toplam Tutar' },
-      { key: 'iskonto', label: 'İskonto' },
-      { key: 'kdvOrani', label: 'KDV Oranı' },
-      { key: 'kdvTutari', label: 'KDV Tutarı' },
-      { key: 'iskontoSonrasiTutar', label: 'İskonto Sonrası Tutar' },
-      { key: 'kdvDahilTutar', label: 'KDV Dahil Tutar' },
-      { key: 'bugunTarihi', label: 'Bugünün Tarihi' },
-    ],
-  },
-  {
-    id: 'cek',
-    title: 'Çek',
-    items: [
-      { key: 'Check.BankName', label: 'Çek Banka Adı' },
-      { key: 'Check.CheckNumber', label: 'Çek Numarası' },
-      { key: 'Check.AmountFormatted', label: 'Çek Tutarı (formatlı)' },
-      { key: 'Check.IssueDateFormatted', label: 'Keside Tarihi (formatlı)' },
-      { key: 'Check.DueDateFormatted', label: 'Vade Tarihi (formatlı)' },
-      { key: 'Check.StatusLabel', label: 'Çek Durumu' },
-      { key: 'Check.CustomerName', label: 'Müşteri Adı' },
-    ],
-  },
+  { id: 'musteri', title: 'Müşteri', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.musteri },
+  { id: 'santiye', title: 'Şantiye', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.santiye },
+  { id: 'teklif', title: 'Teklif', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.teklif },
+  { id: 'cek', title: 'Çek', items: DOCUMENT_TEMPLATE_PLACEHOLDERS.cek },
 ];
 
 type ImageCommandOptions = {
@@ -135,6 +92,7 @@ export default function QuoteTemplateEditorModal({
       LineHeight,
       PageBreak,
       EditorPagination,
+      EditorWidgetPreview.configure({ context: 'quote' }),
     ],
     content: {
       type: 'doc',

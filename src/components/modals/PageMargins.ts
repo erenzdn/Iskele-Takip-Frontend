@@ -52,8 +52,7 @@ export function getPageMarginsPaperStyle(pageMargins: PageMargins): Record<strin
   const margins = normalizePageMargins(pageMargins);
 
   return {
-    paddingTop: `${margins.top}mm`,
-    paddingBottom: `${margins.bottom}mm`,
+    /* Yatay kenar boşlukları kağıtta; dikey boşluklar ProseMirror'da sayfa başına uygulanır (PDF ile aynı). */
     paddingLeft: `${margins.left}mm`,
     paddingRight: `${margins.right}mm`,
     '--page-margin-top': `${margins.top}mm`,
@@ -61,5 +60,6 @@ export function getPageMarginsPaperStyle(pageMargins: PageMargins): Record<strin
     '--page-margin-left': `${margins.left}mm`,
     '--page-margin-right': `${margins.right}mm`,
     '--page-content-height': `calc(var(--page-height) - ${margins.top}mm - ${margins.bottom}mm)`,
+    '--inter-page-spacing': `calc(var(--page-margin-bottom) + var(--page-gap) + var(--page-margin-top))`,
   };
 }

@@ -407,46 +407,133 @@
   clear: both !important;
 }
 
-/* A4 şablon editörü – Word benzeri sayfa görünümü (yalnızca editör) */
+/* A4 şablon editörü – ayrı sayfa kağıtları */
 .template-editor-workspace {
+  --page-width: 21cm;
   --page-height: 29.7cm;
-  --page-gap: 36px;
+  --page-gap: 16px;
   --page-canvas: #80868b;
   --page-sheet-color: #ffffff;
   background: var(--page-canvas);
 }
 
 .template-editor-paper {
-  --page-margin-top: 0mm;
-  --page-margin-bottom: 0mm;
-  --page-content-height: calc(var(--page-height) - var(--page-margin-top) - var(--page-margin-bottom));
-  width: 21cm;
-  max-width: calc(100vw - 2rem);
-  min-height: var(--page-height);
+  --page-content-height: calc(var(--page-height) - var(--page-margin-top, 0mm) - var(--page-margin-bottom, 0mm));
+  --inter-page-spacing: calc(var(--page-margin-bottom, 0mm) + var(--page-gap) + var(--page-margin-top, 0mm));
+  --page-sheet-step: calc(var(--page-height) + var(--page-gap));
+  position: relative;
+  width: var(--page-width);
+  min-width: var(--page-width);
+  max-width: var(--page-width);
+  min-height: var(--editor-paper-min-height, var(--page-height));
   box-sizing: border-box;
-  background: var(--page-sheet-color);
-  border: none;
-  border-radius: 2px;
-  box-shadow:
-    0 1px 2px rgba(15, 23, 42, 0.08),
-    0 10px 28px -6px rgba(15, 23, 42, 0.18);
+  background: transparent;
   flex-shrink: 0;
   align-self: flex-start;
   overflow: visible;
 }
 
+/* Beyaz sayfa kağıtları — tek görsel katman */
+.template-editor-paper::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    to bottom,
+    var(--page-sheet-color) 0,
+    var(--page-sheet-color) var(--page-height),
+    transparent var(--page-height),
+    transparent var(--page-sheet-step)
+  );
+  box-shadow:
+    0 1px 2px rgba(15, 23, 42, 0.06),
+    0 8px 24px -8px rgba(15, 23, 42, 0.14);
+}
+
 .template-editor-workspace .template-editor-paper.doc-root {
-  background: var(--page-sheet-color);
+  background: transparent;
 }
 
 .template-editor-paper .ProseMirror {
-  min-height: var(--page-content-height);
+  position: relative;
+  z-index: 1;
+  min-height: var(--editor-flow-min-height, var(--page-content-height));
+  padding-top: var(--page-margin-top, 0mm);
+  padding-bottom: var(--page-margin-bottom, 0mm);
   background: transparent;
+  /* Sayfa aralığında (gri bölge) metin gösterme */
+  -webkit-mask-image: repeating-linear-gradient(
+    to bottom,
+    #000 0,
+    #000 var(--page-height),
+    transparent calc(var(--page-height) + 0.5px),
+    transparent calc(var(--page-height) + var(--page-gap) - 0.5px),
+    #000 calc(var(--page-height) + var(--page-gap)),
+    #000 var(--page-sheet-step)
+  );
+  mask-image: repeating-linear-gradient(
+    to bottom,
+    #000 0,
+    #000 var(--page-height),
+    transparent calc(var(--page-height) + 0.5px),
+    transparent calc(var(--page-height) + var(--page-gap) - 0.5px),
+    #000 calc(var(--page-height) + var(--page-gap)),
+    #000 var(--page-sheet-step)
+  );
+  -webkit-mask-size: 100% var(--page-sheet-step);
+  mask-size: 100% var(--page-sheet-step);
+  -webkit-mask-repeat: repeat-y;
+  mask-repeat: repeat-y;
+}
+
+/* Son sayfa — içerik az olsa bile tam A4 içerik alanı kadar beyaz boşluk */
+.template-editor-paper .ProseMirror::after {
+  content: '';
+  display: block;
+  height: var(--editor-trailing-fill, 0px);
+  pointer-events: none;
+  user-select: none;
+}
+
+/* Widget placeholder metnini gizle; PDF ile aynı HTML önizlemesi göster */
+.template-editor-paper .ProseMirror .editor-widget-source-hidden {
+  display: none !important;
+}
+
+.template-editor-paper .ProseMirror .editor-widget-preview {
+  display: block;
+  margin: 10px 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.template-editor-paper .ProseMirror .editor-widget-preview table {
+  width: 100%;
+}
+
+/* Placeholder önizleme — {{musteriAdi}} vb. */
+.template-editor-paper .ProseMirror .editor-placeholder-source-hidden {
+  font-size: 0 !important;
+  line-height: 0 !important;
+  color: transparent !important;
+  letter-spacing: 0 !important;
+}
+
+.template-editor-paper .ProseMirror .editor-placeholder-preview {
+  display: inline;
+  color: #0f766e;
+  background: rgba(15, 118, 110, 0.08);
+  border-radius: 2px;
+  padding: 0 2px;
+  pointer-events: none;
+  user-select: none;
 }
 
 /* Kılavuz — A4 içerik alanı sonu (gri sayfa kesiti değil; yalnızca editör) */
 .show-gridlines .template-editor-paper .ProseMirror {
-  --page-flow-step: calc(var(--page-content-height) + var(--page-gap));
+  --page-flow-step: calc(var(--page-content-height) + var(--inter-page-spacing));
   background-image: repeating-linear-gradient(
     to bottom,
     transparent 0,
@@ -459,18 +546,18 @@
   );
   background-size: 100% var(--page-flow-step);
   background-repeat: repeat-y;
+  background-position: 0 var(--page-margin-top, 0mm);
 }
 
-/* Otomatik sayfa aralığı — gri kesit (akış + görünüm) */
+/* Sayfa geçişi — yalnızca akış boşluğu (görünmez; beyaz kağıt ::before'da) */
 .template-editor-paper .ProseMirror .editor-page-gap {
   display: block;
-  height: var(--page-gap);
-  margin-left: calc(-1 * var(--page-margin-left, 15mm));
-  margin-right: calc(-1 * var(--page-margin-right, 15mm));
-  background: var(--page-canvas);
-  box-shadow:
-    inset 0 5px 8px -5px rgba(0, 0, 0, 0.35),
-    inset 0 -5px 8px -5px rgba(0, 0, 0, 0.28);
+  height: var(--inter-page-spacing);
+  margin: 0 calc(-1 * var(--page-margin-right, 0mm)) 0 calc(-1 * var(--page-margin-left, 0mm));
+  padding: 0;
+  border: 0;
+  clear: both;
+  background: transparent;
   pointer-events: none;
   user-select: none;
 }
@@ -478,8 +565,8 @@
 /* Tablo satırı sayfa geçişi */
 .template-editor-paper .ProseMirror tr.editor-table-page-break > td,
 .template-editor-paper .ProseMirror tr.editor-table-page-break > th {
-  border-top: var(--page-gap) solid var(--page-canvas);
-  box-shadow: inset 0 8px 10px -10px rgba(0, 0, 0, 0.3);
+  border-top: none;
+  padding-top: var(--inter-page-spacing);
 }
 
 /* Şablon editörü — alan paneli */
@@ -502,7 +589,7 @@
   position: relative;
   display: block;
   height: 0;
-  margin: 0 calc(-1 * var(--page-margin-right, 15mm)) 0 calc(-1 * var(--page-margin-left, 15mm));
+  margin: 0 calc(-1 * var(--page-margin-right, 0mm)) 0 calc(-1 * var(--page-margin-left, 0mm));
   padding: 0;
   border: none;
   page-break-after: auto !important;
@@ -514,12 +601,9 @@
 .template-editor-paper .ProseMirror .page-break::before {
   content: '';
   display: block;
-  height: var(--page-gap, 36px);
+  height: var(--inter-page-spacing, var(--page-gap, 24px));
   margin: 0;
-  background: var(--page-canvas, #80868b);
-  box-shadow:
-    inset 0 5px 8px -5px rgba(0, 0, 0, 0.35),
-    inset 0 -5px 8px -5px rgba(0, 0, 0, 0.28);
+  background: transparent;
 }
 
 .template-editor-paper .ProseMirror .page-break::after {
@@ -539,6 +623,13 @@
   border-radius: 999px;
   white-space: nowrap;
   pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.template-editor-paper .ProseMirror .page-break:hover::after,
+.template-editor-paper .ProseMirror .page-break.ProseMirror-selectednode::after {
+  opacity: 1;
 }
 
 .template-editor-paper .ProseMirror .page-break.ProseMirror-selectednode::after {

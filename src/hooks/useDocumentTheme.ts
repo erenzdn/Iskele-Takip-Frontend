@@ -4,7 +4,7 @@ const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const STYLE_TAG_ID = 'doc-theme-remote';
 
 /**
- * Backend'deki kanonik belge stil sayfasını (Iskele-Takip-Backend/src/services/documentStyles.js)
+ * Backend'deki kanonik belge stil sayfasını (IskeleTakipAPI/src/services/documentStyles.js)
  * çekip <head>'e enjekte eder. Böylece editör kağıdı (.doc-root) PDF ile aynı CSS'i kullanır.
  * Çekilemezse paketlenmiş yedek (src/styles/documentTheme.css) geçerli kalır.
  */

@@ -23,6 +23,7 @@ import {
 } from './CustomTableExtensions';
 import { PageBreak } from './PageBreakExtension';
 import { EditorPagination } from './EditorPaginationExtension';
+import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
 import TipTapTemplateEditorLayout, {
   type TipTapPlaceholderGroup,
 } from './TipTapTemplateEditorLayout';
@@ -95,6 +96,7 @@ export default function ContractTemplateEditorModal({
       LineHeight,
       PageBreak,
       EditorPagination,
+      EditorWidgetPreview.configure({ context: 'contract' }),
     ],
     content: {
       type: 'doc',

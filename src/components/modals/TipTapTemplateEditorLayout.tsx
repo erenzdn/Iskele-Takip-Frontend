@@ -930,9 +930,9 @@ export default function TipTapTemplateEditorLayout({
                   Logo hücresine tıklayıp <strong>Kayıtlı görsel</strong> listesinden logoyu ekleyebilirsiniz.
                   Yeni sayfa başlatmak için araç çubuğundaki <strong>Sayfa Sonu</strong> düğmesini veya{' '}
                   <strong>Ctrl+Enter</strong> kısayolunu kullanın.
-                  Sayfalar arasındaki <strong>gri bant</strong> gerçek sayfa kesitidir.
-                  Tam A4 kullanmak için araç çubuğundaki <strong>Ü/A</strong> ve <strong>Y/S</strong> değerlerini{' '}
-                  <strong>0</strong> bırakın; kenar boşluğu eklemek isterseniz mm olarak artırın.
+                  Her beyaz sayfa tam <strong>A4 (21×29,7 cm)</strong> boyutundadır; sayfa bittiğinde beyaz
+                  alan biter, ardından yalnızca çalışma alanı görünür.
+                  Kenar boşlukları (Ü/A, Y/S, S/Y) PDF ile aynı şekilde her sayfada uygulanır.
                   Araç çubuğundaki <strong>Kılavuz</strong> yalnızca A4 içerik sınırını mavi ince çizgiyle
                   gösterir; sayfa sonu değildir ve PDF&apos;te çıkmaz.
                 </p>
