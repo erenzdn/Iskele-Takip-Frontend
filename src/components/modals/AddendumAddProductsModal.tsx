@@ -6,7 +6,7 @@ import { addendumService } from '../../services/addendumService';
 import { inventoryService } from '../../services/inventoryService';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import {
-  clampDiscountPercent,
+  clampDiscountRange,
   discountPercentFromNet,
   lineNetFromGross,
 } from '../../utils/lineDiscount';
@@ -162,7 +162,7 @@ export default function AddendumAddProductsModal({
   };
 
   const applyGlobalIskontoToAll = (pct: number) => {
-    const clamped = clampDiscountPercent(pct);
+    const clamped = clampDiscountRange(pct);
     setGlobalIskonto(clamped);
     setLines((prev) => prev.map((l) => ({ ...l, discountPercent: clamped })));
     setLineNetDrafts({});
@@ -339,7 +339,7 @@ export default function AddendumAddProductsModal({
                 type="number"
                 min={0}
                 max={100}
-                step={0.01}
+                step="any"
                 value={globalIskonto}
                 onChange={(e) => {
                   const v = parseFloat(e.target.value);
@@ -497,7 +497,7 @@ export default function AddendumAddProductsModal({
                             type="number"
                             min={0}
                             max={100}
-                            step={0.01}
+                            step="any"
                             className="input w-20 text-right ml-auto"
                             disabled={isBusy}
                             value={
@@ -510,7 +510,7 @@ export default function AddendumAddProductsModal({
                               const v = parseFloat(raw);
                               if (Number.isFinite(v)) {
                                 updateLine(line.key, {
-                                  discountPercent: clampDiscountPercent(v),
+                                  discountPercent: clampDiscountRange(v),
                                 });
                                 setLineNetDrafts((prev) => {
                                   if (!(line.key in prev)) return prev;

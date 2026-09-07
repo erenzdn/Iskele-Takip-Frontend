@@ -345,6 +345,8 @@ export interface ContractDetail {
   ItemCode?: string;
   /** Satır bazlı ürün kodu override (envanter satırları için). */
   ItemCodeOverride?: string | null;
+  /** Satır bazlı iskonto yüzdesi (0–100). */
+  Iskonto?: number;
   Contract?: Contract;
   Item?: Inventory;
 }
@@ -1046,6 +1048,8 @@ export interface QuoteDetail {
   ItemCodeOverride?: string | null;
   ItemNameEn?: string | null;
   CategoryId?: number;
+  /** Satır bazlı iskonto yüzdesi (0–100). */
+  Iskonto?: number;
 }
 
 // Teklif Detay Item (UI için)

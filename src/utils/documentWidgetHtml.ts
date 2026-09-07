@@ -20,6 +20,8 @@ type MaterialDetail = {
   RentalUnit?: string;
   EffectiveStartDate?: string | null;
   Categories?: Array<{ RentalUnit?: string }>;
+  Iskonto?: number;
+  iskonto?: number;
 };
 
 type ReturnDetail = {
@@ -147,7 +149,7 @@ function formatUsageDaysCell(days: number | null): string {
 export function computeLineAmounts(item: MaterialDetail, ctx: TableOptions = {}) {
   const isSale = ctx.contractType === 'SALE';
   const isManual = item?.IsManual === true;
-  const iskontoPct = Number(ctx.iskonto);
+  const iskontoPct = resolveDetailDiscountPercent(item, ctx.iskonto);
   const discountFactor =
     Number.isFinite(iskontoPct) && iskontoPct > 0 ? Math.max(0, 1 - iskontoPct / 100) : 1;
 
@@ -467,9 +469,11 @@ function getSettlementTypeLabel(isNonPhysical: boolean, settlementReason: unknow
   return 'Sanal İade';
 }
 
-function getDiscountFactor(iskonto: unknown): number {
-  const iskontoPct = Number(iskonto);
-  return Number.isFinite(iskontoPct) && iskontoPct > 0 ? Math.max(0, 1 - iskontoPct / 100) : 1;
+function resolveDetailDiscountPercent(item: MaterialDetail | undefined, fallback: unknown): number {
+  const raw = item?.Iskonto ?? item?.iskonto ?? fallback;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(100, n));
 }
 
 function formatReturnItemLabel(
@@ -512,7 +516,10 @@ export function computeReturnLineValues(
   const contractType = options.contractType ?? 'RENTAL';
   const isSale = contractType === 'SALE';
   const isManual = relatedDetail?.IsManual === true;
-  const discountFactor = getDiscountFactor(options.iskonto);
+  const discountFactor = (() => {
+    const pct = resolveDetailDiscountPercent(relatedDetail, options.iskonto);
+    return pct > 0 ? Math.max(0, 1 - pct / 100) : 1;
+  })();
 
   const typeLabel = getSettlementTypeLabel(
     ret.IsNonPhysicalSettlement === true,

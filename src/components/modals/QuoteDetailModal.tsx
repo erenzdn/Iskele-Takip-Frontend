@@ -24,11 +24,11 @@ import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
-import { discountPercentFromNet, lineDiscountAmount, lineNetFromGross } from '../../utils/lineDiscount';
+import { clampDiscountRange, discountPercentFromNet, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
-import { LINE_ITEM_COL } from '../../constants/lineItemTableColumns';
+import { LINE_ITEM_COL, LINE_ITEM_COL_SPAN } from '../../constants/lineItemTableColumns';
 import StockErrorPanel from '../StockErrorPanel';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
@@ -191,8 +191,11 @@ export default function QuoteDetailModal({
   const [showProductPickerModal, setShowProductPickerModal] = useState(false);
   const [lastAddedItemIds, setLastAddedItemIds] = useState<number[]>([]);
   const [iskonto, setIskonto] = useState<number>(0);
-  /** Satır bazlı iskonto (%) - key: ItemId. Üstteki iskonto değişince tüm satırlara yansır; satırda tek tek de düzenlenebilir. */
-  const [itemIskonto, setItemIskonto] = useState<Record<number, number>>({});
+  /** Satır bazlı iskonto (%) - key: inventory ItemId string / `man-${ClientId}`. */
+  const [itemIskonto, setItemIskonto] = useState<Record<string, number>>({});
+  /** İskonto % taslak yazımı (boşaltınca netin brüte zıplamasın diye). */
+  const [iskontoInputs, setIskontoInputs] = useState<Record<string, string>>({});
+  const [globalIskontoInput, setGlobalIskontoInput] = useState<string | null>(null);
   const [vatRate, setVatRate] = useState<number>(20);
   const [quoteCode, setQuoteCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
@@ -631,10 +634,11 @@ export default function QuoteDetailModal({
           return next;
         });
         const globalIsk = Number.isFinite(parsedIskonto) ? parsedIskonto : 0;
-        setItemIskonto((prev) => {
-          const next = { ...prev };
-          items.forEach((i) => {
-            if (i.kind === 'inventory') next[i.ItemId] = globalIsk;
+        setItemIskonto(() => {
+          const next: Record<string, number> = {};
+          items.forEach((i, idx) => {
+            const key = i.kind === 'inventory' ? String(i.ItemId) : `man-${i.ClientId}`;
+            next[key] = lineIskontoFromApi(details[idx], globalIsk);
           });
           return next;
         });
@@ -686,6 +690,13 @@ export default function QuoteDetailModal({
     const d = (digits ?? '').replace(/\D/g, '').replace(/^0+(?=\d)/, '');
     if (!d) return '';
     return d.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  };
+
+  const formatNetPriceInput = (value: number | undefined): string => {
+    if (value == null || !Number.isFinite(value)) return '';
+    const [intPart, frac = '00'] = roundTo(value, 2).toFixed(2).split('.');
+    const maskedInt = formatThousandsTR(intPart);
+    return `${maskedInt || '0'},${frac}`;
   };
 
   const limitDigits = (digits: string, max: number): string => digits.slice(0, max);
@@ -989,20 +1000,18 @@ export default function QuoteDetailModal({
     return daily * item.Quantity * billedDays;
   };
 
+  const lineNetInputKey = (item: QuoteLineItem) =>
+    item.kind === 'inventory' ? String(item.ItemId) : `man-${item.ClientId}`;
+
   const totalPrice = quoteItems.reduce((sum, item) => sum + getLineTotal(item), 0);
 
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
-  const getItemIskonto = (itemId: number) => itemIskonto[itemId] ?? iskonto;
-
   const getRowDiscountPercent = (item: QuoteLineItem) =>
-    item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto;
+    itemIskonto[lineNetInputKey(item)] ?? iskonto;
 
   /** İskonto sonrası satır tutarı (yeşil Toplam). */
   const getLineNetTotal = (item: QuoteLineItem) =>
     lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
-
-  const lineNetInputKey = (item: QuoteLineItem) =>
-    item.kind === 'inventory' ? String(item.ItemId) : `man-${item.ClientId}`;
 
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = totalPrice;
@@ -1019,11 +1028,19 @@ export default function QuoteDetailModal({
     const existingItem = quoteItems.find((i) => i.kind === 'inventory' && i.ItemId === item.ItemId);
 
     if (existingItem) {
-      setQuoteItems(
-        quoteItems.map((i) =>
-          i.kind === 'inventory' && i.ItemId === item.ItemId ? { ...i, Quantity: i.Quantity + qty } : i
+      const nextQty = existingItem.Quantity + qty;
+      setQuoteItems((prev) =>
+        prev.map((i) =>
+          i.kind === 'inventory' && i.ItemId === item.ItemId ? { ...i, Quantity: nextQty } : i
         )
       );
+      setLineNetInputs((prev) => {
+        const key = String(item.ItemId);
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } else {
       const dailyPrice = unitPriceForQuoteInventory(item, currency, quoteType);
       setQuoteItems([
@@ -1047,7 +1064,7 @@ export default function QuoteDetailModal({
           ItemNameEn: item.ItemNameEn ?? undefined,
         },
       ]);
-      setItemIskonto((prev) => ({ ...prev, [item.ItemId]: iskonto }));
+      setItemIskonto((prev) => ({ ...prev, [String(item.ItemId)]: iskonto }));
     }
     setLastAddedItemIds((prev) => [...prev.filter((id) => id !== item.ItemId), item.ItemId]);
     return true;
@@ -1137,6 +1154,19 @@ export default function QuoteDetailModal({
 
   const handleRemoveItem = (itemId: number) => {
     setQuoteItems(quoteItems.filter((i) => !(i.kind === 'inventory' && i.ItemId === itemId)));
+    const key = String(itemId);
+    setItemIskonto((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setLineNetInputs((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const pickerPickedItemIds = useMemo(
@@ -1155,6 +1185,19 @@ export default function QuoteDetailModal({
 
   const handleRemoveManualItem = (clientId: string) => {
     setQuoteItems(quoteItems.filter((i) => !(i.kind === 'manual' && i.ClientId === clientId)));
+    const key = `man-${clientId}`;
+    setItemIskonto((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
+    setLineNetInputs((prev) => {
+      if (!(key in prev)) return prev;
+      const next = { ...prev };
+      delete next[key];
+      return next;
+    });
   };
 
   const handleQuoteItemDragStart = (e: React.DragEvent, index: number) => {
@@ -1206,34 +1249,33 @@ export default function QuoteDetailModal({
     });
   };
 
-  const updateQuoteItemIskonto = (itemId: number, value: number) => {
-    const pct = Math.max(0, Math.min(100, value));
-    setItemIskonto((prev) => ({ ...prev, [itemId]: pct }));
+  const updateQuoteItemIskonto = (key: string, value: number) => {
+    const pct = clampDiscountRange(value);
+    setItemIskonto((prev) => ({ ...prev, [key]: pct }));
   };
 
   /** Yeşil Toplam (net) değişince iskonto % ters hesaplanır; mevcut % akışı bozulmaz. */
   const applyLineNetTarget = (item: QuoteLineItem, targetNet: number) => {
     const gross = getLineTotal(item);
     const result = discountPercentFromNet(gross, targetNet);
-    if (item.kind === 'inventory') {
-      updateQuoteItemIskonto(item.ItemId, result.discountPercent);
-    } else {
-      setIskonto(result.discountPercent);
-    }
+    updateQuoteItemIskonto(lineNetInputKey(item), result.discountPercent);
     return result;
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
   const handleGlobalIskontoChange = (value: number) => {
-    setIskonto(value);
-    setItemIskonto((prev) => {
-      const next = { ...prev };
+    const pct = clampDiscountRange(value);
+    setIskonto(pct);
+    setItemIskonto(() => {
+      const next: Record<string, number> = {};
       quoteItems.forEach((i) => {
-        if (i.kind === 'inventory') next[i.ItemId] = value;
+        next[lineNetInputKey(i)] = pct;
       });
       return next;
     });
     setLineNetInputs({});
+    setIskontoInputs({});
+    setGlobalIskontoInput(null);
   };
 
   const currentUser = useAuthStore((s) => s.user);
@@ -1262,6 +1304,7 @@ export default function QuoteDetailModal({
           Description: item.Description,
           Quantity: item.Quantity,
           DailyPrice: item.UnitPriceSnapshot,
+          Iskonto: getRowDiscountPercent(item),
         };
       }
       const base: Record<string, unknown> = {
@@ -1270,6 +1313,7 @@ export default function QuoteDetailModal({
         is_manual: false,
         ItemNameOverride: normalizeOptionalOverride(item.ItemNameOverride),
         ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
+        Iskonto: getRowDiscountPercent(item),
       };
       if (quoteType === 'SALE') {
         if (item.OverrideUnitPrice != null && Number.isFinite(item.OverrideUnitPrice)) {
@@ -1375,19 +1419,26 @@ export default function QuoteDetailModal({
     }
   };
 
-  const requestClose = async () => {
+  const requestClose = () => {
     if (isBusy) return;
-    if (isDraftRecord && !isReadOnly && isDirty && hasDraftContent) {
+    if (isReadOnly || converted) {
+      onClose();
+      return;
+    }
+    setShowUnsavedConfirm(true);
+  };
+
+  const handleCloseConfirm = async () => {
+    if (isBusy) return;
+    setShowUnsavedConfirm(false);
+    if (isDraftRecord && isDirty && hasDraftContent) {
       const savedId = await persistDraft({ silent: true });
       if (!savedId) return;
       toast.info('Taslak kaydedildi. Listeden devam edebilirsiniz.');
       onClose();
       return;
     }
-    if (!isDraftRecord && !isReadOnly && isDirty && !converted) {
-      setShowUnsavedConfirm(true);
-      return;
-    }
+    setIsDirty(false);
     onClose();
   };
 
@@ -1484,38 +1535,7 @@ export default function QuoteDetailModal({
 
     try {
       setIsBusy(true);
-      const normalizeOptionalOverride = (raw: unknown): string | null => {
-        const s = typeof raw === 'string' ? raw.trim() : '';
-        return s ? s : null;
-      };
-      const details = quoteItems.map((item) => {
-        if (item.kind === 'manual') {
-          return {
-            is_manual: true,
-            Description: item.Description,
-            Quantity: item.Quantity,
-            DailyPrice: item.UnitPriceSnapshot,
-          };
-        }
-        const base: Record<string, unknown> = {
-          ItemId: item.ItemId,
-          Quantity: item.Quantity,
-          is_manual: false,
-          // Kritik: Kullanıcı dokunmasa bile state'teki mevcut değeri payload'a koy.
-          ItemNameOverride: normalizeOptionalOverride(item.ItemNameOverride),
-          ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
-        };
-        if (quoteType === 'SALE') {
-          if (item.OverrideUnitPrice != null && Number.isFinite(item.OverrideUnitPrice)) {
-            base.OverrideUnitPrice = item.OverrideUnitPrice;
-          }
-        } else {
-          if (item.OverrideMonthlyPrice != null && Number.isFinite(item.OverrideMonthlyPrice)) {
-            base.OverrideMonthlyPrice = item.OverrideMonthlyPrice;
-          }
-        }
-        return base;
-      });
+      const details = buildQuoteDetailsPayload();
 
       const requestBody: Record<string, unknown> = {
         CustomerId: Number(selectedCustomerId),
@@ -2604,16 +2624,16 @@ export default function QuoteDetailModal({
               <div className="min-w-[72px] w-[88px]">
                 <label className={fieldLabel} title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz">İskonto %</label>
                 <input
-                  type="number"
-                  value={Number(iskonto) || 0}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
+                  type="text"
+                  inputMode="decimal"
+                  value={globalIskontoInput ?? String(Number(iskonto) || 0).replace('.', ',')}
+                  onChange={(e) => setGlobalIskontoInput(e.target.value)}
+                  onBlur={() => {
+                    const parsed = parseDiscountInput(globalIskontoInput ?? '');
+                    if (parsed != null) handleGlobalIskontoChange(parsed);
+                    setGlobalIskontoInput(null);
                   }}
                   disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={0.01}
                   className="input w-full text-sm py-1.5"
                   placeholder="0"
                   title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz"
@@ -2909,9 +2929,14 @@ export default function QuoteDetailModal({
               <table className="table-data-grid table-excel-rows text-text-primary">
                 <thead>
                   <tr>
-                    {!isReadOnly && (
-                      <th className="drag-col" aria-label="Sırala" />
-                    )}
+                    <th
+                      className="row-index-col"
+                      style={{ width: LINE_ITEM_COL.rowIndex }}
+                      aria-label="Satır"
+                      title="Satır no"
+                    >
+                      #
+                    </th>
                     <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
                       Ürün Kodu
                     </th>
@@ -2934,14 +2959,19 @@ export default function QuoteDetailModal({
                     >
                       Toplam
                     </th>
-                    <th className="action-col" aria-label="İşlem" title="İşlem" />
+                    <th
+                      className="action-col"
+                      style={{ width: LINE_ITEM_COL.action }}
+                      aria-label="İşlem"
+                      title="İşlem"
+                    />
                   </tr>
                 </thead>
                 <tbody>
                   {quoteItems.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={isReadOnly ? 7 : 8}
+                        colSpan={LINE_ITEM_COL_SPAN.quote.editable}
                         className="py-6 text-center text-text-secondary"
                       >
                         Henüz kalem yok. Yukarıdaki Ürün Ekle veya Manuel Kalem ile ekleyin.
@@ -2984,22 +3014,27 @@ export default function QuoteDetailModal({
                                   : 'bg-background-secondary/35'
                           } ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
                         >
-                          {!isReadOnly && (
-                            <td className="drag-col">
-                              <span
-                                draggable
-                                onDragStart={(e) => handleQuoteItemDragStart(e, rowIndex)}
-                                onDragEnd={handleQuoteItemDragEnd}
-                                className="drag-handle"
-                                title="Sürükleyerek sırala"
-                                aria-label="Sürükleyerek sırala"
-                                role="button"
-                                tabIndex={0}
-                              >
-                                <DotsSixVerticalIcon size={10} weight="bold" aria-hidden />
+                          <td className="row-index-col">
+                            <span className="row-index-cell">
+                              <span className="row-index-num" title={`Satır ${rowIndex + 1}`}>
+                                {rowIndex + 1}
                               </span>
-                            </td>
-                          )}
+                              {!isReadOnly && (
+                                <span
+                                  draggable
+                                  onDragStart={(e) => handleQuoteItemDragStart(e, rowIndex)}
+                                  onDragEnd={handleQuoteItemDragEnd}
+                                  className="drag-handle"
+                                  title="Sürükleyerek sırala"
+                                  aria-label="Sürükleyerek sırala"
+                                  role="button"
+                                  tabIndex={0}
+                                >
+                                  <DotsSixVerticalIcon size={10} weight="bold" aria-hidden />
+                                </span>
+                              )}
+                            </span>
+                          </td>
                           <td className="text-text-secondary">
                             {item.kind === 'inventory' ? (
                               isReadOnly ? (
@@ -3019,7 +3054,7 @@ export default function QuoteDetailModal({
                                   )}
                                 </span>
                               ) : (
-                                <div className="flex items-center gap-2 min-w-[160px]">
+                                <div className="flex items-center gap-2 min-w-0">
                                   <input
                                     type="text"
                                     value={item.ItemCodeOverride ?? originalItemCode}
@@ -3084,8 +3119,8 @@ export default function QuoteDetailModal({
                                   )}
                                 </button>
                               ) : (
-                                <div className="flex items-center gap-2 min-w-[280px]">
-                                  <div className="flex-1 relative">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <div className="flex-1 relative min-w-0">
                                     <input
                                       type="text"
                                       value={
@@ -3192,6 +3227,13 @@ export default function QuoteDetailModal({
                                           : x
                                       )
                                     );
+                                    setLineNetInputs((prev) => {
+                                      const key = `man-${item.ClientId}`;
+                                      if (!(key in prev)) return prev;
+                                      const next = { ...prev };
+                                      delete next[key];
+                                      return next;
+                                    });
                                   }
                                 }}
                                 className="input w-full text-right py-0.5 text-xs"
@@ -3342,14 +3384,15 @@ export default function QuoteDetailModal({
                           </td>
                           <td className="text-right tabular-nums">
                             {isReadOnly ? (
-                              Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto) || 0
+                              getRowDiscountPercent(item)
                             ) : (
                               <input
-                                type="number"
-                                min={0}
-                                max={100}
-                                step={0.01}
-                                value={Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId) : iskonto) || 0}
+                                type="text"
+                                inputMode="decimal"
+                                value={
+                                  iskontoInputs[netKey] ??
+                                  String(getRowDiscountPercent(item)).replace('.', ',')
+                                }
                                 ref={(el) => {
                                   const key = `${rowIndex}-4`;
                                   if (el) quoteGridRefs.current.set(key, el);
@@ -3361,13 +3404,20 @@ export default function QuoteDetailModal({
                                 }}
                                 onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 4)}
                                 onChange={(e) => {
-                                  const v = parseFloat(e.target.value);
-                                  if (item.kind === 'inventory') {
-                                    updateQuoteItemIskonto(item.ItemId, Number.isFinite(v) ? v : 0);
-                                  } else {
-                                    setIskonto(Number.isFinite(v) ? v : 0);
+                                  setIskontoInputs((prev) => ({ ...prev, [netKey]: e.target.value }));
+                                }}
+                                onBlur={() => {
+                                  const parsed = parseDiscountInput(iskontoInputs[netKey] ?? '');
+                                  if (parsed != null) {
+                                    updateQuoteItemIskonto(netKey, parsed);
+                                    setLineNetInputs((prev) => {
+                                      if (!(netKey in prev)) return prev;
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
                                   }
-                                  setLineNetInputs((prev) => {
+                                  setIskontoInputs((prev) => {
                                     if (!(netKey in prev)) return prev;
                                     const next = { ...prev };
                                     delete next[netKey];
@@ -3386,7 +3436,7 @@ export default function QuoteDetailModal({
                               <input
                                 type="text"
                                 inputMode="decimal"
-                                value={lineNetInputs[netKey] ?? formatPriceInput(lineNet)}
+                                value={lineNetInputs[netKey] ?? formatNetPriceInput(lineNet)}
                                 ref={(el) => {
                                   const key = `${rowIndex}-5`;
                                   if (el) quoteGridRefs.current.set(key, el);
@@ -3758,18 +3808,25 @@ export default function QuoteDetailModal({
 
       <ConfirmModal
         open={showUnsavedConfirm}
-        title="Kaydedilmemiş değişiklikler"
+        title="Teklif kapatılsın mı?"
         message={
-          'Resmi teklifteki değişiklikler sayfa değişince taslak olarak saklanmaz.\nKaydetmek için geri dönüp Kaydet’e basın, veya değişiklikleri atın.'
+          isDirty && !isDraftRecord
+            ? 'Kaydedilmemiş değişiklikler var. Kaydetmeden kapatırsanız bu değişiklikler kaybolur.'
+            : isDirty && isDraftRecord && hasDraftContent
+              ? 'Taslak kaydedilerek kapatılacak. Listeden devam edebilirsiniz.'
+              : 'Teklif penceresini kapatmak istediğinize emin misiniz?'
         }
-        confirmLabel="Kaydetmeden kapat"
+        confirmLabel={
+          isDirty && !isDraftRecord
+            ? 'Kaydetmeden kapat'
+            : isDirty && isDraftRecord && hasDraftContent
+              ? 'Kaydet ve kapat'
+              : 'Kapat'
+        }
         cancelLabel="Geri dön"
-        variant="danger"
-        onConfirm={() => {
-          setShowUnsavedConfirm(false);
-          setIsDirty(false);
-          onClose();
-        }}
+        variant={isDirty && !isDraftRecord ? 'danger' : 'default'}
+        loading={isBusy}
+        onConfirm={() => void handleCloseConfirm()}
         onCancel={() => setShowUnsavedConfirm(false)}
       />
 
@@ -4120,11 +4177,12 @@ export default function QuoteDetailModal({
         currency={currency}
         onClose={() => setShowManualLineModal(false)}
         onAdd={(data) => {
+          const clientId = `manual-${crypto.randomUUID()}`;
           setQuoteItems((prev) => [
             ...prev,
             {
               kind: 'manual',
-              ClientId: `manual-${crypto.randomUUID()}`,
+              ClientId: clientId,
               is_manual: true,
               Description: data.Description,
               Quantity: data.Quantity,
@@ -4133,6 +4191,7 @@ export default function QuoteDetailModal({
               PriceSource: 'MANUAL',
             },
           ]);
+          setItemIskonto((prev) => ({ ...prev, [`man-${clientId}`]: iskonto }));
         }}
       />
       {showCreateContactModal &&

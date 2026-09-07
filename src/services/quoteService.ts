@@ -22,6 +22,8 @@ export interface CreateQuoteDetailRequest {
    * Backend bunu UnitPriceSnapshot olarak saklar.
    */
   DailyPrice?: number;
+  /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
+  Iskonto?: number;
 }
 
 export interface CreateQuoteRequest {

@@ -38,7 +38,7 @@ import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
-import { discountPercentFromNet, lineDiscountAmount, lineNetFromGross } from '../../utils/lineDiscount';
+import { clampDiscountRange, discountPercentFromNet, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -230,9 +230,12 @@ export default function ContractDetailModal({
   const [archiveReason, setArchiveReason] = useState('');
   const [archiveReasonError, setArchiveReasonError] = useState<string | null>(null);
   const [showUnarchiveConfirm, setShowUnarchiveConfirm] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [iskonto, setIskonto] = useState<number>(0);
-  /** Satır bazlı iskonto (%) - key: "ItemId-WarehouseId". Üstteki iskonto değişince tüm satırlara yansır; satırda tek tek de düzenlenebilir. */
+  /** Satır bazlı iskonto (%) - key: "ItemId-WarehouseId" | `man-${ClientId}`. */
   const [itemIskonto, setItemIskonto] = useState<Record<string, number>>({});
+  const [iskontoInputs, setIskontoInputs] = useState<Record<string, string>>({});
+  const [globalIskontoInput, setGlobalIskontoInput] = useState<string | null>(null);
   /** İskontolu satır tutarı taslağı. key: "ItemId-WarehouseId" | `man-${ClientId}` */
   const [lineNetInputs, setLineNetInputs] = useState<Record<string, string>>({});
   const [vatRate, setVatRate] = useState<number>(20);
@@ -644,10 +647,11 @@ export default function ContractDetailModal({
         });
         setContractItems(items);
         const globalIsk = (source as { Iskonto?: number }).Iskonto ?? 0;
-        setItemIskonto((prev) => {
-          const next = { ...prev };
-          items.forEach((i) => {
-            if (i.kind === 'inventory') next[`${i.ItemId}-${i.WarehouseId}`] = globalIsk;
+        setItemIskonto(() => {
+          const next: Record<string, number> = {};
+          items.forEach((i, idx) => {
+            const key = i.kind === 'inventory' ? `${i.ItemId}-${i.WarehouseId}` : `man-${i.ClientId}`;
+            next[key] = lineIskontoFromApi(details[idx], globalIsk);
           });
           return next;
         });
@@ -843,6 +847,13 @@ export default function ContractDetailModal({
     return d.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   };
 
+  const formatNetPriceInput = (value: number | undefined): string => {
+    if (value == null || !Number.isFinite(value)) return '';
+    const [intPart, frac = '00'] = roundTo(value, 2).toFixed(2).split('.');
+    const maskedInt = formatThousandsTR(intPart);
+    return `${maskedInt || '0'},${frac}`;
+  };
+
   const coerceDecimalDotToComma = (raw: string): string => {
     const s = String(raw ?? '').trim();
     if (!s || s.includes(',')) return s;
@@ -916,6 +927,9 @@ export default function ContractDetailModal({
     return daily * item.RentedQuantity * billedDays;
   };
 
+  const lineNetInputKey = (item: ContractLineItem) =>
+    item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : `man-${item.ClientId}`;
+
   const initialTotalPrice = contractItems.reduce((sum, item) => sum + getLineTotal(item), 0);
 
   const contractItemDisplayEntries = useMemo(
@@ -936,17 +950,11 @@ export default function ContractDetailModal({
   const baseContractItemCount = contractItems.length - addendumItemCount;
 
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
-  const getItemIskonto = (itemId: number, warehouseId: number) =>
-    itemIskonto[`${itemId}-${warehouseId}`] ?? iskonto;
-
   const getRowDiscountPercent = (item: ContractLineItem) =>
-    item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto;
+    itemIskonto[lineNetInputKey(item)] ?? iskonto;
 
   const getLineNetTotal = (item: ContractLineItem) =>
     lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
-
-  const lineNetInputKey = (item: ContractLineItem) =>
-    item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : `man-${item.ClientId}`;
 
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = initialTotalPrice;
@@ -1006,6 +1014,13 @@ export default function ContractDetailModal({
             : i
         )
       );
+      setLineNetInputs((prev) => {
+        const key = `${itemId}-${whId}`;
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } else {
       const dailyPriceAtRent = unitPriceForContractInventory(item, currency, contractType);
       setContractItems([
@@ -1244,33 +1259,32 @@ export default function ContractDetailModal({
     });
   };
 
-  const updateContractItemIskonto = (itemId: number, warehouseId: number, value: number) => {
-    const pct = Math.max(0, Math.min(100, value));
-    setItemIskonto((prev) => ({ ...prev, [`${itemId}-${warehouseId}`]: pct }));
+  const updateContractItemIskonto = (key: string, value: number) => {
+    const pct = clampDiscountRange(value);
+    setItemIskonto((prev) => ({ ...prev, [key]: pct }));
   };
 
   /** Yeşil Toplam (net) → iskonto % ters hesabı. */
   const applyLineNetTarget = (item: ContractLineItem, targetNet: number) => {
     const result = discountPercentFromNet(getLineTotal(item), targetNet);
-    if (item.kind === 'inventory') {
-      updateContractItemIskonto(item.ItemId, item.WarehouseId, result.discountPercent);
-    } else {
-      setIskonto(result.discountPercent);
-    }
+    updateContractItemIskonto(lineNetInputKey(item), result.discountPercent);
     return result;
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
   const handleGlobalIskontoChange = (value: number) => {
-    setIskonto(value);
-    setItemIskonto((prev) => {
-      const next = { ...prev };
+    const pct = clampDiscountRange(value);
+    setIskonto(pct);
+    setItemIskonto(() => {
+      const next: Record<string, number> = {};
       contractItems.forEach((i) => {
-        if (i.kind === 'inventory') next[`${i.ItemId}-${i.WarehouseId}`] = value;
+        next[lineNetInputKey(i)] = pct;
       });
       return next;
     });
     setLineNetInputs({});
+    setIskontoInputs({});
+    setGlobalIskontoInput(null);
   };
 
   const handleSave = async () => {
@@ -1346,6 +1360,7 @@ export default function ContractDetailModal({
               Description: item.Description,
               RentedQuantity: item.RentedQuantity,
               UnitPriceSnapshot: item.UnitPriceSnapshot,
+              Iskonto: getRowDiscountPercent(item),
             };
           }
           return {
@@ -1353,6 +1368,7 @@ export default function ContractDetailModal({
             WarehouseId: item.WarehouseId,
             RentedQuantity: item.RentedQuantity,
             ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
+            Iskonto: getRowDiscountPercent(item),
           };
         });
 
@@ -1473,6 +1489,16 @@ export default function ContractDetailModal({
               updateBody.PlannedEndDate = new Date(nextPed).toISOString();
             }
           }
+        }
+
+        const persistedLineIskontos = contractItems
+          .filter((item) => Number(item.DetailId) > 0)
+          .map((item) => ({
+            DetailId: item.DetailId,
+            Iskonto: getRowDiscountPercent(item),
+          }));
+        if (persistedLineIskontos.length > 0) {
+          updateBody.details = persistedLineIskontos;
         }
 
         if (Object.keys(updateBody).length === 0) {
@@ -1952,6 +1978,15 @@ export default function ContractDetailModal({
     });
   };
 
+  const requestClose = () => {
+    if (isBusy) return;
+    if (isReadOnly) {
+      onClose();
+      return;
+    }
+    setShowCloseConfirm(true);
+  };
+
   const compactBtn = '!py-1.5 !px-3 text-xs';
   const fieldLabel = 'block text-[11px] font-medium text-text-secondary mb-0.5';
 
@@ -2074,7 +2109,7 @@ export default function ContractDetailModal({
           )}
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
             title="Kapat"
@@ -2384,7 +2419,7 @@ export default function ContractDetailModal({
             </div>
           )}
           <div className="mt-3 flex shrink-0 gap-2">
-            <button type="button" onClick={onClose} className={`btn-secondary flex-1 ${compactBtn}`}>
+            <button type="button" onClick={requestClose} className={`btn-secondary flex-1 ${compactBtn}`}>
               Kapat
             </button>
           </div>
@@ -2534,7 +2569,7 @@ export default function ContractDetailModal({
             </>
           )}
           <div className="mt-3 flex shrink-0 gap-2">
-            <button type="button" onClick={onClose} className={`btn-secondary flex-1 ${compactBtn}`}>
+            <button type="button" onClick={requestClose} className={`btn-secondary flex-1 ${compactBtn}`}>
               Kapat
             </button>
           </div>
@@ -2546,7 +2581,7 @@ export default function ContractDetailModal({
             <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
             <AuditLogTimeline logs={contractLogs} loading={contractLogsLoading} />
             <div className="flex gap-3 mt-6">
-              <button onClick={onClose} className="btn-secondary flex-1">
+              <button type="button" onClick={requestClose} className="btn-secondary flex-1">
                 Kapat
               </button>
             </div>
@@ -2753,16 +2788,16 @@ export default function ContractDetailModal({
               <div className="min-w-[72px] w-[88px]">
                 <label className={fieldLabel} title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz">İskonto %</label>
                 <input
-                  type="number"
-                  value={Number(iskonto) || 0}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
+                  type="text"
+                  inputMode="decimal"
+                  value={globalIskontoInput ?? String(Number(iskonto) || 0).replace('.', ',')}
+                  onChange={(e) => setGlobalIskontoInput(e.target.value)}
+                  onBlur={() => {
+                    const parsed = parseDiscountInput(globalIskontoInput ?? '');
+                    if (parsed != null) handleGlobalIskontoChange(parsed);
+                    setGlobalIskontoInput(null);
                   }}
                   disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={0.01}
                   className="input w-full text-sm py-1.5"
                   placeholder="0"
                   title="Tüm satırlara uygulanır"
@@ -3535,14 +3570,15 @@ export default function ContractDetailModal({
                             </td>
                             <td className="text-right tabular-nums">
                               {isReadOnly ? (
-                                Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0
+                                getRowDiscountPercent(item)
                               ) : (
                                 <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  step={0.01}
-                                  value={Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={
+                                    iskontoInputs[netKey] ??
+                                    String(getRowDiscountPercent(item)).replace('.', ',')
+                                  }
                                   ref={(el) => {
                                     const key = `${rowIndex}-5`;
                                     if (el) itemsGridRefs.current.set(key, el);
@@ -3554,17 +3590,20 @@ export default function ContractDetailModal({
                                   }}
                                   onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 5)}
                                   onChange={(e) => {
-                                    const v = parseFloat(e.target.value);
-                                    if (item.kind === 'inventory') {
-                                      updateContractItemIskonto(
-                                        item.ItemId,
-                                        item.WarehouseId,
-                                        Number.isFinite(v) ? v : 0
-                                      );
-                                    } else {
-                                      setIskonto(Number.isFinite(v) ? v : 0);
+                                    setIskontoInputs((prev) => ({ ...prev, [netKey]: e.target.value }));
+                                  }}
+                                  onBlur={() => {
+                                    const parsed = parseDiscountInput(iskontoInputs[netKey] ?? '');
+                                    if (parsed != null) {
+                                      updateContractItemIskonto(netKey, parsed);
+                                      setLineNetInputs((prev) => {
+                                        if (!(netKey in prev)) return prev;
+                                        const next = { ...prev };
+                                        delete next[netKey];
+                                        return next;
+                                      });
                                     }
-                                    setLineNetInputs((prev) => {
+                                    setIskontoInputs((prev) => {
                                       if (!(netKey in prev)) return prev;
                                       const next = { ...prev };
                                       delete next[netKey];
@@ -3583,7 +3622,7 @@ export default function ContractDetailModal({
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  value={lineNetInputs[netKey] ?? formatPriceInput(lineNet)}
+                                  value={lineNetInputs[netKey] ?? formatNetPriceInput(lineNet)}
                                   ref={(el) => {
                                     const key = `${rowIndex}-6`;
                                     if (el) itemsGridRefs.current.set(key, el);
@@ -3789,7 +3828,7 @@ export default function ContractDetailModal({
               )}
               {!isReadOnly && !completed && (
                 <>
-                  <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  <button type="button" onClick={requestClose} className={`btn-secondary ${compactBtn}`}>
                     İptal
                   </button>
                   <button
@@ -3803,7 +3842,7 @@ export default function ContractDetailModal({
                 </>
               )}
               {isReadOnly && (
-                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                <button type="button" onClick={requestClose} className={`btn-secondary ${compactBtn}`}>
                   Kapat
                 </button>
               )}
@@ -3858,6 +3897,19 @@ export default function ContractDetailModal({
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={showCloseConfirm}
+        title="Sözleşme kapatılsın mı?"
+        message="Sözleşme penceresini kapatmak istediğinize emin misiniz? Kaydedilmemiş değişiklikler kaybolabilir."
+        confirmLabel="Kapat"
+        cancelLabel="Geri dön"
+        onConfirm={() => {
+          setShowCloseConfirm(false);
+          onClose();
+        }}
+        onCancel={() => setShowCloseConfirm(false)}
+      />
 
       <ConfirmModal
         open={showCancelConfirm}
@@ -4032,11 +4084,12 @@ export default function ContractDetailModal({
         currency={currency}
         onClose={() => setShowManualLineModal(false)}
         onAdd={(data) => {
+          const clientId = `manual-${crypto.randomUUID()}`;
           setContractItems((prev) => [
             ...prev,
             {
               kind: 'manual',
-              ClientId: `manual-${crypto.randomUUID()}`,
+              ClientId: clientId,
               IsManual: true,
               Description: data.Description,
               RentedQuantity: data.Quantity,
@@ -4045,6 +4098,7 @@ export default function ContractDetailModal({
               PriceSource: 'MANUAL',
             },
           ]);
+          setItemIskonto((prev) => ({ ...prev, [`man-${clientId}`]: iskonto }));
         }}
       />
       {settleItem && contract && (
