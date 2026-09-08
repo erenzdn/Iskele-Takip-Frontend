@@ -3,7 +3,11 @@ import type { Addendum, ContractLineItem } from '../models';
 import {
   buildAddendumAddedLineSources,
   buildContractItemDisplayEntries,
+  canReverseAddendum,
+  getAddendumDisplayStatusLabel,
   getAddendumSourceForContractLine,
+  groupAddendumLineItemsByAddendum,
+  hasActiveReverseForSource,
 } from './addendum';
 
 function inventoryLine(
@@ -34,6 +38,8 @@ function approvedAddWithLink(
     AddendumNo: addendumNo,
     Status: 'approved',
     EffectiveDate: '2026-01-01',
+    IsReversal: false,
+    IsReversed: false,
     details: [
       {
         DetailId: 1,
@@ -59,6 +65,8 @@ describe('buildAddendumAddedLineSources', () => {
         AddendumNo: 4,
         Status: 'approved',
         EffectiveDate: '2026-01-02',
+        IsReversal: false,
+        IsReversed: false,
         details: [
           {
             DetailId: 2,
@@ -136,15 +144,110 @@ describe('buildContractItemDisplayEntries', () => {
     expect(entries[0]).toMatchObject({ kind: 'row', isAddendumRow: false });
   });
 
-  it('split kapalıysa tüm satırlar ana listede kalır', () => {
+  it('split kapalıysa tek listede kalır ama Z rozeti için işaretler', () => {
+    const base = inventoryLine({ DetailId: 1, ItemName: 'Ana' });
     const added = inventoryLine({
       DetailId: 50,
       SourceAddendumId: 5,
       SourceAddendumNo: 2,
     });
-    const entries = buildContractItemDisplayEntries([added], new Map(), false);
-    expect(entries).toEqual([
-      { kind: 'row', item: added, isAddendumRow: false, addendumNo: null },
-    ]);
+    const entries = buildContractItemDisplayEntries([base, added], new Map(), false);
+    expect(entries).toHaveLength(2);
+    expect(entries[0]).toMatchObject({ kind: 'row', isAddendumRow: false, addendumNo: null });
+    expect(entries[1]).toMatchObject({ kind: 'row', isAddendumRow: true, addendumNo: 2 });
+  });
+});
+
+describe('groupAddendumLineItemsByAddendum', () => {
+  it('zeyilname no’ya göre gruplar', () => {
+    const a = inventoryLine({ DetailId: 50, SourceAddendumId: 5, SourceAddendumNo: 2, ItemName: 'A' });
+    const b = inventoryLine({ DetailId: 51, SourceAddendumId: 8, SourceAddendumNo: 3, ItemName: 'B' });
+    const c = inventoryLine({ DetailId: 52, SourceAddendumId: 5, SourceAddendumNo: 2, ItemName: 'C' });
+    const base = inventoryLine({ DetailId: 1, ItemName: 'Ana' });
+    const groups = groupAddendumLineItemsByAddendum([base, a, b, c], new Map());
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({ addendumId: 5, addendumNo: 2 });
+    expect(groups[0].items).toHaveLength(2);
+    expect(groups[1]).toMatchObject({ addendumId: 8, addendumNo: 3 });
+  });
+});
+
+describe('canReverseAddendum / hasActiveReverseForSource', () => {
+  const approved: Addendum = {
+    AddendumId: 5,
+    ContractId: 1,
+    AddendumNo: 2,
+    Status: 'approved',
+    EffectiveDate: '2026-01-01',
+    IsReversal: false,
+    IsReversed: false,
+  };
+
+  it('onaylı ve tersine çevrilmemişken true döner', () => {
+    expect(
+      canReverseAddendum({
+        addendum: approved,
+        contractActive: true,
+        canUpdate: true,
+        siblingAddenda: [],
+      })
+    ).toBe(true);
+  });
+
+  it('IsReversed true iken false döner', () => {
+    expect(
+      canReverseAddendum({
+        addendum: { ...approved, IsReversed: true },
+        contractActive: true,
+        canUpdate: true,
+      })
+    ).toBe(false);
+  });
+
+  it('aktif ters kayıt varken false döner', () => {
+    const siblings: Addendum[] = [
+      {
+        AddendumId: 9,
+        ContractId: 1,
+        Status: 'draft',
+        EffectiveDate: '2026-02-01',
+        IsReversal: true,
+        IsReversed: false,
+        ReversesAddendumId: 5,
+      },
+    ];
+    expect(hasActiveReverseForSource(siblings, 5)).toBe(true);
+    expect(
+      canReverseAddendum({
+        addendum: approved,
+        contractActive: true,
+        canUpdate: true,
+        siblingAddenda: siblings,
+      })
+    ).toBe(false);
+  });
+
+  it('reddedilmiş ters kayıt aktif sayılmaz', () => {
+    const siblings: Addendum[] = [
+      {
+        AddendumId: 9,
+        ContractId: 1,
+        Status: 'rejected',
+        EffectiveDate: '2026-02-01',
+        IsReversal: true,
+        IsReversed: false,
+        ReversesAddendumId: 5,
+      },
+    ];
+    expect(hasActiveReverseForSource(siblings, 5)).toBe(false);
+  });
+
+  it('display status IsReversed için özel etiket verir', () => {
+    expect(getAddendumDisplayStatusLabel({ Status: 'approved', IsReversed: true })).toBe(
+      'Onaylandı (tersine çevrildi)'
+    );
+    expect(getAddendumDisplayStatusLabel({ Status: 'approved', IsReversed: false })).toBe(
+      'Onaylandı'
+    );
   });
 });

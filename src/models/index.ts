@@ -1360,6 +1360,66 @@ export interface Addendum {
   ApprovedByName?: string | null;
   RejectedByUserId?: number | null;
   RejectedByName?: string | null;
+  /** Bu kayıt hangi zeyilnameyi tersine çevirir */
+  ReversesAddendumId?: number | null;
+  /** Bu kaydı hangi zeyilname tersine çevirdi */
+  ReversedByAddendumId?: number | null;
+  ReversedAt?: string | null;
+  /** ReversesAddendumId != null */
+  IsReversal: boolean;
+  /** ReversedByAddendumId != null */
+  IsReversed: boolean;
+  ReversesAddendumNumber?: number | null;
+  ReversesAddendumCode?: string | null;
+  ReversedByAddendumNumber?: number | null;
+  ReversedByAddendumCode?: string | null;
   details?: AddendumDetail[];
   Details?: AddendumDetail[];
+}
+
+/** GET /addendums/:id/reversal-preview */
+export interface AddendumReversalPreviewDetail {
+  ChangeType: ChangeType;
+  ContractDetailId?: number | null;
+  QuantityChange?: number | null;
+  ItemId?: number | null;
+  NewUnitPrice?: number | null;
+  NewMonthlyOverride?: number | null;
+  ItemName?: string | null;
+  ItemCode?: string | null;
+  ContractDetailDescription?: string | null;
+  Description?: string | null;
+}
+
+export interface AddendumReversalWarning {
+  sourceDetailId: number;
+  message: string;
+}
+
+export interface AddendumReversalSkipped {
+  sourceDetailId: number;
+  changeType: string;
+  reason: string;
+}
+
+export interface AddendumReversalPreview {
+  sourceAddendumId: number;
+  sourceAddendumNumber: number | null;
+  sourceAddendumCode: string | null;
+  reversalDetails: AddendumReversalPreviewDetail[];
+  warnings: AddendumReversalWarning[];
+  skipped: AddendumReversalSkipped[];
+}
+
+export interface CreateAddendumReversalRequest {
+  Reason: string;
+  EffectiveDate?: string;
+  AddendumCode?: string;
+}
+
+export interface CreateAddendumReversalResult {
+  addendum: Addendum;
+  details: AddendumDetail[];
+  warnings: AddendumReversalWarning[];
+  skipped: AddendumReversalSkipped[];
 }

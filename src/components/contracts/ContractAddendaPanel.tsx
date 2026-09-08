@@ -9,13 +9,17 @@ import type {
 } from '../../models';
 import { addendumService } from '../../services/addendumService';
 import {
+  canReverseAddendum,
+  formatAddendumRefLabel,
+  getAddendumDisplayStatusLabel,
   getAddendumStatusBadgeClass,
-  getAddendumStatusLabel,
+  getReverseBlockedReason,
 } from '../../utils/addendum';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { formatDate, formatShortDateTime } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
 import AddendumDetailModal from '../modals/AddendumDetailModal';
+import AddendumReverseModal from '../modals/AddendumReverseModal';
 import PdfPreviewModal from '../modals/PdfPreviewModal';
 
 interface ContractAddendaPanelProps {
@@ -62,6 +66,7 @@ export default function ContractAddendaPanel({
 
   const [editorOpen, setEditorOpen] = useState(false);
   const [editorAddendumId, setEditorAddendumId] = useState<number | null>(null);
+  const [reverseSource, setReverseSource] = useState<Addendum | null>(null);
 
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
@@ -122,6 +127,27 @@ export default function ContractAddendaPanel({
   const openDetail = (id: number) => {
     setEditorAddendumId(id);
     setEditorOpen(true);
+  };
+
+  const openReverse = (row: Addendum) => {
+    if (
+      !canReverseAddendum({
+        addendum: row,
+        contractActive,
+        canUpdate,
+        siblingAddenda: list,
+      })
+    ) {
+      const reason = getReverseBlockedReason({
+        addendum: row,
+        contractActive,
+        canUpdate,
+        siblingAddenda: list,
+      });
+      if (reason) toast.warning(reason);
+      return;
+    }
+    setReverseSource(row);
   };
 
   const closePdfPreview = () => {
@@ -284,11 +310,68 @@ export default function ContractAddendaPanel({
                   </td>
                   <td className="px-3 py-2.5">{row.AddendumCode || '—'}</td>
                   <td className="px-3 py-2.5">
-                    <span
-                      className={`inline-block text-xs px-2 py-0.5 rounded-full border ${getAddendumStatusBadgeClass(row.Status)}`}
-                    >
-                      {getAddendumStatusLabel(row.Status)}
-                    </span>
+                    <div className="flex flex-col gap-1 items-start">
+                      <div className="flex flex-wrap gap-1">
+                        <span
+                          className={`inline-block text-xs px-2 py-0.5 rounded-full border ${getAddendumStatusBadgeClass(row.Status)}`}
+                        >
+                          {getAddendumDisplayStatusLabel(row)}
+                        </span>
+                        {row.IsReversal && (
+                          <span className="inline-block text-xs px-2 py-0.5 rounded-full border bg-violet-500/20 text-violet-200 border-violet-500/40">
+                            Ters zeyilname
+                          </span>
+                        )}
+                        {row.IsReversed && (
+                          <span
+                            className="inline-block text-xs px-2 py-0.5 rounded-full border bg-slate-500/25 text-slate-200 border-slate-500/40"
+                            title={
+                              row.ReversedAt
+                                ? `Tersine çevrilme: ${formatShortDateTime(row.ReversedAt)}`
+                                : undefined
+                            }
+                          >
+                            Tersine çevrildi
+                          </span>
+                        )}
+                      </div>
+                      {row.IsReversal && row.ReversesAddendumId != null && (
+                        <button
+                          type="button"
+                          className="text-[11px] text-violet-300/90 hover:text-violet-100 underline underline-offset-2 text-left"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openDetail(row.ReversesAddendumId!);
+                          }}
+                        >
+                          {`${formatAddendumRefLabel({
+                            number: row.ReversesAddendumNumber,
+                            id: row.ReversesAddendumId,
+                          })}'yi tersine çevirir`}
+                        </button>
+                      )}
+                      {row.IsReversed && row.ReversedByAddendumId != null && (
+                        <button
+                          type="button"
+                          className="text-[11px] text-slate-400 hover:text-slate-200 underline underline-offset-2 text-left"
+                          title={
+                            row.ReversedAt
+                              ? `Tersine çevrilme: ${formatShortDateTime(row.ReversedAt)}`
+                              : undefined
+                          }
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openDetail(row.ReversedByAddendumId!);
+                          }}
+                        >
+                          Ters kayıt:{' '}
+                          {formatAddendumRefLabel({
+                            number: row.ReversedByAddendumNumber,
+                            id: row.ReversedByAddendumId,
+                          })}
+                        </button>
+                      )}
+                    </div>
                   </td>
                   <td className="px-3 py-2.5 whitespace-nowrap">
                     {row.EffectiveDate ? formatDate(row.EffectiveDate) : '—'}
@@ -314,6 +397,24 @@ export default function ContractAddendaPanel({
                       >
                         Detay
                       </button>
+                      {canReverseAddendum({
+                        addendum: row,
+                        contractActive,
+                        canUpdate,
+                        siblingAddenda: list,
+                      }) && (
+                        <button
+                          type="button"
+                          className="btn-secondary text-xs px-2 py-1 border-violet-500/40 text-violet-200"
+                          disabled={isBusy}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            openReverse(row);
+                          }}
+                        >
+                          Tersine Çevir
+                        </button>
+                      )}
                       <button
                         type="button"
                         className="btn-secondary text-xs px-2 py-1"
@@ -361,16 +462,36 @@ export default function ContractAddendaPanel({
         warehouses={warehouses}
         currency={currency}
         templateId={templateId}
+        contractActive={contractActive}
+        siblingAddenda={list}
         canUpdate={canUpdate}
         canDelete={canDelete}
         onClose={() => setEditorOpen(false)}
         onChanged={async (opts) => {
           await loadList();
+          if (opts?.openAddendumId != null) {
+            setEditorAddendumId(opts.openAddendumId);
+            setEditorOpen(true);
+          }
           if (opts?.approved) {
             await Promise.resolve(onContractRefresh());
           }
         }}
       />
+
+      {reverseSource && (
+        <AddendumReverseModal
+          open={Boolean(reverseSource)}
+          sourceAddendum={reverseSource}
+          onClose={() => setReverseSource(null)}
+          onCreated={async (newAddendumId) => {
+            await loadList();
+            setReverseSource(null);
+            setEditorAddendumId(newAddendumId);
+            setEditorOpen(true);
+          }}
+        />
+      )}
 
       <PdfPreviewModal
         open={showPdfPreview}

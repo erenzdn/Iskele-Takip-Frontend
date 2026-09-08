@@ -1,5 +1,15 @@
 import { apiClient } from './apiClient';
-import type { Addendum, AddendumDetail, ChangeType } from '../models';
+import type {
+  Addendum,
+  AddendumDetail,
+  AddendumReversalPreview,
+  AddendumReversalPreviewDetail,
+  AddendumReversalSkipped,
+  AddendumReversalWarning,
+  ChangeType,
+  CreateAddendumReversalRequest,
+  CreateAddendumReversalResult,
+} from '../models';
 import { buildAddendumAddedLineSources, normalizeAddendumStatus, type AddendumLineSource } from '../utils/addendum';
 
 export interface CreateAddendumRequest {
@@ -30,6 +40,14 @@ export type UpdateAddendumDetailRequest = Partial<CreateAddendumDetailRequest>;
 
 export interface RejectAddendumRequest {
   RejectionReason: string;
+}
+
+export type { CreateAddendumReversalRequest, CreateAddendumReversalResult };
+
+function nullableNumber(value: unknown): number | null {
+  if (value == null || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
 }
 
 function normalizeDetail(raw: unknown): AddendumDetail {
@@ -64,10 +82,79 @@ function normalizeDetail(raw: unknown): AddendumDetail {
   };
 }
 
+function normalizeReversalWarning(raw: unknown): AddendumReversalWarning {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    sourceDetailId: Number(o.sourceDetailId ?? o.SourceDetailId ?? 0),
+    message: String(o.message ?? o.Message ?? ''),
+  };
+}
+
+function normalizeReversalSkipped(raw: unknown): AddendumReversalSkipped {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    sourceDetailId: Number(o.sourceDetailId ?? o.SourceDetailId ?? 0),
+    changeType: String(o.changeType ?? o.ChangeType ?? ''),
+    reason: String(o.reason ?? o.Reason ?? ''),
+  };
+}
+
+function normalizeReversalPreviewDetail(raw: unknown): AddendumReversalPreviewDetail {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  return {
+    ChangeType: String(o.ChangeType ?? o.changeType ?? 'DECREASE').toUpperCase() as ChangeType,
+    ContractDetailId: nullableNumber(o.ContractDetailId ?? o.contractDetailId),
+    QuantityChange:
+      o.QuantityChange != null || o.quantityChange != null
+        ? Number(o.QuantityChange ?? o.quantityChange)
+        : null,
+    ItemId: nullableNumber(o.ItemId ?? o.itemId),
+    NewUnitPrice:
+      o.NewUnitPrice != null || o.newUnitPrice != null
+        ? Number(o.NewUnitPrice ?? o.newUnitPrice)
+        : null,
+    NewMonthlyOverride:
+      o.NewMonthlyOverride != null || o.newMonthlyOverride != null
+        ? Number(o.NewMonthlyOverride ?? o.newMonthlyOverride)
+        : null,
+    ItemName: (o.ItemName ?? o.itemName ?? null) as string | null,
+    ItemCode: (o.ItemCode ?? o.itemCode ?? null) as string | null,
+    ContractDetailDescription: (o.ContractDetailDescription ??
+      o.contractDetailDescription ??
+      null) as string | null,
+    Description: (o.Description ?? o.description ?? null) as string | null,
+  };
+}
+
+function normalizeReversalPreview(raw: unknown): AddendumReversalPreview {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const detailsRaw = o.reversalDetails ?? o.ReversalDetails;
+  const warningsRaw = o.warnings ?? o.Warnings;
+  const skippedRaw = o.skipped ?? o.Skipped;
+  return {
+    sourceAddendumId: Number(o.sourceAddendumId ?? o.SourceAddendumId ?? 0),
+    sourceAddendumNumber: nullableNumber(o.sourceAddendumNumber ?? o.SourceAddendumNumber),
+    sourceAddendumCode: (o.sourceAddendumCode ?? o.SourceAddendumCode ?? null) as string | null,
+    reversalDetails: Array.isArray(detailsRaw) ? detailsRaw.map(normalizeReversalPreviewDetail) : [],
+    warnings: Array.isArray(warningsRaw) ? warningsRaw.map(normalizeReversalWarning) : [],
+    skipped: Array.isArray(skippedRaw) ? skippedRaw.map(normalizeReversalSkipped) : [],
+  };
+}
+
 function normalizeAddendum(raw: unknown): Addendum {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   const detailsRaw = o.details ?? o.Details;
   const details = Array.isArray(detailsRaw) ? detailsRaw.map(normalizeDetail) : undefined;
+  const reversesAddendumId = nullableNumber(o.ReversesAddendumId ?? o.reversesAddendumId);
+  const reversedByAddendumId = nullableNumber(o.ReversedByAddendumId ?? o.reversedByAddendumId);
+  const isReversal =
+    o.IsReversal != null || o.isReversal != null
+      ? Boolean(o.IsReversal ?? o.isReversal)
+      : reversesAddendumId != null;
+  const isReversed =
+    o.IsReversed != null || o.isReversed != null
+      ? Boolean(o.IsReversed ?? o.isReversed)
+      : reversedByAddendumId != null;
   return {
     AddendumId: Number(o.AddendumId ?? o.addendumId ?? 0),
     ContractId: Number(o.ContractId ?? o.contractId ?? 0),
@@ -88,8 +175,39 @@ function normalizeAddendum(raw: unknown): Addendum {
     ApprovedByName: (o.ApprovedByName ?? o.approvedByName ?? null) as string | null,
     RejectedByUserId: (o.RejectedByUserId ?? o.rejectedByUserId ?? null) as number | null,
     RejectedByName: (o.RejectedByName ?? o.rejectedByName ?? null) as string | null,
+    ReversesAddendumId: reversesAddendumId,
+    ReversedByAddendumId: reversedByAddendumId,
+    ReversedAt: (o.ReversedAt ?? o.reversedAt ?? null) as string | null,
+    IsReversal: isReversal,
+    IsReversed: isReversed,
+    ReversesAddendumNumber: nullableNumber(o.ReversesAddendumNumber ?? o.reversesAddendumNumber),
+    ReversesAddendumCode: (o.ReversesAddendumCode ?? o.reversesAddendumCode ?? null) as string | null,
+    ReversedByAddendumNumber: nullableNumber(
+      o.ReversedByAddendumNumber ?? o.reversedByAddendumNumber
+    ),
+    ReversedByAddendumCode: (o.ReversedByAddendumCode ?? o.reversedByAddendumCode ?? null) as
+      | string
+      | null,
     details,
     Details: details,
+  };
+}
+
+function normalizeReversalResult(raw: unknown): CreateAddendumReversalResult {
+  const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const addendumRaw = o.addendum ?? o.Addendum ?? raw;
+  const detailsRaw = o.details ?? o.Details;
+  const warningsRaw = o.warnings ?? o.Warnings;
+  const skippedRaw = o.skipped ?? o.Skipped;
+  const addendum = normalizeAddendum(addendumRaw);
+  const details = Array.isArray(detailsRaw)
+    ? detailsRaw.map(normalizeDetail)
+    : (addendum.details ?? addendum.Details ?? []);
+  return {
+    addendum: { ...addendum, details, Details: details },
+    details,
+    warnings: Array.isArray(warningsRaw) ? warningsRaw.map(normalizeReversalWarning) : [],
+    skipped: Array.isArray(skippedRaw) ? skippedRaw.map(normalizeReversalSkipped) : [],
   };
 }
 
@@ -181,6 +299,19 @@ export const addendumService = {
 
   async deleteAsync(id: number): Promise<void> {
     await apiClient.delete(`/addendums/${id}`);
+  },
+
+  async getReversalPreviewAsync(id: number): Promise<AddendumReversalPreview> {
+    const raw = await apiClient.get<unknown>(`/addendums/${id}/reversal-preview`);
+    return normalizeReversalPreview(raw);
+  },
+
+  async reverseAsync(
+    id: number,
+    body: CreateAddendumReversalRequest
+  ): Promise<CreateAddendumReversalResult> {
+    const raw = await apiClient.post<unknown>(`/addendums/${id}/reverse`, body);
+    return normalizeReversalResult(raw);
   },
 
   async generateDocumentAsync(

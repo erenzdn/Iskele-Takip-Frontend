@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo, Fragment, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckIcon, ClipboardIcon, DotsSixVerticalIcon, XIcon } from '@phosphor-icons/react';
+import { CheckIcon, CaretDownIcon, CaretRightIcon, ClipboardIcon, DotsSixVerticalIcon, XIcon } from '@phosphor-icons/react';
 import { useNavigate } from 'react-router-dom';
 import {
   AuditLog,
@@ -51,7 +51,7 @@ import SettleNonReturnModal from './SettleNonReturnModal';
 import InventoryDetailModal from './InventoryDetailModal';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import { addendumService } from '../../services/addendumService';
-import { buildContractItemDisplayEntries, type AddendumLineSource } from '../../utils/addendum';
+import { buildContractItemDisplayEntries, groupAddendumLineItemsByAddendum, type AddendumLineSource } from '../../utils/addendum';
 import {
   filterContractTemplatesByKind,
   partitionContractTemplates,
@@ -281,6 +281,7 @@ export default function ContractDetailModal({
   const [addendumLineSources, setAddendumLineSources] = useState<Map<number, AddendumLineSource>>(
     () => new Map()
   );
+  const [showAddendumExtras, setShowAddendumExtras] = useState(false);
   const [showManualLineModal, setShowManualLineModal] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
   const canViewContracts = Boolean(currentUser?.permissions?.includes('contracts_view'));
@@ -499,6 +500,7 @@ export default function ContractDetailModal({
       setContractReturns([]);
       setAddendumLineSources(new Map());
     }
+    setShowAddendumExtras(false);
   }, [contract?.ContractId, isNew, isRentalContract, canViewContracts]);
 
   const loadTemplates = async () => {
@@ -937,17 +939,23 @@ export default function ContractDetailModal({
       buildContractItemDisplayEntries(
         contractItems,
         addendumLineSources,
-        !isNew && canViewContracts
+        false
       ),
+    [contractItems, addendumLineSources]
+  );
+
+  const addendumLineGroups = useMemo(
+    () =>
+      !isNew && canViewContracts
+        ? groupAddendumLineItemsByAddendum(contractItems, addendumLineSources)
+        : [],
     [contractItems, addendumLineSources, isNew, canViewContracts]
   );
 
   const addendumItemCount = useMemo(
-    () => contractItemDisplayEntries.filter((entry) => entry.kind === 'row' && entry.isAddendumRow).length,
-    [contractItemDisplayEntries]
+    () => addendumLineGroups.reduce((sum, g) => sum + g.items.length, 0),
+    [addendumLineGroups]
   );
-
-  const baseContractItemCount = contractItems.length - addendumItemCount;
 
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getRowDiscountPercent = (item: ContractLineItem) =>
@@ -2979,13 +2987,28 @@ export default function ContractDetailModal({
                 {contractType === 'SALE' ? 'Satış Kalemleri' : 'Kiralanan Malzemeler'}
                 {contractItems.length > 0 && (
                   <span className="ml-1.5 font-normal normal-case tracking-normal text-text-secondary/80">
-                    {addendumItemCount > 0
-                      ? `(${baseContractItemCount} + ${addendumItemCount} zeyilname)`
-                      : `(${contractItems.length})`}
+                    ({contractItems.length}
+                    {addendumItemCount > 0 ? ` · ${addendumItemCount} zeyilname` : ''})
                   </span>
                 )}
               </h3>
               <div className="flex flex-wrap items-center gap-1.5">
+                {addendumItemCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setShowAddendumExtras((v) => !v)}
+                    className={`btn-secondary ${compactBtn} inline-flex items-center gap-1`}
+                    aria-expanded={showAddendumExtras}
+                    title="Zeyilname ile eklenen kalemleri gruplu göster"
+                  >
+                    {showAddendumExtras ? (
+                      <CaretDownIcon size={12} weight="bold" aria-hidden />
+                    ) : (
+                      <CaretRightIcon size={12} weight="bold" aria-hidden />
+                    )}
+                    Zeyilname ekleri ({addendumItemCount})
+                  </button>
+                )}
                 {isNew && !isReadOnly && (
                   <button
                     type="button"
@@ -3115,15 +3138,7 @@ export default function ContractDetailModal({
                       </tr>
                     ) : (
                     contractItemDisplayEntries.map((entry, rowIndex) => {
-                      if (entry.kind === 'separator') {
-                        return (
-                          <tr key="addendum-separator" className="addendum-separator-row">
-                            <td colSpan={isReadOnly ? LINE_ITEM_COL_SPAN.contract.readOnly : LINE_ITEM_COL_SPAN.contract.editable}>
-                              Zeyilname ile eklenen kalemler
-                            </td>
-                          </tr>
-                        );
-                      }
+                      if (entry.kind === 'separator') return null;
 
                       const { item, isAddendumRow, addendumNo } = entry;
                       const remainingOnRent = item.kind === 'inventory' ? item.RentedQuantity - item.ReturnedQuantity : 0;
@@ -3746,6 +3761,65 @@ export default function ContractDetailModal({
                   </tbody>
                 </table>
             </div>
+            {showAddendumExtras && addendumLineGroups.length > 0 && (
+              <div className="shrink-0 border-t border-amber-500/25 bg-amber-500/[0.06] max-h-52 overflow-y-auto">
+                <div className="px-3 py-2 space-y-3">
+                  <p className="text-[11px] text-text-secondary">
+                    Zeyilname ile eklenen kalemler (miktar/fiyat değişimleri ana satırlara yansır). Genel
+                    toplam yukarıdaki birleşik listeyi kapsar.
+                  </p>
+                  {addendumLineGroups.map((group) => (
+                    <div key={group.addendumId} className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="addendum-badge">
+                          Z{group.addendumNo != null ? group.addendumNo : group.addendumId}
+                        </span>
+                        <span className="text-xs font-semibold text-text-primary">
+                          Zeyilname #{group.addendumNo ?? group.addendumId}
+                        </span>
+                        <span className="text-[11px] text-text-secondary">
+                          {group.items.length} kalem
+                        </span>
+                      </div>
+                      <ul className="space-y-0.5 pl-1">
+                        {group.items.map((item, idx) => {
+                          const name =
+                            item.kind === 'manual'
+                              ? item.Description || 'Manuel kalem'
+                              : item.ItemName || `Ürün #${item.ItemId}`;
+                          const code =
+                            item.kind === 'inventory'
+                              ? item.ItemCode || item.ItemCodeOverride || ''
+                              : '';
+                          const lineKey =
+                            item.kind === 'inventory'
+                              ? `g-${group.addendumId}-${item.DetailId ?? idx}-${item.ItemId}-${item.WarehouseId}`
+                              : `g-${group.addendumId}-${item.ClientId}`;
+                          return (
+                            <li
+                              key={lineKey}
+                              className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs text-text-primary/90 px-2 py-1 rounded bg-background-panel/60 border border-background-border/50"
+                            >
+                              <span className="min-w-0 truncate">
+                                {code ? (
+                                  <span className="text-text-secondary mr-1.5">{code}</span>
+                                ) : null}
+                                {name}
+                              </span>
+                              <span className="shrink-0 tabular-nums text-text-secondary">
+                                {item.RentedQuantity} adet
+                                <span className="mx-1.5 text-background-border">·</span>
+                                {formatCurrency(getLineNetTotal(item))}
+                              </span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </section>
 
           <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
