@@ -7,7 +7,12 @@ import {
   lineIskontoFromApi,
   lineNetFromGross,
   parseDiscountInput,
+  parseMoneyInput,
+  resolveCommittedHeaderDiscount,
+  resolveCommittedLineDiscount,
+  encodeLinePricingForPersistence,
   roundTo,
+  type LinePricingDraftState,
 } from './lineDiscount';
 
 describe('lineDiscount.roundTo', () => {
@@ -210,6 +215,134 @@ describe('lineDiscount.lineIskontoFromApi', () => {
     expect(lineIskontoFromApi({ Iskonto: 0.005 }, 10)).toBe(0.005);
     expect(lineIskontoFromApi({ iskonto: '12.5' }, 0)).toBe(12.5);
     expect(lineIskontoFromApi({ Iskonto: 0 }, 10)).toBe(0);
+  });
+});
+
+describe('lineDiscount.parseMoneyInput', () => {
+  it('TR binlik ve ondalığı okur', () => {
+    expect(parseMoneyInput('1.500,00')).toBe(1500);
+    expect(parseMoneyInput('1.234,56')).toBe(1234.56);
+    expect(parseMoneyInput('1500,5')).toBe(1500.5);
+  });
+
+  it('EN ondalığı ve boş/geçersizi ayırır', () => {
+    expect(parseMoneyInput('1500.50')).toBe(1500.5);
+    expect(parseMoneyInput('')).toBeNull();
+    expect(parseMoneyInput('abc')).toBeNull();
+    expect(parseMoneyInput('-3')).toBeNull();
+  });
+});
+
+describe('lineDiscount.resolveCommittedLineDiscount', () => {
+  const baseDrafts = (overrides: Partial<LinePricingDraftState> = {}): LinePricingDraftState => ({
+    itemIskonto: { '12': 0 },
+    iskontoInputs: {},
+    lineNetInputs: {},
+    globalIskontoInput: null,
+    headerIskonto: 0,
+    ...overrides,
+  });
+
+  it('yeşil toplam taslağını blur olmadan iskontoya çevirir', () => {
+    const pct = resolveCommittedLineDiscount({
+      key: '12',
+      gross: 1000,
+      drafts: baseDrafts({
+        itemIskonto: { '12': 0 },
+        lineNetInputs: { '12': '800,00' },
+      }),
+    });
+    expect(pct).toBe(20);
+    expect(lineNetFromGross(1000, pct)).toBe(800);
+  });
+
+  it('satır % taslağını kayıtlı iskontoya tercih eder', () => {
+    expect(
+      resolveCommittedLineDiscount({
+        key: '12',
+        gross: 1000,
+        drafts: baseDrafts({
+          itemIskonto: { '12': 0 },
+          iskontoInputs: { '12': '15' },
+        }),
+      })
+    ).toBe(15);
+  });
+
+  it('yeşil toplam, satır % taslağından önceliklidir', () => {
+    expect(
+      resolveCommittedLineDiscount({
+        key: '12',
+        gross: 1000,
+        drafts: baseDrafts({
+          itemIskonto: { '12': 5 },
+          iskontoInputs: { '12': '15' },
+          lineNetInputs: { '12': '900,00' },
+        }),
+      })
+    ).toBe(10);
+  });
+
+  it('taslak yoksa kayıtlı satır iskontosunu korur', () => {
+    expect(
+      resolveCommittedLineDiscount({
+        key: '12',
+        gross: 1000,
+        drafts: baseDrafts({ itemIskonto: { '12': 7.5 } }),
+      })
+    ).toBe(7.5);
+  });
+
+  it('üst iskonto taslağını başlığa yazar', () => {
+    expect(resolveCommittedHeaderDiscount(0, '12,5')).toBe(12.5);
+    expect(resolveCommittedHeaderDiscount(8, null)).toBe(8);
+  });
+});
+
+describe('lineDiscount.encodeLinePricingForPersistence', () => {
+  it('tam % yetiyorsa fiyatı değiştirmez', () => {
+    const encoded = encodeLinePricingForPersistence({
+      currentPrice: 1000,
+      quantity: 1,
+      discountPercent: 20,
+    });
+    expect(encoded).toMatchObject({ discountPercent: 20, price: 1000, priceChanged: false });
+  });
+
+  it('kuruşluk neti NUMERIC(7,4) iskonto ile fiyata dokunmadan korur', () => {
+    const pct = ((1500 - 1499.5) / 1500) * 100;
+    expect(lineNetFromGross(1500, roundTo(pct, 2))).not.toBe(1499.5);
+    expect(lineNetFromGross(1500, roundTo(pct, 4))).toBe(1499.5);
+
+    const encoded = encodeLinePricingForPersistence({
+      currentPrice: 150,
+      quantity: 10,
+      discountPercent: pct,
+    });
+    expect(encoded.priceChanged).toBe(false);
+    expect(encoded.price).toBe(150);
+    expect(lineNetFromGross(encoded.price * 10, encoded.discountPercent)).toBe(1499.5);
+  });
+
+  it('1.450 gibi yuvarlak tutarı 4 haneli % ile korur', () => {
+    const pct = ((1500 - 1450) / 1500) * 100;
+    const encoded = encodeLinePricingForPersistence({
+      currentPrice: 150,
+      quantity: 10,
+      discountPercent: pct,
+    });
+    expect(encoded).toMatchObject({ price: 150, discountPercent: 3.3333, priceChanged: false });
+    expect(lineNetFromGross(1500, encoded.discountPercent)).toBe(1450);
+  });
+
+  it('4 hane yetmezse fiyat override ile kodlar', () => {
+    // Brüt 100, hedef 99.99 → %0.01; qty=7 ile 4 haneli % her fiyatla tutmayabilir
+    const encoded = encodeLinePricingForPersistence({
+      currentPrice: 100 / 7,
+      quantity: 7,
+      discountPercent: ((100 - 99.99) / 100) * 100,
+    });
+    expect(lineNetFromGross(encoded.price * 7, encoded.discountPercent)).toBe(99.99);
   });
 });
 

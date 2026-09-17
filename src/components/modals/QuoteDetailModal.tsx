@@ -24,7 +24,7 @@ import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
-import { clampDiscountRange, discountPercentFromNet, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
+import { clampDiscountRange, commitQuotePricingDrafts, discountPercentFromNet, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -439,6 +439,7 @@ export default function QuoteDetailModal({
     plannedEndDate,
     rentalDurationDays,
     iskonto,
+    itemIskonto,
     vatRate,
     currency,
     language,
@@ -1018,7 +1019,9 @@ export default function QuoteDetailModal({
     if (quoteType === 'SALE') {
       return item.OverrideUnitPrice != null ? item.OverrideUnitPrice : item.UnitPriceSnapshot;
     }
-    return item.OverrideMonthlyPrice != null ? item.OverrideMonthlyPrice / 30 : item.UnitPriceSnapshot;
+    // RENTAL: Önce OverrideMonthlyPrice (UI state), sonra MonthlyPriceOverride (backend), son olarak günlük fiyat
+    const monthlyPrice = item.OverrideMonthlyPrice ?? item.MonthlyPriceOverride ?? (item.UnitPriceSnapshot * 30);
+    return monthlyPrice / 30;
   };
 
   const getLineTotal = (item: QuoteLineItem, days: number = billedDays) => {
@@ -1324,18 +1327,40 @@ export default function QuoteDetailModal({
     quoteCode,
   });
 
-  const buildQuoteDetailsPayload = () => {
+  const getCommittedPricing = () =>
+    commitQuotePricingDrafts({
+      items: quoteItems,
+      lineKey: lineNetInputKey,
+      getGross: (item) => getLineTotal(item, displayPricingDays),
+      drafts: {
+        itemIskonto,
+        iskontoInputs,
+        lineNetInputs,
+        globalIskontoInput,
+        headerIskonto: iskonto,
+      },
+    });
+
+  const getCommittedLineIskontoMap = () => getCommittedPricing().lineIskonto;
+
+  const buildQuoteDetailsPayload = (lineIskontoMap?: Record<string, number>) => {
+    const discounts = lineIskontoMap ?? getCommittedLineIskontoMap();
     return quoteItems.map((item) =>
-      buildQuoteDetailRequest(item, quoteType, getRowDiscountPercent(item))
+      buildQuoteDetailRequest(
+        item,
+        quoteType,
+        discounts[lineNetInputKey(item)] ?? getRowDiscountPercent(item)
+      )
     );
   };
 
   const buildQuoteHeaderPayload = (targetStatus: QuoteStatus) => {
+    const { headerIskonto: committedHeader, lineIskonto: committedLines } = getCommittedPricing();
     const requestBody: Record<string, unknown> = {
       Status: targetStatus,
       Subject: normalizeText(subject) ? normalizeText(subject) : null,
       Notes: normalizeText(notes) || undefined,
-      Iskonto: iskonto,
+      Iskonto: committedHeader,
       VatRate: vatRate,
       Currency: currency,
       Language: language,
@@ -1370,7 +1395,7 @@ export default function QuoteDetailModal({
     if (normalizeText(quoteCode)) {
       requestBody.QuoteCode = normalizeText(quoteCode);
     }
-    const details = buildQuoteDetailsPayload();
+    const details = buildQuoteDetailsPayload(committedLines);
     if (details.length > 0) requestBody.details = details;
     return requestBody;
   };
@@ -1539,14 +1564,15 @@ export default function QuoteDetailModal({
 
     try {
       setIsBusy(true);
-      const details = buildQuoteDetailsPayload();
+      const { headerIskonto: committedHeader, lineIskonto: committedLines } = getCommittedPricing();
+      const details = buildQuoteDetailsPayload(committedLines);
 
       const requestBody: Record<string, unknown> = {
         CustomerId: Number(selectedCustomerId),
         CustomerAuthorizedContactId: Number(selectedAuthorizedContactId),
         Subject: normalizeText(subject) ? normalizeText(subject) : null,
         Notes: normalizeText(notes) || undefined,
-        Iskonto: iskonto,
+        Iskonto: committedHeader,
         VatRate: vatRate,
         Currency: currency,
         Language: language,
@@ -1590,7 +1616,7 @@ export default function QuoteDetailModal({
 
         const updateBody: Record<string, unknown> = {
           Status: forceStatus ?? status,
-          Iskonto: iskonto,
+          Iskonto: committedHeader,
           VatRate: vatRate,
           Currency: currency,
           Language: language,
@@ -2047,6 +2073,16 @@ export default function QuoteDetailModal({
 
     try {
       setIsBusy(true);
+      // Eski kayıtlarda TotalPrice/NetTotal snapshot ile sapmış olabilir;
+      // convert öncesi aynı detaylarla yeniden kaydederek backend invariant'ını onar.
+      const { headerIskonto: committedHeader, lineIskonto: committedLines } = getCommittedPricing();
+      const details = buildQuoteDetailsPayload(committedLines);
+      await quoteService.updateAsync(activeQuote.QuoteId, {
+        Iskonto: committedHeader,
+        VatRate: vatRate,
+        ...(details.length > 0 ? { details } : {}),
+      });
+
       const result = await quoteService.convertToContractAsync(activeQuote.QuoteId, {
         ...options,
         decrementStock: effectiveDecrementStock,

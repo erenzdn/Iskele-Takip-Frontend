@@ -4,6 +4,7 @@ import type {
   QuoteLineItem,
 } from '../models';
 import type { CreateQuoteDetailRequest } from '../services/quoteService';
+import { encodeLinePricingForPersistence } from './lineDiscount';
 
 export type NullablePriceOverride = number | null | undefined;
 
@@ -49,9 +50,17 @@ export function hydrateQuotePriceMetadata(
       'dailyPrice',
     ]) ?? 0;
   const monthlyPriceOverride = firstFiniteField(detail, [
+    'OverrideMonthlyPrice',
+    'overrideMonthlyPrice',
     'MonthlyPriceOverride',
     'monthlyPriceOverride',
   ]);
+  // Backend'den OverrideUnitPrice doğrudan geliyorsa onu kullan
+  const overrideUnitPriceFromBackend = firstFiniteField(detail, [
+    'OverrideUnitPrice',
+    'overrideUnitPrice',
+  ]);
+  
   const rawPriceSource = String(detail.PriceSource ?? detail.priceSource ?? 'INVENTORY').toUpperCase();
   const priceSource: PriceSource =
     rawPriceSource === 'OVERRIDE' || rawPriceSource === 'MANUAL'
@@ -63,9 +72,32 @@ export function hydrateQuotePriceMetadata(
     monthlyPriceOverride,
     priceSource,
     overrideUnitPrice:
-      quoteType === 'SALE' && priceSource === 'OVERRIDE' ? unitPriceSnapshot : undefined,
+      quoteType === 'SALE'
+        ? (overrideUnitPriceFromBackend ?? (priceSource === 'OVERRIDE' ? unitPriceSnapshot : undefined))
+        : undefined,
     overrideMonthlyPrice: quoteType === 'RENTAL' ? monthlyPriceOverride : undefined,
   };
+}
+
+export function persistPriceOfLine(item: QuoteLineItem, quoteType: ContractQuoteType): number {
+  if (item.kind === 'manual') return item.UnitPriceSnapshot;
+  if (quoteType === 'SALE') return item.OverrideUnitPrice ?? item.UnitPriceSnapshot;
+  return item.OverrideMonthlyPrice ?? item.MonthlyPriceOverride ?? item.UnitPriceSnapshot * 30;
+}
+
+function applyEncodedLinePrice(
+  item: QuoteLineItem,
+  quoteType: ContractQuoteType,
+  encoded: ReturnType<typeof encodeLinePricingForPersistence>
+): QuoteLineItem {
+  if (!encoded.priceChanged) return item;
+  if (item.kind === 'manual') {
+    return { ...item, UnitPriceSnapshot: encoded.price };
+  }
+  if (quoteType === 'SALE') {
+    return { ...item, OverrideUnitPrice: encoded.price };
+  }
+  return { ...item, OverrideMonthlyPrice: encoded.price };
 }
 
 export function buildQuoteDetailRequest(
@@ -73,15 +105,21 @@ export function buildQuoteDetailRequest(
   quoteType: ContractQuoteType,
   iskonto: number
 ): CreateQuoteDetailRequest {
-  const quoteDetailId = positiveId(item.QuoteDetailId);
-  if (item.kind === 'manual') {
+  const encoded = encodeLinePricingForPersistence({
+    currentPrice: persistPriceOfLine(item, quoteType),
+    quantity: item.Quantity,
+    discountPercent: iskonto,
+  });
+  const persisted = applyEncodedLinePrice(item, quoteType, encoded);
+  const quoteDetailId = positiveId(persisted.QuoteDetailId);
+  if (persisted.kind === 'manual') {
     return {
       ...(quoteDetailId !== undefined ? { QuoteDetailId: quoteDetailId } : {}),
       is_manual: true,
-      Description: item.Description,
-      Quantity: item.Quantity,
-      DailyPrice: item.UnitPriceSnapshot,
-      Iskonto: iskonto,
+      Description: persisted.Description,
+      Quantity: persisted.Quantity,
+      DailyPrice: persisted.UnitPriceSnapshot,
+      Iskonto: encoded.discountPercent,
     };
   }
 
@@ -91,16 +129,16 @@ export function buildQuoteDetailRequest(
   };
   const payload: CreateQuoteDetailRequest = {
     ...(quoteDetailId !== undefined ? { QuoteDetailId: quoteDetailId } : {}),
-    ItemId: item.ItemId,
-    Quantity: item.Quantity,
+    ItemId: persisted.ItemId,
+    Quantity: persisted.Quantity,
     is_manual: false,
-    ItemNameOverride: normalizeTextOverride(item.ItemNameOverride),
-    ItemCodeOverride: normalizeTextOverride(item.ItemCodeOverride),
-    Iskonto: iskonto,
+    ItemNameOverride: normalizeTextOverride(persisted.ItemNameOverride),
+    ItemCodeOverride: normalizeTextOverride(persisted.ItemCodeOverride),
+    Iskonto: encoded.discountPercent,
   };
 
   const override: NullablePriceOverride =
-    quoteType === 'SALE' ? item.OverrideUnitPrice : item.OverrideMonthlyPrice;
+    quoteType === 'SALE' ? persisted.OverrideUnitPrice : persisted.OverrideMonthlyPrice;
   if (override === null || (typeof override === 'number' && Number.isFinite(override))) {
     if (quoteType === 'SALE') payload.OverrideUnitPrice = override;
     else payload.OverrideMonthlyPrice = override;
