@@ -25,6 +25,8 @@ export interface CustomerSearchFieldProps {
   onChange: (customerId: number | '') => void;
   disabled?: boolean;
   id?: string;
+  /** Daha düşük dikey yükseklik (sözleşme/teklif formları). */
+  compact?: boolean;
 }
 
 export default function CustomerSearchField({
@@ -33,6 +35,7 @@ export default function CustomerSearchField({
   onChange,
   disabled,
   id,
+  compact = false,
 }: CustomerSearchFieldProps) {
   const [inputValue, setInputValue] = useState('');
   const [open, setOpen] = useState(false);
@@ -135,7 +138,9 @@ export default function CustomerSearchField({
   if (disabled) {
     return (
       <div
-        className="input w-full text-sm py-1.5 text-text-primary bg-background-secondary/40 cursor-not-allowed"
+        className={`input w-full text-text-primary bg-background-secondary/40 cursor-not-allowed ${
+          compact ? 'text-xs py-1' : 'text-sm py-1.5'
+        }`}
         id={id}
       >
         {selected?.Name ?? '—'}
@@ -223,7 +228,7 @@ export default function CustomerSearchField({
               break;
           }
         }}
-        className="input w-full pl-8 pr-16 text-sm py-1.5"
+        className={`input w-full pl-8 pr-16 ${compact ? 'text-xs py-1' : 'text-sm py-1.5'}`}
         placeholder="Listeyi açıp kaydırın veya yazarak filtreleyin…"
         aria-label="Müşteri ara"
         aria-expanded={showPanel}

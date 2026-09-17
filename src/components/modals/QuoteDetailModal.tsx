@@ -2427,14 +2427,15 @@ export default function QuoteDetailModal({
     }
   };
 
-  const compactBtn = '!py-1.5 !px-3 text-xs';
-  const fieldLabel = 'block text-[11px] font-medium text-text-secondary mb-0.5';
+  const compactBtn = '!py-1 !px-2.5 text-xs';
+  const fieldLabel = 'block text-[10px] font-medium text-text-secondary leading-none mb-0.5';
+  const fieldInput = 'input w-full text-xs py-1';
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden">
-      <header className="shrink-0 flex items-center justify-between px-3 py-2 bg-background-panel border-b border-background-border">
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-base font-semibold text-text-primary tracking-tight truncate">
+      <header className="shrink-0 flex items-center justify-between px-3 py-1 bg-background-panel border-b border-background-border gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+          <h1 className="text-sm font-semibold text-text-primary tracking-tight truncate">
             {isNew ? 'Yeni Teklif' : 'Teklif Detayı'}
           </h1>
           <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
@@ -2443,10 +2444,10 @@ export default function QuoteDetailModal({
           {!isNew && getStatusBadge()}
           {isClonedDraft && (
             <span
-              className="inline-flex items-center gap-1 rounded-full border border-amber-500/40 bg-amber-500/10 px-2 py-0.5 text-[11px] font-medium text-amber-200"
+              className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"
               title="Bu teklif başka bir tekliften kopyalandı. Kaydedip kullanıcıya paylaşmadan önce gerekli alanları (teklif kodu, tarihler, fiyatlar) gözden geçirin."
             >
-              <CopySimpleIcon size={12} weight="bold" aria-hidden />
+              <CopySimpleIcon size={11} weight="bold" aria-hidden />
               Kopya
             </span>
           )}
@@ -2454,7 +2455,7 @@ export default function QuoteDetailModal({
             {currentUser?.fullName || currentUser?.username || ''}
           </span>
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
           {!isNew && activeQuote?.QuoteId && (
             <button
               type="button"
@@ -2462,7 +2463,7 @@ export default function QuoteDetailModal({
               disabled={isBusy || isCloning}
               title="Bu teklifi yeni bir taslak teklif olarak kopyala"
               aria-label="Teklifi Kopyala"
-              className="inline-flex items-center gap-1.5 rounded-lg border border-background-border px-2.5 py-1 text-xs font-medium text-text-primary hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+              className="inline-flex items-center gap-1 rounded border border-background-border px-2 py-1 text-xs font-medium text-text-primary hover:bg-background-hover disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
             >
               <CopySimpleIcon size={14} weight="regular" aria-hidden />
               {isCloning ? 'Kopyalanıyor...' : 'Kopyala'}
@@ -2471,16 +2472,16 @@ export default function QuoteDetailModal({
           <button
             type="button"
             onClick={() => void requestClose()}
-            className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+            className="p-1 rounded text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
           >
-            <XIcon size={20} weight="regular" />
+            <XIcon size={18} weight="regular" />
           </button>
         </div>
       </header>
 
       {converted && (
-        <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-1.5 bg-indigo-950/40 border-b border-indigo-700/50 text-xs text-indigo-100">
+        <div className="shrink-0 flex flex-wrap items-center gap-x-3 gap-y-0.5 px-3 py-1 bg-indigo-950/40 border-b border-indigo-700/50 text-[11px] text-indigo-100">
           <span className="font-semibold">Sözleşmeye dönüştürülmüş</span>
           <span className="text-indigo-100/80">
             İşlemler sözleşmede yürür. Salt okunur kayıt.
@@ -2500,10 +2501,10 @@ export default function QuoteDetailModal({
         </div>
       )}
 
-      <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
+      <div className="flex-1 min-h-0 flex flex-col p-1.5 gap-1">
           {/* Üst: müşteri → ayarlar (sayfa kaydırması yok) */}
-          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2">
-            <div className={`grid gap-x-2.5 gap-y-1.5 ${selectedCustomerId ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
+          <section className="shrink-0 rounded border border-background-border bg-background-panel px-2.5 py-1">
+            <div className={`grid gap-x-2 gap-y-1 ${selectedCustomerId ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
               <div className="min-w-0">
                 <label className={fieldLabel} htmlFor="quote-customer-search">
                   Müşteri *
@@ -2517,6 +2518,7 @@ export default function QuoteDetailModal({
                       value={selectedCustomerId}
                       onChange={handleCustomerChange}
                       disabled={isReadOnly}
+                      compact
                     />
                   </div>
                   {!isReadOnly && (
@@ -2539,7 +2541,7 @@ export default function QuoteDetailModal({
                   </label>
                   <div className="flex items-center gap-1 min-w-0">
                     {authorizedContactsLoading ? (
-                      <div className="input w-full min-w-0 text-text-secondary text-sm py-1.5">Yükleniyor...</div>
+                      <div className={`${fieldInput} min-w-0 text-text-secondary`}>Yükleniyor...</div>
                     ) : authorizedContacts.length > 0 ? (
                       <select
                         value={selectedAuthorizedContactId}
@@ -2548,7 +2550,7 @@ export default function QuoteDetailModal({
                           setAuthorizedContactError(null);
                         }}
                         disabled={isReadOnly}
-                        className="input min-w-0 flex-1 text-sm py-1.5"
+                        className={`${fieldInput} min-w-0 flex-1`}
                       >
                         <option value="">Yetkili seçin</option>
                         {authorizedContacts.map((contact) => (
@@ -2561,7 +2563,7 @@ export default function QuoteDetailModal({
                         ))}
                       </select>
                     ) : (
-                      <div className="input min-w-0 flex-1 text-red-300 bg-background-secondary text-sm py-1.5 truncate">
+                      <div className={`${fieldInput} min-w-0 flex-1 text-red-300 bg-background-secondary truncate`}>
                         Bu müşteri için yetkili tanımlı değil
                       </div>
                     )}
@@ -2577,7 +2579,7 @@ export default function QuoteDetailModal({
                     )}
                   </div>
                   {authorizedContactError && (
-                    <p className="text-xs text-red-300 truncate">{authorizedContactError}</p>
+                    <p className="text-[10px] text-red-300 truncate">{authorizedContactError}</p>
                   )}
                 </div>
               )}
@@ -2598,11 +2600,11 @@ export default function QuoteDetailModal({
               )}
             </div>
 
-            <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5">
-              <div className="min-w-[180px] flex-[1.3]">
+            <div className="mt-1 flex flex-wrap items-end gap-x-2 gap-y-1">
+              <div className="min-w-[160px] flex-[1.3]">
                 <div className="flex items-center justify-between gap-1">
                   <label className={fieldLabel}>Konu</label>
-                  <span className={`text-[10px] ${subject.length > 255 ? 'text-red-300' : 'text-text-secondary'}`}>
+                  <span className={`text-[10px] leading-none ${subject.length > 255 ? 'text-red-300' : 'text-text-secondary'}`}>
                     {Math.min(subject.length, 255)}/255
                   </span>
                 </div>
@@ -2611,51 +2613,51 @@ export default function QuoteDetailModal({
                   value={subject}
                   onChange={(e) => setSubject(e.target.value.slice(0, 255))}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="Teklif konusu"
                   maxLength={255}
                 />
               </div>
 
-              <div className="min-w-[120px] w-[150px]">
+              <div className="min-w-[110px] w-[140px]">
                 <label className={fieldLabel}>Teklif Kodu</label>
                 <input
                   type="text"
                   value={quoteCode}
                   onChange={(e) => setQuoteCode(e.target.value)}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="Örn: TK-2026-001"
                   maxLength={50}
                 />
               </div>
 
-              <div className="min-w-[120px] w-[140px]">
+              <div className="min-w-[100px] w-[120px]">
                 <label className={fieldLabel}>Teklif Tipi</label>
                 {isNew ? (
                   lockNewQuoteType ? (
-                    <div className="input w-full bg-background-secondary text-text-secondary text-sm py-1.5 px-2 rounded-lg border border-background-border">
+                    <div className={`${fieldInput} bg-background-secondary text-text-secondary px-2 rounded-lg border border-background-border`}>
                       {quoteType === 'SALE' ? 'Satış' : 'Kiralama'}
                     </div>
                   ) : (
                     <select
                       value={quoteType}
                       onChange={(e) => setQuoteType(e.target.value as ContractQuoteType)}
-                      className="input w-full text-sm py-1.5"
+                      className={fieldInput}
                     >
                       <option value="RENTAL">Kiralama</option>
                       <option value="SALE">Satış</option>
                     </select>
                   )
                 ) : (
-                  <div className="input w-full bg-background-secondary text-text-secondary text-sm py-1.5 px-2 rounded-lg border border-background-border">
+                  <div className={`${fieldInput} bg-background-secondary text-text-secondary px-2 rounded-lg border border-background-border`}>
                     {quoteType === 'SALE' ? 'Satış' : 'Kiralama'}
                   </div>
                 )}
               </div>
 
               {quoteType === 'RENTAL' && (
-                <div className="min-w-[110px] w-[130px]">
+                <div className="min-w-[90px] w-[110px]">
                   <label className={fieldLabel}>Süre (gün) *</label>
                   <input
                     type="number"
@@ -2667,13 +2669,13 @@ export default function QuoteDetailModal({
                       setRentalDurationDays(Number.isFinite(v) && v >= 1 ? v : 1);
                     }}
                     disabled={isReadOnly}
-                    className="input w-full text-sm py-1.5"
+                    className={fieldInput}
                     title="Fiyatlandırma en az 30 gün üzerinden hesaplanır. PDF'de tarih yoksa 'Belirlenecek' görünebilir."
                   />
                 </div>
               )}
 
-              <div className="min-w-[72px] w-[88px]">
+              <div className="min-w-[64px] w-[72px]">
                 <label className={fieldLabel} title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz">İskonto %</label>
                 <input
                   type="text"
@@ -2686,13 +2688,13 @@ export default function QuoteDetailModal({
                     setGlobalIskontoInput(null);
                   }}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="0"
                   title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz"
                 />
               </div>
 
-              <div className="min-w-[72px] w-[88px]">
+              <div className="min-w-[56px] w-[68px]">
                 <label className={fieldLabel}>KDV %</label>
                 <input
                   type="number"
@@ -2702,18 +2704,18 @@ export default function QuoteDetailModal({
                   min={0}
                   max={100}
                   step={1}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="20"
                 />
               </div>
 
-              <div className="min-w-[110px] w-[130px]">
+              <div className="min-w-[90px] w-[110px]">
                 <label className={fieldLabel}>Para Birimi</label>
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                 >
                   <option value="TRY">TRY (TL)</option>
                   <option value="EUR">EUR (€)</option>
@@ -2721,13 +2723,13 @@ export default function QuoteDetailModal({
                 </select>
               </div>
 
-              <div className="min-w-[100px] w-[120px]">
+              <div className="min-w-[80px] w-[100px]">
                 <label className={fieldLabel}>Dil</label>
                 <select
                   value={language}
                   onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                 >
                   <option value="TR">Türkçe</option>
                   <option value="EN">English</option>
@@ -2735,7 +2737,7 @@ export default function QuoteDetailModal({
               </div>
 
               {!isNew && !isQuoteDraftStatus(status) && (
-                <div className="min-w-[130px] w-[150px]">
+                <div className="min-w-[110px] w-[130px]">
                   <label className={fieldLabel}>Durum</label>
                   <select
                     value={status}
@@ -2746,7 +2748,7 @@ export default function QuoteDetailModal({
                       }
                     }}
                     disabled={isReadOnly || converted}
-                    className="input w-full text-sm py-1.5"
+                    className={fieldInput}
                   >
                     <option value={QuoteStatus.Accepted}>Kabul Edildi</option>
                     <option value={QuoteStatus.Rejected}>Reddedildi</option>
@@ -2754,13 +2756,13 @@ export default function QuoteDetailModal({
                 </div>
               )}
 
-              <div className="min-w-[220px] flex-[1.3]">
+              <div className="min-w-[200px] flex-1">
                 <label className={fieldLabel}>Şablon</label>
                 <div className="flex gap-1">
                   <select
                     value={selectedTemplateId}
                     onChange={(e) => setSelectedTemplateId(Number(e.target.value) || '')}
-                    className="input w-full text-sm py-1.5"
+                    className={fieldInput}
                   >
                     <option value="">Şablon seçin</option>
                     {templates.map((t) => (
@@ -2810,7 +2812,7 @@ export default function QuoteDetailModal({
                 </div>
               </div>
               {isNew && !isReadOnly && (
-                <div className="min-w-[220px] flex-[1.3]">
+                <div className="min-w-[200px] flex-1">
                   <label className={fieldLabel}>Hazır Paket</label>
                   {packagesLoadError && (
                     <div className="text-[10px] text-red-300">
@@ -2821,7 +2823,7 @@ export default function QuoteDetailModal({
                     <select
                       value={selectedPackageId}
                       onChange={(e) => setSelectedPackageId(e.target.value)}
-                      className="input w-full text-sm py-1.5"
+                      className={fieldInput}
                     >
                       <option value="">Paket seçin</option>
                       {packages.map((p) => (
@@ -2850,14 +2852,14 @@ export default function QuoteDetailModal({
                 </div>
               )}
 
-              <div className="min-w-[200px] flex-[1.4]">
+              <div className="min-w-[180px] flex-[1.2]">
                 <label className={fieldLabel}>Notlar</label>
                 <input
                   type="text"
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="Teklif notu..."
                 />
               </div>
@@ -2868,7 +2870,7 @@ export default function QuoteDetailModal({
                     Red Gerekçesi {isReadOnly ? '' : '*'}
                   </label>
                   {isReadOnly ? (
-                    <div className="input w-full bg-background-secondary text-text-primary text-sm py-1.5 px-2 rounded-lg border border-background-border">
+                    <div className={`${fieldInput} bg-background-secondary text-text-primary px-2 rounded-lg border border-background-border`}>
                       {rejectionReason.trim() || activeQuote?.RejectionReason?.trim() || '—'}
                     </div>
                   ) : (
@@ -2880,11 +2882,11 @@ export default function QuoteDetailModal({
                           setRejectionReason(e.target.value);
                           setRejectionReasonError(null);
                         }}
-                        className="input w-full text-sm py-1.5"
+                        className={fieldInput}
                         placeholder="Red gerekçesini yazın (en az 3 karakter)"
                       />
                       {rejectionReasonError && (
-                        <p className="text-xs text-red-300">{rejectionReasonError}</p>
+                        <p className="text-[10px] text-red-300">{rejectionReasonError}</p>
                       )}
                     </>
                   )}
@@ -2894,9 +2896,9 @@ export default function QuoteDetailModal({
           </section>
 
           {/* Orta: kalemler — yalnızca tablo kayar */}
-          <section className="rounded-lg border border-background-border bg-background-panel flex-1 min-h-0 flex flex-col overflow-hidden">
-            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 border-b border-background-border">
-              <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+          <section className="rounded border border-background-border bg-background-panel flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-1.5 px-2.5 py-1 border-b border-background-border">
+              <h3 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
                 Teklif Kalemleri
                 {quoteItems.length > 0 && (
                   <span className="ml-1.5 font-normal normal-case tracking-normal text-text-secondary/80">

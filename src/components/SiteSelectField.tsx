@@ -42,13 +42,13 @@ export default function SiteSelectField({
 
   return (
     <div className="min-w-0 space-y-0.5">
-      <label className="block text-[11px] font-medium text-text-secondary">
+      <label className="block text-[10px] font-medium text-text-secondary leading-none mb-0.5">
         {label}
         {requiredLabel}
       </label>
 
       {sitesLoading ? (
-        <div className="input w-full min-w-0 text-text-secondary text-sm py-1.5">Yükleniyor...</div>
+        <div className="input w-full min-w-0 text-text-secondary text-xs py-1">Yükleniyor...</div>
       ) : (
         <div className="flex items-center gap-1 min-w-0">
           <select
@@ -66,7 +66,7 @@ export default function SiteSelectField({
               onSelectSite(raw ? Number(raw) : '');
             }}
             disabled={disabled || (!useExternalNewSite && isNewSiteMode)}
-            className="input min-w-0 w-full flex-1 text-sm py-1.5"
+            className="input min-w-0 w-full flex-1 text-xs py-1"
             required={required && !isNewSiteMode}
             title={selectedSiteTitle}
           >
