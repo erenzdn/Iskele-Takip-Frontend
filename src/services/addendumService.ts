@@ -10,13 +10,19 @@ import type {
   CreateAddendumReversalRequest,
   CreateAddendumReversalResult,
 } from '../models';
-import { buildAddendumAddedLineSources, normalizeAddendumStatus, type AddendumLineSource } from '../utils/addendum';
+import { buildAddendumAddedLineSources, buildLineAddendumHistory, normalizeAddendumStatus, type AddendumLineSource, type LineAddendumEvent } from '../utils/addendum';
 
 export interface CreateAddendumRequest {
   EffectiveDate: string;
   Reason?: string;
   AddendumCode?: string;
 }
+
+export type ContractAddendumLineMaps = {
+  sources: Map<number, AddendumLineSource>;
+  history: Map<number, LineAddendumEvent[]>;
+  addenda: Addendum[];
+};
 
 export interface UpdateAddendumRequest {
   EffectiveDate?: string;
@@ -228,13 +234,13 @@ export const addendumService = {
     return asList(raw).map(normalizeAddendum);
   },
 
-  /** Onaylı zeyilnamelerde ADD ile oluşan sözleşme kalemlerini eşleştirir */
-  async loadAddedLineSourcesAsync(contractId: number): Promise<Map<number, AddendumLineSource>> {
+  /** Onaylı zeyilnameleri listeler; details boşsa getById ile zenginleştirir */
+  async loadApprovedAddendaWithDetailsAsync(contractId: number): Promise<Addendum[]> {
     const list = await this.listByContractAsync(contractId);
     const approved = list.filter((a) => a.Status === 'approved');
-    if (approved.length === 0) return new Map();
+    if (approved.length === 0) return [];
 
-    const enriched = await Promise.all(
+    return Promise.all(
       approved.map(async (addendum) => {
         const existingDetails = addendum.details ?? addendum.Details;
         if (existingDetails && existingDetails.length > 0) return addendum;
@@ -245,8 +251,30 @@ export const addendumService = {
         }
       })
     );
+  },
 
-    return buildAddendumAddedLineSources(enriched);
+  /** Tek turda ADD kaynak map + satır kırılım history + onaylı detaylı liste */
+  async loadContractAddendumLineMapsAsync(contractId: number): Promise<ContractAddendumLineMaps> {
+    const enriched = await this.loadApprovedAddendaWithDetailsAsync(contractId);
+    if (enriched.length === 0) {
+      return { sources: new Map(), history: new Map(), addenda: [] };
+    }
+    return {
+      sources: buildAddendumAddedLineSources(enriched),
+      history: buildLineAddendumHistory(enriched),
+      addenda: enriched,
+    };
+  },
+
+  /** Onaylı zeyilnamelerde ADD ile oluşan sözleşme kalemlerini eşleştirir */
+  async loadAddedLineSourcesAsync(contractId: number): Promise<Map<number, AddendumLineSource>> {
+    const { sources } = await this.loadContractAddendumLineMapsAsync(contractId);
+    return sources;
+  },
+
+  async loadLineAddendumHistoryAsync(contractId: number): Promise<Map<number, LineAddendumEvent[]>> {
+    const { history } = await this.loadContractAddendumLineMapsAsync(contractId);
+    return history;
   },
 
   async getByIdAsync(id: number): Promise<Addendum> {

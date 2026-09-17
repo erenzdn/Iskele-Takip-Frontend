@@ -1,8 +1,9 @@
 import { useState, useEffect, useMemo, Fragment, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { CheckIcon, CaretDownIcon, CaretRightIcon, ClipboardIcon, DotsSixVerticalIcon, XIcon } from '@phosphor-icons/react';
+import { CheckIcon, ClipboardIcon, DotsSixVerticalIcon, XIcon } from '@phosphor-icons/react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Addendum,
   AuditLog,
   Contract,
   ContractQuoteType,
@@ -51,7 +52,7 @@ import SettleNonReturnModal from './SettleNonReturnModal';
 import InventoryDetailModal from './InventoryDetailModal';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import { addendumService } from '../../services/addendumService';
-import { buildContractItemDisplayEntries, groupAddendumLineItemsByAddendum, type AddendumLineSource } from '../../utils/addendum';
+import { buildAddendumExtrasDisplayGroups, buildContractItemDisplayEntries, getChangeTypeLabel, getLineAddendumBadgeLabel, type AddendumLineSource, type LineAddendumEvent } from '../../utils/addendum';
 import {
   filterContractTemplatesByKind,
   partitionContractTemplates,
@@ -105,11 +106,13 @@ function findInventoryLineByReturnKey(
   return undefined;
 }
 
+type ContractDetailTab = 'info' | 'return' | 'returns' | 'history' | 'addenda' | 'addendum-extras';
+
 interface ContractDetailModalProps {
   contract: Contract | null;
   isNew: boolean;
   onClose: () => void;
-  initialTab?: 'info' | 'return' | 'returns' | 'history' | 'addenda';
+  initialTab?: ContractDetailTab;
   /** Yeni sözleşme: menüden gelen varsayılan tip (kiralama / satış sayfası) */
   defaultTypeForNew?: ContractQuoteType;
   /** true ise yeni kayıtta tip seçilemez (ayrı menü sayfaları) */
@@ -210,7 +213,7 @@ export default function ContractDetailModal({
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ContractTemplate | null>(null);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
-  const [activeTab, setActiveTab] = useState<'info' | 'return' | 'returns' | 'history' | 'addenda'>(
+  const [activeTab, setActiveTab] = useState<ContractDetailTab>(
     initialTab
   );
   const [pendingOpenAddendumCreate, setPendingOpenAddendumCreate] = useState(false);
@@ -281,7 +284,14 @@ export default function ContractDetailModal({
   const [addendumLineSources, setAddendumLineSources] = useState<Map<number, AddendumLineSource>>(
     () => new Map()
   );
-  const [showAddendumExtras, setShowAddendumExtras] = useState(false);
+  const [addendumLineHistory, setAddendumLineHistory] = useState<Map<number, LineAddendumEvent[]>>(
+    () => new Map()
+  );
+  const [approvedAddenda, setApprovedAddenda] = useState<Addendum[]>([]);
+  const [openHistoryDetailId, setOpenHistoryDetailId] = useState<number | null>(null);
+  const [historyPopoverPos, setHistoryPopoverPos] = useState<{ top: number; left: number } | null>(
+    null
+  );
   const [showManualLineModal, setShowManualLineModal] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
   const canViewContracts = Boolean(currentUser?.permissions?.includes('contracts_view'));
@@ -429,15 +439,41 @@ export default function ContractDetailModal({
     const id = contractId ?? contract?.ContractId;
     if (!id || isNew || !canViewContracts) {
       setAddendumLineSources(new Map());
+      setAddendumLineHistory(new Map());
+      setApprovedAddenda([]);
+      setOpenHistoryDetailId(null);
+      setHistoryPopoverPos(null);
       return;
     }
     try {
-      const sources = await addendumService.loadAddedLineSourcesAsync(id);
+      const { sources, history, addenda } = await addendumService.loadContractAddendumLineMapsAsync(id);
       setAddendumLineSources(sources);
+      setAddendumLineHistory(history);
+      setApprovedAddenda(addenda);
     } catch (error) {
       console.error('Load addendum line sources error:', error);
       setAddendumLineSources(new Map());
+      setAddendumLineHistory(new Map());
+      setApprovedAddenda([]);
     }
+  };
+
+  const closeAddendumHistoryPopover = () => {
+    setOpenHistoryDetailId(null);
+    setHistoryPopoverPos(null);
+  };
+
+  const toggleAddendumHistoryPopover = (
+    detailId: number,
+    anchorEl: HTMLElement
+  ) => {
+    if (openHistoryDetailId === detailId) {
+      closeAddendumHistoryPopover();
+      return;
+    }
+    const rect = anchorEl.getBoundingClientRect();
+    setOpenHistoryDetailId(detailId);
+    setHistoryPopoverPos({ top: rect.bottom + 4, left: rect.left });
   };
 
   useEffect(() => {
@@ -499,9 +535,30 @@ export default function ContractDetailModal({
       setContractLogs([]);
       setContractReturns([]);
       setAddendumLineSources(new Map());
+      setAddendumLineHistory(new Map());
+      setApprovedAddenda([]);
+      closeAddendumHistoryPopover();
     }
-    setShowAddendumExtras(false);
   }, [contract?.ContractId, isNew, isRentalContract, canViewContracts]);
+
+  useEffect(() => {
+    if (openHistoryDetailId == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeAddendumHistoryPopover();
+    };
+    const onPointer = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest?.('[data-addendum-history-popover]')) return;
+      if (target?.closest?.('[data-addendum-history-badge]')) return;
+      closeAddendumHistoryPopover();
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onPointer);
+    };
+  }, [openHistoryDetailId]);
 
   const loadTemplates = async () => {
     try {
@@ -944,18 +1001,16 @@ export default function ContractDetailModal({
     [contractItems, addendumLineSources]
   );
 
-  const addendumLineGroups = useMemo(
-    () =>
-      !isNew && canViewContracts
-        ? groupAddendumLineItemsByAddendum(contractItems, addendumLineSources)
-        : [],
-    [contractItems, addendumLineSources, isNew, canViewContracts]
-  );
+  const openLineHistoryEvents = useMemo(() => {
+    if (openHistoryDetailId == null) return null;
+    return addendumLineHistory.get(openHistoryDetailId) ?? null;
+  }, [openHistoryDetailId, addendumLineHistory]);
 
-  const addendumItemCount = useMemo(
-    () => addendumLineGroups.reduce((sum, g) => sum + g.items.length, 0),
-    [addendumLineGroups]
-  );
+  const openLineHistoryQuantity = useMemo(() => {
+    if (openHistoryDetailId == null) return null;
+    const line = contractItems.find((i) => i.DetailId === openHistoryDetailId);
+    return line?.RentedQuantity ?? null;
+  }, [openHistoryDetailId, contractItems]);
 
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getRowDiscountPercent = (item: ContractLineItem) =>
@@ -963,6 +1018,26 @@ export default function ContractDetailModal({
 
   const getLineNetTotal = (item: ContractLineItem) =>
     lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
+
+  const addendumExtrasGroups = useMemo(
+    () =>
+      !isNew && canViewContracts
+        ? buildAddendumExtrasDisplayGroups({
+            addenda: approvedAddenda,
+            contractItems,
+            sources: addendumLineSources,
+            formatNet: (item) => formatMoney(getLineNetTotal(item), currency),
+          })
+        : [],
+    // getLineNetTotal bağımlılıkları: contractItems, itemIskonto, iskonto, billedDays, contractType, currency
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [approvedAddenda, contractItems, addendumLineSources, isNew, canViewContracts, currency, itemIskonto, iskonto]
+  );
+
+  const addendumItemCount = useMemo(
+    () => addendumExtrasGroups.reduce((sum, g) => sum + g.rows.length, 0),
+    [addendumExtrasGroups]
+  );
 
   // Toplam tutar kırılımları (satır bazlı iskonto)
   const subtotal = initialTotalPrice;
@@ -2236,6 +2311,22 @@ export default function ContractDetailModal({
               Zeyilnameler
             </button>
           )}
+          {canViewContracts && addendumItemCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('addendum-extras')}
+              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
+                activeTab === 'addendum-extras'
+                  ? 'text-accent border-b-2 border-accent'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              Zeyilname ekleri
+              <span className="ml-1.5 bg-amber-500/20 text-amber-300 text-xs px-1.5 py-0.5 rounded-full">
+                {addendumItemCount}
+              </span>
+            </button>
+          )}
         </div>
       )}
 
@@ -2621,6 +2712,110 @@ export default function ContractDetailModal({
         </div>
       )}
 
+      {activeTab === 'addendum-extras' && !isNew && canViewContracts && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+          <div className="mb-2 shrink-0 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary">Zeyilname ekleri</h3>
+              <p className="text-[11px] text-text-secondary mt-0.5">
+                Zeyilname ile eklenen kalemler. Miktar/fiyat değişimleri Bilgiler sekmesindeki ana
+                satırlara yansır; genel toplam birleşik listeyi kapsar.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('info')}
+              className={`btn-secondary ${compactBtn}`}
+            >
+              Bilgilere dön
+            </button>
+          </div>
+          {addendumExtrasGroups.length === 0 ? (
+            <div className="py-8 text-center text-sm text-text-secondary">
+              Zeyilname ile eklenen kalem bulunmuyor.
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border bg-background-panel">
+              <table className="table-data-grid table-excel-rows text-text-primary w-full">
+                <thead>
+                  <tr>
+                    <th className="text-left w-14">Z</th>
+                    <th className="text-left w-28">Kod</th>
+                    <th className="text-left">Ürün / Açıklama</th>
+                    <th className="text-left w-28">Tip</th>
+                    <th className="text-right w-20">Miktar</th>
+                    <th className="text-right w-28">Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {addendumExtrasGroups.map((group) => (
+                    <Fragment key={group.addendumId}>
+                      <tr className="addendum-separator-row">
+                        <td colSpan={6}>
+                          {group.isReversal ? 'Ters zeyilname' : 'Zeyilname'} #
+                          {group.addendumNo ?? group.addendumId}
+                          {group.isReversal &&
+                            (group.reversesAddendumNo != null || group.reversesAddendumId != null) && (
+                              <span className="ml-2 font-normal normal-case tracking-normal opacity-80">
+                                · kaynak #
+                                {group.reversesAddendumNo ?? group.reversesAddendumId}
+                              </span>
+                            )}
+                          {group.isReversed && !group.isReversal && (
+                            <span className="ml-2 font-normal normal-case tracking-normal opacity-80">
+                              · tersine çevrildi
+                            </span>
+                          )}
+                          <span className="ml-2 font-normal normal-case tracking-normal opacity-80">
+                            · {group.rows.length} kalem
+                          </span>
+                        </td>
+                      </tr>
+                      {group.rows.map((row) => (
+                        <tr key={row.key} className="addendum-row">
+                          <td>
+                            <span className="addendum-badge">
+                              Z{group.addendumNo != null ? group.addendumNo : group.addendumId}
+                            </span>
+                          </td>
+                          <td className="text-text-secondary">
+                            {row.code ? (
+                              <span className="item-code-badge cell-clip" title={row.code}>
+                                {row.code}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td>
+                            <span className="cell-clip" title={row.name}>
+                              {row.name}
+                            </span>
+                          </td>
+                          <td className="text-text-secondary text-[11px]">
+                            {row.changeTypeLabel ?? (group.isReversal ? '—' : 'Yeni Kalem')}
+                          </td>
+                          <td
+                            className={`text-right tabular-nums ${
+                              row.quantityDisplay.startsWith('-') ? 'text-red-300' : ''
+                            }`}
+                          >
+                            {row.quantityDisplay}
+                          </td>
+                          <td className="text-right tabular-nums text-text-secondary">
+                            {row.netDisplay ?? '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {(activeTab === 'info' || isNew) && (
         <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
           {cancelled && effectiveContract && (
@@ -2996,16 +3191,10 @@ export default function ContractDetailModal({
                 {addendumItemCount > 0 && (
                   <button
                     type="button"
-                    onClick={() => setShowAddendumExtras((v) => !v)}
-                    className={`btn-secondary ${compactBtn} inline-flex items-center gap-1`}
-                    aria-expanded={showAddendumExtras}
-                    title="Zeyilname ile eklenen kalemleri gruplu göster"
+                    onClick={() => setActiveTab('addendum-extras')}
+                    className={`btn-secondary ${compactBtn}`}
+                    title="Zeyilname ile eklenen kalemleri ayrı sayfada göster"
                   >
-                    {showAddendumExtras ? (
-                      <CaretDownIcon size={12} weight="bold" aria-hidden />
-                    ) : (
-                      <CaretRightIcon size={12} weight="bold" aria-hidden />
-                    )}
                     Zeyilname ekleri ({addendumItemCount})
                   </button>
                 )}
@@ -3148,6 +3337,13 @@ export default function ContractDetailModal({
                         item.kind === 'inventory'
                           ? inventoryLineRowKey(item, rowIndex)
                           : item.ClientId;
+                      const lineDetailId =
+                        item.DetailId != null && item.DetailId > 0 ? item.DetailId : null;
+                      const lineHistoryEvents =
+                        lineDetailId != null ? addendumLineHistory.get(lineDetailId) : undefined;
+                      const historyBadgeLabel = getLineAddendumBadgeLabel(lineHistoryEvents);
+                      const hasLineHistory = Boolean(historyBadgeLabel);
+                      const showAddendumHighlight = hasLineHistory || isAddendumRow;
                       const isReturnFormOpen =
                         item.kind === 'inventory' ? returnDetailKey === rowKey : false;
                       const invItem =
@@ -3180,15 +3376,15 @@ export default function ContractDetailModal({
                             onDragOver={!isReadOnly ? (e) => handleContractItemDragOver(e, rowIndex) : undefined}
                             onDrop={!isReadOnly ? (e) => handleContractItemDrop(e, rowIndex) : undefined}
                             className={`${
-                              isAddendumRow ? 'addendum-row ' : ''
+                              showAddendumHighlight ? 'addendum-row ' : ''
                             }${
                               justAdded
                                 ? 'bg-green-500/20'
                                 : isRowActive
                                   ? 'ring-2 ring-inset ring-primary/60 bg-primary/15'
-                                  : !isAddendumRow && rowIndex % 2 === 0
+                                  : !showAddendumHighlight && rowIndex % 2 === 0
                                     ? 'bg-background-panel'
-                                    : !isAddendumRow
+                                    : !showAddendumHighlight
                                       ? 'bg-background-secondary/35'
                                       : ''
                             } ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
@@ -3211,7 +3407,22 @@ export default function ContractDetailModal({
                             )}
                             <td className="text-text-secondary">
                               <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
-                                {isAddendumRow ? (
+                                {historyBadgeLabel && lineDetailId != null ? (
+                                  <button
+                                    type="button"
+                                    data-addendum-history-badge
+                                    className="addendum-badge cursor-pointer hover:brightness-110 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/60"
+                                    title="Zeyilname kırılımını göster"
+                                    aria-label="Zeyilname kırılımını göster"
+                                    aria-expanded={openHistoryDetailId === lineDetailId}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleAddendumHistoryPopover(lineDetailId, e.currentTarget);
+                                    }}
+                                  >
+                                    {historyBadgeLabel}
+                                  </button>
+                                ) : isAddendumRow ? (
                                   <span
                                     className="addendum-badge"
                                     title="Bu kalem onaylı zeyilname ile sözleşmeye eklenmiştir"
@@ -3761,65 +3972,6 @@ export default function ContractDetailModal({
                   </tbody>
                 </table>
             </div>
-            {showAddendumExtras && addendumLineGroups.length > 0 && (
-              <div className="shrink-0 border-t border-amber-500/25 bg-amber-500/[0.06] max-h-52 overflow-y-auto">
-                <div className="px-3 py-2 space-y-3">
-                  <p className="text-[11px] text-text-secondary">
-                    Zeyilname ile eklenen kalemler (miktar/fiyat değişimleri ana satırlara yansır). Genel
-                    toplam yukarıdaki birleşik listeyi kapsar.
-                  </p>
-                  {addendumLineGroups.map((group) => (
-                    <div key={group.addendumId} className="space-y-1">
-                      <div className="flex items-center gap-2">
-                        <span className="addendum-badge">
-                          Z{group.addendumNo != null ? group.addendumNo : group.addendumId}
-                        </span>
-                        <span className="text-xs font-semibold text-text-primary">
-                          Zeyilname #{group.addendumNo ?? group.addendumId}
-                        </span>
-                        <span className="text-[11px] text-text-secondary">
-                          {group.items.length} kalem
-                        </span>
-                      </div>
-                      <ul className="space-y-0.5 pl-1">
-                        {group.items.map((item, idx) => {
-                          const name =
-                            item.kind === 'manual'
-                              ? item.Description || 'Manuel kalem'
-                              : item.ItemName || `Ürün #${item.ItemId}`;
-                          const code =
-                            item.kind === 'inventory'
-                              ? item.ItemCode || item.ItemCodeOverride || ''
-                              : '';
-                          const lineKey =
-                            item.kind === 'inventory'
-                              ? `g-${group.addendumId}-${item.DetailId ?? idx}-${item.ItemId}-${item.WarehouseId}`
-                              : `g-${group.addendumId}-${item.ClientId}`;
-                          return (
-                            <li
-                              key={lineKey}
-                              className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-xs text-text-primary/90 px-2 py-1 rounded bg-background-panel/60 border border-background-border/50"
-                            >
-                              <span className="min-w-0 truncate">
-                                {code ? (
-                                  <span className="text-text-secondary mr-1.5">{code}</span>
-                                ) : null}
-                                {name}
-                              </span>
-                              <span className="shrink-0 tabular-nums text-text-secondary">
-                                {item.RentedQuantity} adet
-                                <span className="mx-1.5 text-background-border">·</span>
-                                {formatCurrency(getLineNetTotal(item))}
-                              </span>
-                            </li>
-                          );
-                        })}
-                      </ul>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </section>
 
           <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
@@ -4208,6 +4360,76 @@ export default function ContractDetailModal({
           onClose={() => setSelectedInventoryForDetail(null)}
         />
       )}
+      {openHistoryDetailId != null &&
+        historyPopoverPos &&
+        openLineHistoryEvents &&
+        openLineHistoryEvents.length > 0 && (
+          <div
+            data-addendum-history-popover
+            role="dialog"
+            aria-label="Zeyilname kırılımı"
+            className="fixed z-[200] min-w-[240px] max-w-[300px] rounded-lg border border-amber-500/35 bg-background-panel shadow-lg py-2"
+            style={{ top: historyPopoverPos.top, left: historyPopoverPos.left }}
+          >
+            <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+              Zeyilname kırılımı
+            </p>
+            <ul className="max-h-56 overflow-y-auto px-1.5 space-y-1">
+              {openLineHistoryEvents.map((ev) => {
+                const qtyLabel =
+                  ev.quantityDelta == null
+                    ? '—'
+                    : ev.quantityDelta > 0
+                      ? `+${ev.quantityDelta}`
+                      : String(ev.quantityDelta);
+                const priceLabel =
+                  ev.newUnitPrice != null ? formatCurrency(ev.newUnitPrice) : null;
+                const tags = [
+                  ev.isReversal ? 'Ters kayıt' : null,
+                  ev.isFromReversedAddendum ? 'Tersine çevrildi' : null,
+                ].filter(Boolean);
+                return (
+                  <li
+                    key={`${ev.addendumId}-${ev.addendumDetailId}`}
+                    className="rounded border border-background-border/60 bg-background-secondary/40 px-2.5 py-1.5 text-xs"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-semibold text-text-primary tabular-nums">
+                        Z#{ev.addendumNo ?? ev.addendumId}
+                      </span>
+                      <span
+                        className={`shrink-0 tabular-nums font-medium ${
+                          ev.quantityDelta != null && ev.quantityDelta < 0
+                            ? 'text-red-300'
+                            : ev.quantityDelta != null && ev.quantityDelta > 0
+                              ? 'text-emerald-300'
+                              : 'text-text-secondary'
+                        }`}
+                      >
+                        {qtyLabel}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-text-secondary">
+                      {getChangeTypeLabel(ev.changeType)}
+                      {priceLabel ? ` · ${priceLabel}` : ''}
+                    </div>
+                    {tags.length > 0 && (
+                      <div className="mt-0.5 text-[10px] text-amber-300/90">{tags.join(' · ')}</div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {openLineHistoryQuantity != null && (
+              <p className="mt-1.5 border-t border-background-border px-3 pt-1.5 text-[11px] text-text-secondary">
+                Satır toplamı:{' '}
+                <span className="font-semibold tabular-nums text-text-primary">
+                  {openLineHistoryQuantity}
+                </span>
+              </p>
+            )}
+          </div>
+        )}
     </div>
   );
 

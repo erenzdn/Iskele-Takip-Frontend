@@ -5,6 +5,20 @@ export interface AddendumLineSource {
   addendumNo: number | null;
 }
 
+/** Onaylı zeyilname detayının sözleşme satırına etkisini temsil eder */
+export type LineAddendumEvent = {
+  addendumId: number;
+  addendumNo: number | null;
+  effectiveDate: string;
+  changeType: ChangeType;
+  /** ADD / INCREASE / DECREASE; PRICE_CHANGE için null */
+  quantityDelta: number | null;
+  newUnitPrice: number | null;
+  isReversal: boolean;
+  isFromReversedAddendum: boolean;
+  addendumDetailId: number;
+};
+
 /** Onaylı zeyilnamelerdeki ADD kalemlerinden sözleşme satırı → zeyilname eşlemesi */
 export function buildAddendumAddedLineSources(addenda: Addendum[]): Map<number, AddendumLineSource> {
   const map = new Map<number, AddendumLineSource>();
@@ -24,6 +38,92 @@ export function buildAddendumAddedLineSources(addenda: Addendum[]): Map<number, 
     }
   }
   return map;
+}
+
+/**
+ * Onaylı zeyilname detaylarından sözleşme satırı (ContractDetailId) → olay listesi.
+ * Draft / pending / rejected dahil edilmez. Sıra: EffectiveDate, sonra AddendumNo.
+ */
+export function buildLineAddendumHistory(addenda: Addendum[]): Map<number, LineAddendumEvent[]> {
+  const map = new Map<number, LineAddendumEvent[]>();
+
+  for (const addendum of addenda) {
+    if (addendum.Status !== 'approved') continue;
+    const details = addendum.details ?? addendum.Details ?? [];
+    const isReversal = Boolean(addendum.IsReversal);
+    const isFromReversedAddendum = Boolean(addendum.IsReversed);
+
+    for (const detail of details) {
+      const contractDetailId = detail.ContractDetailId;
+      if (contractDetailId == null || contractDetailId <= 0) continue;
+
+      const changeType = detail.ChangeType;
+      if (
+        changeType !== 'ADD' &&
+        changeType !== 'INCREASE' &&
+        changeType !== 'DECREASE' &&
+        changeType !== 'PRICE_CHANGE'
+      ) {
+        continue;
+      }
+
+      let quantityDelta: number | null = null;
+      if (changeType === 'ADD' || changeType === 'INCREASE' || changeType === 'DECREASE') {
+        quantityDelta =
+          detail.QuantityChange != null && Number.isFinite(Number(detail.QuantityChange))
+            ? Number(detail.QuantityChange)
+            : null;
+      }
+
+      const event: LineAddendumEvent = {
+        addendumId: addendum.AddendumId,
+        addendumNo: addendum.AddendumNo ?? null,
+        effectiveDate: addendum.EffectiveDate ?? '',
+        changeType,
+        quantityDelta,
+        newUnitPrice:
+          detail.NewUnitPrice != null && Number.isFinite(Number(detail.NewUnitPrice))
+            ? Number(detail.NewUnitPrice)
+            : null,
+        isReversal,
+        isFromReversedAddendum,
+        addendumDetailId: detail.DetailId,
+      };
+
+      const list = map.get(contractDetailId);
+      if (list) list.push(event);
+      else map.set(contractDetailId, [event]);
+    }
+  }
+
+  for (const [, events] of map) {
+    events.sort((a, b) => {
+      const dateCmp = (a.effectiveDate || '').localeCompare(b.effectiveDate || '');
+      if (dateCmp !== 0) return dateCmp;
+      const noDiff = (a.addendumNo ?? a.addendumId) - (b.addendumNo ?? b.addendumId);
+      if (noDiff !== 0) return noDiff;
+      return a.addendumDetailId - b.addendumDetailId;
+    });
+  }
+
+  return map;
+}
+
+/**
+ * Tek zeyilname no varsa `Z{n}`; birden fazla farklı zeyilname veya no yoksa `Z`.
+ * Olay yoksa null.
+ */
+export function getLineAddendumBadgeLabel(events: LineAddendumEvent[] | undefined): string | null {
+  if (!events || events.length === 0) return null;
+  const uniqueNos = new Set<number>();
+  for (const e of events) {
+    if (e.addendumNo != null) uniqueNos.add(e.addendumNo);
+  }
+  if (uniqueNos.size === 1) {
+    const only = uniqueNos.values().next().value as number;
+    return `Z${only}`;
+  }
+  return 'Z';
 }
 
 export function getAddendumSourceForContractLine(
@@ -54,6 +154,26 @@ export type AddendumLineGroup = {
   items: ContractLineItem[];
 };
 
+/** Zeyilname ekleri sekmesi satırı (ADD kalemi veya ters zeyilname detayı) */
+export type AddendumExtrasDisplayRow = {
+  key: string;
+  code: string;
+  name: string;
+  quantityDisplay: string;
+  netDisplay: string | null;
+  changeTypeLabel: string | null;
+};
+
+export type AddendumExtrasDisplayGroup = {
+  addendumId: number;
+  addendumNo: number | null;
+  isReversal: boolean;
+  isReversed: boolean;
+  reversesAddendumNo: number | null;
+  reversesAddendumId: number | null;
+  rows: AddendumExtrasDisplayRow[];
+};
+
 /** Zeyilname kaynaklı kalemleri zeyilname no'ya göre gruplar */
 export function groupAddendumLineItemsByAddendum(
   items: ContractLineItem[],
@@ -77,6 +197,106 @@ export function groupAddendumLineItemsByAddendum(
     group.items.push(item);
   }
   return Array.from(map.values()).sort(
+    (a, b) => (a.addendumNo ?? a.addendumId) - (b.addendumNo ?? b.addendumId)
+  );
+}
+
+function extrasDetailName(detail: {
+  ItemName?: string | null;
+  ItemCode?: string | null;
+  Description?: string | null;
+  ContractDetailDescription?: string | null;
+  ItemId?: number | null;
+  IsManual?: boolean;
+}): string {
+  if (detail.IsManual) {
+    return detail.Description || detail.ContractDetailDescription || 'Manuel kalem';
+  }
+  return (
+    detail.ItemName ||
+    detail.ContractDetailDescription ||
+    detail.Description ||
+    (detail.ItemId != null ? `Ürün #${detail.ItemId}` : 'Kalem')
+  );
+}
+
+function formatExtrasQuantityDelta(qty: number | null | undefined): string {
+  if (qty == null || !Number.isFinite(Number(qty))) return '—';
+  const n = Number(qty);
+  if (n > 0) return `+${n}`;
+  return String(n);
+}
+
+/**
+ * Zeyilname ekleri sekmesi: onaylı ADD kalemleri + onaylı ters zeyilname detayları.
+ */
+export function buildAddendumExtrasDisplayGroups(opts: {
+  addenda: Addendum[];
+  contractItems: ContractLineItem[];
+  sources: Map<number, AddendumLineSource>;
+  formatNet: (item: ContractLineItem) => string;
+}): AddendumExtrasDisplayGroup[] {
+  const { addenda, contractItems, sources, formatNet } = opts;
+  const approved = addenda.filter((a) => a.Status === 'approved');
+  const byId = new Map(approved.map((a) => [a.AddendumId, a]));
+  const groups: AddendumExtrasDisplayGroup[] = [];
+  const seenAddendumIds = new Set<number>();
+
+  const addGroups = groupAddendumLineItemsByAddendum(contractItems, sources);
+  for (const g of addGroups) {
+    const meta = byId.get(g.addendumId);
+    seenAddendumIds.add(g.addendumId);
+    groups.push({
+      addendumId: g.addendumId,
+      addendumNo: g.addendumNo ?? meta?.AddendumNo ?? null,
+      isReversal: Boolean(meta?.IsReversal),
+      isReversed: Boolean(meta?.IsReversed),
+      reversesAddendumNo: meta?.ReversesAddendumNumber ?? null,
+      reversesAddendumId: meta?.ReversesAddendumId ?? null,
+      rows: g.items.map((item, idx) => {
+        const name =
+          item.kind === 'manual'
+            ? item.Description || 'Manuel kalem'
+            : item.ItemName || `Ürün #${item.ItemId}`;
+        const code =
+          item.kind === 'inventory' ? item.ItemCode || item.ItemCodeOverride || '' : '';
+        return {
+          key: `add-${g.addendumId}-${item.DetailId ?? idx}-${item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : item.ClientId}`,
+          code,
+          name,
+          quantityDisplay: String(item.RentedQuantity),
+          netDisplay: formatNet(item),
+          changeTypeLabel: null,
+        };
+      }),
+    });
+  }
+
+  for (const addendum of approved) {
+    if (!addendum.IsReversal) continue;
+    if (seenAddendumIds.has(addendum.AddendumId)) continue;
+    const details = addendum.details ?? addendum.Details ?? [];
+    if (details.length === 0) continue;
+    seenAddendumIds.add(addendum.AddendumId);
+    groups.push({
+      addendumId: addendum.AddendumId,
+      addendumNo: addendum.AddendumNo ?? null,
+      isReversal: true,
+      isReversed: Boolean(addendum.IsReversed),
+      reversesAddendumNo: addendum.ReversesAddendumNumber ?? null,
+      reversesAddendumId: addendum.ReversesAddendumId ?? null,
+      rows: details.map((detail, idx) => ({
+        key: `rev-${addendum.AddendumId}-${detail.DetailId || idx}`,
+        code: detail.ItemCode || '',
+        name: extrasDetailName(detail),
+        quantityDisplay: formatExtrasQuantityDelta(detail.QuantityChange),
+        netDisplay: null,
+        changeTypeLabel: getChangeTypeLabel(detail.ChangeType),
+      })),
+    });
+  }
+
+  return groups.sort(
     (a, b) => (a.addendumNo ?? a.addendumId) - (b.addendumNo ?? b.addendumId)
   );
 }

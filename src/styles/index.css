@@ -253,6 +253,10 @@
   vertical-align: middle;
   flex-shrink: 0;
 }
+button.addendum-badge {
+  font-family: inherit;
+  cursor: pointer;
+}
 .table-data-grid.table-excel-rows tbody tr {
   height: 1.375rem;
 }

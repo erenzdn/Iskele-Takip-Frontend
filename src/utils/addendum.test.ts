@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 import type { Addendum, ContractLineItem } from '../models';
 import {
   buildAddendumAddedLineSources,
+  buildAddendumExtrasDisplayGroups,
   buildContractItemDisplayEntries,
+  buildLineAddendumHistory,
   canReverseAddendum,
   getAddendumDisplayStatusLabel,
   getAddendumSourceForContractLine,
+  getLineAddendumBadgeLabel,
   groupAddendumLineItemsByAddendum,
   hasActiveReverseForSource,
 } from './addendum';
@@ -81,6 +84,277 @@ describe('buildAddendumAddedLineSources', () => {
 
     expect(map.size).toBe(1);
     expect(map.get(50)).toEqual({ addendumId: 5, addendumNo: 2 });
+  });
+});
+
+describe('buildLineAddendumHistory', () => {
+  it('aynı DetailId için INCREASE/DECREASE olaylarını toplar', () => {
+    const addenda: Addendum[] = [
+      {
+        AddendumId: 10,
+        ContractId: 100,
+        AddendumNo: 2,
+        Status: 'approved',
+        EffectiveDate: '2026-02-01',
+        IsReversal: false,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 100,
+            AddendumId: 10,
+            ChangeType: 'INCREASE',
+            ContractDetailId: 50,
+            QuantityChange: 5,
+          },
+        ],
+      },
+      {
+        AddendumId: 11,
+        ContractId: 100,
+        AddendumNo: 3,
+        Status: 'approved',
+        EffectiveDate: '2026-03-01',
+        IsReversal: false,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 101,
+            AddendumId: 11,
+            ChangeType: 'DECREASE',
+            ContractDetailId: 50,
+            QuantityChange: -2,
+          },
+        ],
+      },
+    ];
+
+    const map = buildLineAddendumHistory(addenda);
+    const events = map.get(50);
+    expect(events).toHaveLength(2);
+    expect(events![0]).toMatchObject({
+      addendumId: 10,
+      addendumNo: 2,
+      changeType: 'INCREASE',
+      quantityDelta: 5,
+    });
+    expect(events![1]).toMatchObject({
+      addendumId: 11,
+      changeType: 'DECREASE',
+      quantityDelta: -2,
+    });
+  });
+
+  it('PRICE_CHANGE olayını miktar null ile ekler', () => {
+    const map = buildLineAddendumHistory([
+      {
+        AddendumId: 12,
+        ContractId: 100,
+        AddendumNo: 4,
+        Status: 'approved',
+        EffectiveDate: '2026-04-01',
+        IsReversal: false,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 200,
+            AddendumId: 12,
+            ChangeType: 'PRICE_CHANGE',
+            ContractDetailId: 50,
+            NewUnitPrice: 99,
+          },
+        ],
+      },
+    ]);
+    expect(map.get(50)).toEqual([
+      expect.objectContaining({
+        changeType: 'PRICE_CHANGE',
+        quantityDelta: null,
+        newUnitPrice: 99,
+      }),
+    ]);
+  });
+
+  it('draft / pending zeyilnameleri hariç tutar', () => {
+    const map = buildLineAddendumHistory([
+      {
+        AddendumId: 13,
+        ContractId: 100,
+        AddendumNo: 5,
+        Status: 'draft',
+        EffectiveDate: '2026-05-01',
+        IsReversal: false,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 300,
+            AddendumId: 13,
+            ChangeType: 'INCREASE',
+            ContractDetailId: 50,
+            QuantityChange: 9,
+          },
+        ],
+      },
+      {
+        AddendumId: 14,
+        ContractId: 100,
+        AddendumNo: 6,
+        Status: 'pending',
+        EffectiveDate: '2026-05-02',
+        IsReversal: false,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 301,
+            AddendumId: 14,
+            ChangeType: 'INCREASE',
+            ContractDetailId: 50,
+            QuantityChange: 1,
+          },
+        ],
+      },
+    ]);
+    expect(map.size).toBe(0);
+  });
+
+  it('ters zeyilname etiketlerini işaretler', () => {
+    const map = buildLineAddendumHistory([
+      {
+        AddendumId: 15,
+        ContractId: 100,
+        AddendumNo: 7,
+        Status: 'approved',
+        EffectiveDate: '2026-06-01',
+        IsReversal: false,
+        IsReversed: true,
+        details: [
+          {
+            DetailId: 400,
+            AddendumId: 15,
+            ChangeType: 'INCREASE',
+            ContractDetailId: 50,
+            QuantityChange: 5,
+          },
+        ],
+      },
+      {
+        AddendumId: 16,
+        ContractId: 100,
+        AddendumNo: 8,
+        Status: 'approved',
+        EffectiveDate: '2026-06-02',
+        IsReversal: true,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 401,
+            AddendumId: 16,
+            ChangeType: 'DECREASE',
+            ContractDetailId: 50,
+            QuantityChange: -5,
+          },
+        ],
+      },
+    ]);
+    const events = map.get(50)!;
+    expect(events[0]).toMatchObject({ isFromReversedAddendum: true, isReversal: false });
+    expect(events[1]).toMatchObject({ isReversal: true, isFromReversedAddendum: false });
+  });
+
+  it('EffectiveDate sonra AddendumNo ile sıralar', () => {
+    const map = buildLineAddendumHistory([
+      {
+        AddendumId: 21,
+        ContractId: 100,
+        AddendumNo: 3,
+        Status: 'approved',
+        EffectiveDate: '2026-01-10',
+        IsReversal: false,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 1,
+            AddendumId: 21,
+            ChangeType: 'INCREASE',
+            ContractDetailId: 7,
+            QuantityChange: 1,
+          },
+        ],
+      },
+      {
+        AddendumId: 20,
+        ContractId: 100,
+        AddendumNo: 2,
+        Status: 'approved',
+        EffectiveDate: '2026-01-05',
+        IsReversal: false,
+        IsReversed: false,
+        details: [
+          {
+            DetailId: 2,
+            AddendumId: 20,
+            ChangeType: 'ADD',
+            ContractDetailId: 7,
+            QuantityChange: 10,
+          },
+        ],
+      },
+    ]);
+    const events = map.get(7)!;
+    expect(events.map((e) => e.addendumId)).toEqual([20, 21]);
+  });
+});
+
+describe('getLineAddendumBadgeLabel', () => {
+  it('tek zeyilname no için Z{n} döner', () => {
+    expect(
+      getLineAddendumBadgeLabel([
+        {
+          addendumId: 1,
+          addendumNo: 2,
+          effectiveDate: '2026-01-01',
+          changeType: 'INCREASE',
+          quantityDelta: 5,
+          newUnitPrice: null,
+          isReversal: false,
+          isFromReversedAddendum: false,
+          addendumDetailId: 1,
+        },
+      ])
+    ).toBe('Z2');
+  });
+
+  it('birden fazla farklı no için Z döner', () => {
+    expect(
+      getLineAddendumBadgeLabel([
+        {
+          addendumId: 1,
+          addendumNo: 2,
+          effectiveDate: '2026-01-01',
+          changeType: 'INCREASE',
+          quantityDelta: 5,
+          newUnitPrice: null,
+          isReversal: false,
+          isFromReversedAddendum: false,
+          addendumDetailId: 1,
+        },
+        {
+          addendumId: 2,
+          addendumNo: 3,
+          effectiveDate: '2026-02-01',
+          changeType: 'DECREASE',
+          quantityDelta: -1,
+          newUnitPrice: null,
+          isReversal: false,
+          isFromReversedAddendum: false,
+          addendumDetailId: 2,
+        },
+      ])
+    ).toBe('Z');
+  });
+
+  it('boş olayda null döner', () => {
+    expect(getLineAddendumBadgeLabel(undefined)).toBeNull();
+    expect(getLineAddendumBadgeLabel([])).toBeNull();
   });
 });
 
@@ -169,6 +443,84 @@ describe('groupAddendumLineItemsByAddendum', () => {
     expect(groups[0]).toMatchObject({ addendumId: 5, addendumNo: 2 });
     expect(groups[0].items).toHaveLength(2);
     expect(groups[1]).toMatchObject({ addendumId: 8, addendumNo: 3 });
+  });
+});
+
+describe('buildAddendumExtrasDisplayGroups', () => {
+  it('onaylı ters zeyilname detaylarını ekler', () => {
+    const line = inventoryLine({
+      DetailId: 50,
+      SourceAddendumId: 5,
+      SourceAddendumNo: 2,
+      ItemName: 'Eklenen',
+      ItemCode: 'A1',
+      RentedQuantity: 10,
+    });
+    const addenda: Addendum[] = [
+      {
+        AddendumId: 5,
+        ContractId: 100,
+        AddendumNo: 2,
+        Status: 'approved',
+        EffectiveDate: '2026-01-01',
+        IsReversal: false,
+        IsReversed: true,
+        details: [
+          {
+            DetailId: 1,
+            AddendumId: 5,
+            ChangeType: 'ADD',
+            ContractDetailId: 50,
+            QuantityChange: 10,
+          },
+        ],
+      },
+      {
+        AddendumId: 9,
+        ContractId: 100,
+        AddendumNo: 3,
+        Status: 'approved',
+        EffectiveDate: '2026-02-01',
+        IsReversal: true,
+        IsReversed: false,
+        ReversesAddendumId: 5,
+        ReversesAddendumNumber: 2,
+        details: [
+          {
+            DetailId: 10,
+            AddendumId: 9,
+            ChangeType: 'DECREASE',
+            ContractDetailId: 50,
+            QuantityChange: -10,
+            ItemName: 'Eklenen',
+            ItemCode: 'A1',
+          },
+        ],
+      },
+    ];
+    const sources = new Map([[50, { addendumId: 5, addendumNo: 2 }]]);
+    const groups = buildAddendumExtrasDisplayGroups({
+      addenda,
+      contractItems: [line],
+      sources,
+      formatNet: () => '100',
+    });
+    expect(groups).toHaveLength(2);
+    expect(groups[0]).toMatchObject({
+      addendumId: 5,
+      isReversal: false,
+      isReversed: true,
+    });
+    expect(groups[1]).toMatchObject({
+      addendumId: 9,
+      isReversal: true,
+      reversesAddendumNo: 2,
+    });
+    expect(groups[1].rows[0]).toMatchObject({
+      quantityDisplay: '-10',
+      changeTypeLabel: 'Miktar Azalt',
+      code: 'A1',
+    });
   });
 });
 
