@@ -1073,7 +1073,7 @@ export type QuoteLineItem = InventoryQuoteLineItem | ManualQuoteLineItem;
 
 export interface InventoryQuoteLineItem {
   kind: 'inventory';
-  QuoteDetailId: number;
+  QuoteDetailId?: number;
   Item?: Inventory;
   ItemId: number;
   Quantity: number;
@@ -1082,9 +1082,9 @@ export interface InventoryQuoteLineItem {
   MonthlyPriceOverride?: number | null;
   PriceSource: PriceSource;
   /** UI state: SALE için birim fiyat override */
-  OverrideUnitPrice?: number;
+  OverrideUnitPrice?: number | null;
   /** UI state: RENTAL için aylık fiyat override */
-  OverrideMonthlyPrice?: number;
+  OverrideMonthlyPrice?: number | null;
   ItemName: string;
   /** UI state: satır bazlı ürün adı override */
   ItemNameOverride?: string | null;

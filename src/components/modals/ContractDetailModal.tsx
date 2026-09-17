@@ -70,6 +70,8 @@ import {
   validateSiteSelection,
 } from '../../utils/siteSelection';
 import { LINE_ITEM_COL, LINE_ITEM_COL_SPAN } from '../../constants/lineItemTableColumns';
+import { normalizeContractDetailPrice } from '../../utils/linePriceMetadata';
+import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
 
 type InventoryLineItem = Extract<ContractLineItem, { kind: 'inventory' }>;
 
@@ -174,12 +176,8 @@ export default function ContractDetailModal({
   const [sitesLoading, setSitesLoading] = useState(false);
   const [isNewSiteMode, setIsNewSiteMode] = useState(false);
   const [newSiteForm, setNewSiteForm] = useState<NewSiteFormState>(EMPTY_NEW_SITE_FORM);
-  const [startDate, setStartDate] = useState(
-    new Date().toISOString().split('T')[0]
-  );
-  const [plannedEndDate, setPlannedEndDate] = useState(
-    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-  );
+  const [startDate, setStartDate] = useState(() => todayDateInput());
+  const [plannedEndDate, setPlannedEndDate] = useState(() => addCalendarDays(todayDateInput(), 30));
   const [actualEndDate, setActualEndDate] = useState<string>('');
   const [contractItems, setContractItems] = useState<ContractLineItem[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -242,6 +240,8 @@ export default function ContractDetailModal({
   /** İskontolu satır tutarı taslağı. key: "ItemId-WarehouseId" | `man-${ClientId}` */
   const [lineNetInputs, setLineNetInputs] = useState<Record<string, string>>({});
   const [vatRate, setVatRate] = useState<number>(20);
+  /** Kiralama alt toplamları varsayılan 30 gün; true olunca planlanan sürenin tam tutarı açılır. */
+  const [showFullContractPrice, setShowFullContractPrice] = useState(false);
   const [contractCode, setContractCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
   const [contractType, setContractType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
@@ -276,6 +276,7 @@ export default function ContractDetailModal({
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
   const [saveStockError, setSaveStockError] = useState<string | null>(null);
+  const [contractPriceError, setContractPriceError] = useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
@@ -617,6 +618,7 @@ export default function ContractDetailModal({
         setActualEndDate(source.ActualEndDate.split('T')[0]);
       }
       setIskonto((source as { Iskonto?: number }).Iskonto ?? 0);
+      setShowFullContractPrice(false);
       setVatRate((source as { VatRate?: number }).VatRate ?? 20);
       setContractCode((source as { ContractCode?: string }).ContractCode ?? '');
       setCurrency((source as { Currency?: string }).Currency === 'EUR' ? 'EUR' : (source as { Currency?: string }).Currency === 'USD' ? 'USD' : 'TRY');
@@ -625,15 +627,23 @@ export default function ContractDetailModal({
         setContractType(resolveContractQuoteType(source as Contract));
       }
       // Backend GET /contracts/:id "details" döndürür, ContractDetails değil
-      const details = (source as any).details ?? source.ContractDetails ?? [];
+      const details =
+        (source as any).details ??
+        source.ContractDetails ??
+        (source as any).contractDetails ??
+        [];
       if (details.length > 0) {
+        const priceErrors: string[] = [];
         const items: ContractLineItem[] = details.map((detail: any) => {
+          const normalizedPrice = normalizeContractDetailPrice(detail);
+          if (normalizedPrice.error) priceErrors.push(normalizedPrice.error);
+          const unitPriceSnapshot = normalizedPrice.value ?? 0;
           const isManual = detail.IsManual === true || detail.is_manual === true || detail.IsManual === 1 || detail.is_manual === 1;
           if (isManual) {
             return {
               kind: 'manual',
-              ClientId: `manual-${detail.DetailId ?? crypto.randomUUID()}`,
-              DetailId: detail.DetailId,
+              ClientId: `manual-${detail.DetailId ?? detail.detailId ?? crypto.randomUUID()}`,
+              DetailId: detail.DetailId ?? detail.detailId,
               SourceAddendumId:
                 (detail.AddendumId ??
                   detail.addendumId ??
@@ -648,26 +658,28 @@ export default function ContractDetailModal({
                   null) as number | null,
               IsManual: true,
               Description: String(detail.Description ?? detail.description ?? '').trim() || 'Manuel Kalem',
-              RentedQuantity: Number(detail.RentedQuantity ?? 1) || 1,
-              UnitPriceSnapshot: Number(detail.UnitPriceSnapshot ?? detail.unitPriceSnapshot ?? 0) || 0,
+              RentedQuantity: Number(detail.RentedQuantity ?? detail.rentedQuantity ?? 1) || 1,
+              UnitPriceSnapshot: unitPriceSnapshot,
               PriceUnit: (detail.PriceUnit ?? detail.priceUnit ?? (resolveContractQuoteType(source as Contract) === 'SALE' ? 'EACH' : 'DAY')) as any,
               PriceSource: (detail.PriceSource ?? detail.priceSource ?? 'MANUAL') as any,
             };
           }
-          const wh = warehouses.find((w) => w.WarehouseId === detail.WarehouseId);
+          const detailWarehouseId = detail.WarehouseId ?? detail.warehouseId;
+          const wh = warehouses.find((w) => w.WarehouseId === detailWarehouseId);
           return {
             kind: 'inventory',
-            DetailId: detail.DetailId,
-            ItemId: detail.ItemId,
-            WarehouseId: detail.WarehouseId ?? 0,
-            WarehouseName: wh?.WarehouseName ?? detail.WarehouseName ?? '',
-            RentedQuantity: detail.RentedQuantity,
-            ReturnedQuantity: detail.ReturnedQuantity,
-            UnitPriceSnapshot: Number(detail.UnitPriceSnapshot ?? detail.unitPriceSnapshot ?? 0) || 0,
+            DetailId: detail.DetailId ?? detail.detailId,
+            ItemId: detail.ItemId ?? detail.itemId,
+            WarehouseId: detailWarehouseId ?? 0,
+            WarehouseName: wh?.WarehouseName ?? detail.WarehouseName ?? detail.warehouseName ?? '',
+            RentedQuantity: detail.RentedQuantity ?? detail.rentedQuantity,
+            ReturnedQuantity: detail.ReturnedQuantity ?? detail.returnedQuantity,
+            UnitPriceSnapshot: unitPriceSnapshot,
             PriceUnit: (detail.PriceUnit ?? detail.priceUnit ?? (resolveContractQuoteType(source as Contract) === 'SALE' ? 'EACH' : 'DAY')) as any,
             MonthlyPriceOverride:
-              detail.MonthlyPriceOverride != null && Number.isFinite(Number(detail.MonthlyPriceOverride))
-                ? Number(detail.MonthlyPriceOverride)
+              (detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride) != null &&
+              Number.isFinite(Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride))
+                ? Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride)
                 : undefined,
             PriceSource: (detail.PriceSource ?? detail.priceSource ?? 'INVENTORY') as any,
             EffectiveStartDate: detail.EffectiveStartDate ?? detail.effectiveStartDate ?? undefined,
@@ -684,7 +696,7 @@ export default function ContractDetailModal({
                 detail.sourceAddendumNo ??
                 null) as number | null,
             Item: undefined,
-            ItemName: detail.ItemName ?? '',
+            ItemName: detail.ItemName ?? detail.itemName ?? '',
             ItemNameEn: detail.ItemNameEn ?? detail.itemNameEn ?? undefined,
             ItemCode: detail.ItemCode ?? detail.itemCode ?? undefined,
             ItemCodeOverride:
@@ -699,11 +711,13 @@ export default function ContractDetailModal({
                 null) as string | null,
             OverrideUnitPrice: undefined,
             OverrideMonthlyPrice:
-              detail.MonthlyPriceOverride != null && Number.isFinite(Number(detail.MonthlyPriceOverride))
-                ? Number(detail.MonthlyPriceOverride)
+              (detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride) != null &&
+              Number.isFinite(Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride))
+                ? Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride)
                 : undefined,
           };
         });
+        setContractPriceError(priceErrors.length > 0 ? priceErrors.join(' ') : null);
         setContractItems(items);
         const globalIsk = (source as { Iskonto?: number }).Iskonto ?? 0;
         setItemIskonto(() => {
@@ -715,6 +729,7 @@ export default function ContractDetailModal({
           return next;
         });
       } else {
+        setContractPriceError(null);
         setContractItems([]);
       }
       // Şantiyeleri yükle
@@ -881,19 +896,27 @@ export default function ContractDetailModal({
     }
   };
 
-  const plannedDays = Math.ceil(
-    (new Date(plannedEndDate).getTime() - new Date(startDate).getTime()) /
-      (1000 * 60 * 60 * 24)
-  );
+  const MONTHLY_PRICING_DAYS = 30;
 
-  const billedDays = contractType === 'RENTAL' ? Math.max(30, Number.isFinite(plannedDays) ? plannedDays : 0) : 0;
+  const plannedDays = calendarDaysBetween(startDate, plannedEndDate);
 
-  const actualDays = actualEndDate
-    ? Math.ceil(
-        (new Date(actualEndDate).getTime() - new Date(startDate).getTime()) /
-          (1000 * 60 * 60 * 24)
-      )
-    : 0;
+  const billedDays = contractType === 'RENTAL' ? Math.max(MONTHLY_PRICING_DAYS, Number.isFinite(plannedDays) ? plannedDays : 0) : 0;
+
+  const canShowFullContractPrice =
+    contractType === 'RENTAL' && Number.isFinite(billedDays) && billedDays > MONTHLY_PRICING_DAYS;
+
+  const showingFullContractPrice = canShowFullContractPrice && showFullContractPrice;
+
+  /** Ekrandaki yeşil satır tutarı: kiralama için her zaman 1 aylık (30 gün). */
+  const displayPricingDays = contractType === 'RENTAL' ? MONTHLY_PRICING_DAYS : billedDays;
+
+  const actualDays = actualEndDate ? calendarDaysBetween(startDate, actualEndDate) : 0;
+
+  const handleDurationDaysChange = (raw: string) => {
+    const days = Math.floor(Number(raw));
+    if (!Number.isFinite(days) || days < 1 || !startDate) return;
+    setPlannedEndDate(addCalendarDays(startDate, days));
+  };
 
   const formatPriceInput = (value: number | undefined): string => {
     if (value == null || !Number.isFinite(value)) return '';
@@ -979,11 +1002,11 @@ export default function ContractDetailModal({
     return item.UnitPriceSnapshot;
   };
 
-  const getLineTotal = (item: ContractLineItem) => {
+  const getLineTotal = (item: ContractLineItem, days: number = billedDays) => {
     const daily = effectiveDailyPrice(item);
     if (item.kind === 'manual') return daily * item.RentedQuantity;
     if (contractType === 'SALE') return daily * item.RentedQuantity;
-    return daily * item.RentedQuantity * billedDays;
+    return daily * item.RentedQuantity * days;
   };
 
   const lineNetInputKey = (item: ContractLineItem) =>
@@ -1017,7 +1040,7 @@ export default function ContractDetailModal({
     itemIskonto[lineNetInputKey(item)] ?? iskonto;
 
   const getLineNetTotal = (item: ContractLineItem) =>
-    lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
+    lineNetFromGross(getLineTotal(item, displayPricingDays), getRowDiscountPercent(item));
 
   const addendumExtrasGroups = useMemo(
     () =>
@@ -1029,7 +1052,7 @@ export default function ContractDetailModal({
             formatNet: (item) => formatMoney(getLineNetTotal(item), currency),
           })
         : [],
-    // getLineNetTotal bağımlılıkları: contractItems, itemIskonto, iskonto, billedDays, contractType, currency
+    // getLineNetTotal bağımlılıkları: contractItems, itemIskonto, iskonto, displayPricingDays, contractType, currency
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [approvedAddenda, contractItems, addendumLineSources, isNew, canViewContracts, currency, itemIskonto, iskonto]
   );
@@ -1039,19 +1062,25 @@ export default function ContractDetailModal({
     [addendumExtrasGroups]
   );
 
-  // Toplam tutar kırılımları (satır bazlı iskonto)
-  const subtotal = initialTotalPrice;
-  const discountAmount = contractItems.reduce((sum, item) => {
-    return sum + lineDiscountAmount(getLineTotal(item), getRowDiscountPercent(item));
-  }, 0);
+  const buildPriceBreakdown = (days: number) => {
+    const subtotal = contractItems.reduce((sum, item) => sum + getLineTotal(item, days), 0);
+    const discountAmount = contractItems.reduce((sum, item) => {
+      return sum + lineDiscountAmount(getLineTotal(item, days), getRowDiscountPercent(item));
+    }, 0);
+    const discountedTotal = subtotal - discountAmount;
+    const vatAmount = discountedTotal * (vatRate / 100);
+    const grandTotal = discountedTotal + vatAmount;
+    return { subtotal, discountAmount, discountedTotal, vatAmount, grandTotal };
+  };
+
+  const monthlyPriceBreakdown = buildPriceBreakdown(MONTHLY_PRICING_DAYS);
+  const fullContractPriceBreakdown = buildPriceBreakdown(billedDays);
+  const displayedPriceBreakdown =
+    contractType === 'RENTAL' ? monthlyPriceBreakdown : fullContractPriceBreakdown;
 
   const totalSettlementCharge = contractReturns.reduce((sum, ret) => {
     return sum + (ret.IsNonPhysicalSettlement ? (ret.SettlementCharge || 0) : 0);
   }, 0);
-
-  const discountedTotal = subtotal - discountAmount;
-  const vatAmount = discountedTotal * (vatRate / 100);
-  const grandTotal = discountedTotal + vatAmount;
 
   /** Panelden ürün + miktar ile listeye ekler. */
   const addItemFromPicker = async (item: Inventory, quantity: number) => {
@@ -1347,9 +1376,9 @@ export default function ContractDetailModal({
     setItemIskonto((prev) => ({ ...prev, [key]: pct }));
   };
 
-  /** Yeşil Toplam (net) → iskonto % ters hesabı. */
+  /** Yeşil Toplam (net) → iskonto % ters hesabı. Kiralama satırı 30 günlük brüt üzerinden. */
   const applyLineNetTarget = (item: ContractLineItem, targetNet: number) => {
-    const result = discountPercentFromNet(getLineTotal(item), targetNet);
+    const result = discountPercentFromNet(getLineTotal(item, displayPricingDays), targetNet);
     updateContractItemIskonto(lineNetInputKey(item), result.discountPercent);
     return result;
   };
@@ -1371,6 +1400,10 @@ export default function ContractDetailModal({
   };
 
   const handleSave = async () => {
+    if (contractPriceError) {
+      toast.error(contractPriceError);
+      return;
+    }
     const source = fullContract ?? contract;
     const validationError = firstValidationError([
       validateRequired(String(selectedCustomerId || ''), 'Müşteri'),
@@ -1958,6 +1991,48 @@ export default function ContractDetailModal({
     return formatMoney(safe, currency);
   };
 
+  const renderPriceBreakdownFields = (
+    breakdown: {
+      subtotal: number;
+      discountAmount: number;
+      discountedTotal: number;
+      vatAmount: number;
+      grandTotal: number;
+    },
+    options?: { includeSettlement?: boolean; compactGrand?: boolean }
+  ) => (
+    <>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
+        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.subtotal)}</span>
+      </div>
+      {options?.includeSettlement && totalSettlementCharge > 0 && (
+        <div title="Sözleşmedeki zayi, hurda veya iade satışlarından kaynaklanan kesinti / borç tutarı genel toplama eklenmiştir.">
+          <span className="text-[11px] text-text-secondary mr-1.5">Zayi Borcu</span>
+          <span className="font-semibold text-red-400">+{formatCurrency(totalSettlementCharge)}</span>
+        </div>
+      )}
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
+        <span className="font-semibold text-red-300">-{formatCurrency(breakdown.discountAmount)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
+        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.discountedTotal)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
+        <span className="font-semibold text-yellow-300">{formatCurrency(breakdown.vatAmount)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
+        <span className={options?.compactGrand ? 'font-semibold text-green-400' : 'text-lg font-bold text-green-400'}>
+          {formatCurrency(breakdown.grandTotal)}
+        </span>
+      </div>
+    </>
+  );
+
   const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
     if (!contract || !activeTemplateId) {
       toast.warning('Döküman oluşturmak için bir şablon seçmelisiniz');
@@ -2206,6 +2281,15 @@ export default function ContractDetailModal({
         <section className="shrink-0 px-3 py-1.5 border-b border-green-800/40 bg-green-950/20 text-xs text-green-100">
           Bu sözleşme {cancelled ? 'iptal edilmiş' : 'tamamlanmış'}; bilgiler salt okunurdur. Listeden kaldırmak için{' '}
           <span className="font-medium">Arşivle</span> kullanın.
+        </section>
+      )}
+      {contractPriceError && (
+        <section
+          className="shrink-0 px-3 py-2 border-b border-red-700/50 bg-red-950/30 text-xs text-red-100"
+          role="alert"
+        >
+          Fiyat bilgisi yüklenemedi: {contractPriceError} Hesaplamalar güvenilir olmadığı için
+          kayıt engellendi.
         </section>
       )}
       {!isNew && archived && (
@@ -2960,25 +3044,50 @@ export default function ContractDetailModal({
                 <input
                   type="date"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => {
+                    const nextStart = e.target.value;
+                    const currentDays = Number.isFinite(plannedDays) && plannedDays >= 1 ? plannedDays : 0;
+                    setStartDate(nextStart);
+                    if (isRentalContract && nextStart && currentDays >= 1) {
+                      setPlannedEndDate(addCalendarDays(nextStart, currentDays));
+                    }
+                  }}
                   disabled={isReadOnly}
                   className="input w-full text-sm py-1.5"
                 />
               </div>
 
               {isRentalContract && (
-                <div className="min-w-[120px] w-[140px]">
-                  <label className={fieldLabel} title="Başlangıç veya planlanan bitişi değiştirdiğinizde sunucu planlanan tutarı güncel tarih aralığına göre yeniden hesaplar.">
-                    Planlanan Bitiş
-                  </label>
-                  <input
-                    type="date"
-                    value={plannedEndDate}
-                    onChange={(e) => setPlannedEndDate(e.target.value)}
-                    disabled={isReadOnly}
-                    className="input w-full text-sm py-1.5"
-                  />
-                </div>
+                <>
+                  <div className="min-w-[88px] w-[100px]">
+                    <label className={fieldLabel} title="Kiralama süresi. Değiştirince planlanan bitiş tarihi güncellenir.">
+                      Gün
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={36500}
+                      step={1}
+                      value={Number.isFinite(plannedDays) && plannedDays >= 1 ? plannedDays : ''}
+                      onChange={(e) => handleDurationDaysChange(e.target.value)}
+                      disabled={isReadOnly}
+                      className="input w-full text-sm py-1.5"
+                      title="Başlangıç tarihine eklenen gün sayısı; bitiş tarihi buna göre hesaplanır."
+                    />
+                  </div>
+                  <div className="min-w-[120px] w-[140px]">
+                    <label className={fieldLabel} title="Başlangıç, gün sayısı veya planlanan bitişi değiştirdiğinizde sunucu planlanan tutarı güncel tarih aralığına göre yeniden hesaplar.">
+                      Planlanan Bitiş
+                    </label>
+                    <input
+                      type="date"
+                      value={plannedEndDate}
+                      onChange={(e) => setPlannedEndDate(e.target.value)}
+                      disabled={isReadOnly}
+                      className="input w-full text-sm py-1.5"
+                    />
+                  </div>
+                </>
               )}
 
               <div className="min-w-[100px] w-[120px]">
@@ -3311,9 +3420,13 @@ export default function ContractDetailModal({
                       <th
                         className="text-right whitespace-nowrap"
                         style={{ width: LINE_ITEM_COL.total }}
-                        title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
+                        title={
+                          isRentalContract
+                            ? 'İskonto sonrası 1 aylık (30 gün) satır tutarı. Tam dönem için alttaki düğmeyi kullanın.'
+                            : 'İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır.'
+                        }
                       >
-                        Toplam
+                        {isRentalContract ? 'Aylık Toplam' : 'Toplam'}
                       </th>
                       <th className="text-center w-12">İşlem</th>
                     </tr>
@@ -3897,8 +4010,12 @@ export default function ContractDetailModal({
                                     });
                                   }}
                                   className="input w-full text-right py-0.5 text-xs font-medium text-green-500"
-                                  aria-label="İskontolu satır tutarı"
-                                  title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
+                                  aria-label={isRentalContract ? 'İskontolu aylık satır tutarı' : 'İskontolu satır tutarı'}
+                                  title={
+                                    isRentalContract
+                                      ? 'İskonto sonrası 1 aylık tutar — değiştirirseniz iskonto % otomatik ayarlanır'
+                                      : 'İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır'
+                                  }
                                 />
                               )}
                             </td>
@@ -3975,59 +4092,59 @@ export default function ContractDetailModal({
           </section>
 
           <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
-                <span className="font-semibold text-text-primary">{formatCurrency(subtotal)}</span>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
+                {renderPriceBreakdownFields(displayedPriceBreakdown, { includeSettlement: true })}
+                {contractType === 'RENTAL' && (
+                  <span className="text-[11px] text-text-secondary">
+                    30 gün üzerinden
+                    {Number.isFinite(plannedDays) && plannedDays >= 1 ? ` · planlanan ${plannedDays} gün` : ''}
+                    {Number.isFinite(actualDays) && actualDays > 0 ? ` · gerçekleşen ${actualDays} gün` : ''}
+                  </span>
+                )}
+                {contractType === 'RENTAL' && canShowFullContractPrice && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFullContractPrice((open) => !open)}
+                    aria-pressed={showingFullContractPrice}
+                    title={
+                      showingFullContractPrice
+                        ? 'Tam sözleşme tutarını gizle'
+                        : 'Planlanan sürenin tam tutarını göster'
+                    }
+                    className="rounded border border-background-border bg-background-elevated px-2 py-0.5 text-[11px] font-medium text-text-primary hover:bg-background-hover"
+                  >
+                    {showingFullContractPrice ? 'Tam fiyatı gizle' : 'Tam sözleşme fiyatı'}
+                  </button>
+                )}
+                {contractType === 'SALE' && (
+                  <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
+                )}
+                {contract?.FinalCalculatedPrice != null && (
+                  <div>
+                    <span className="text-[11px] text-text-secondary mr-1.5">Final Tutar</span>
+                    <span className="font-semibold text-green-200">{formatCurrency(contract.FinalCalculatedPrice)}</span>
+                  </div>
+                )}
+                {!isNew && contract && active && priceCalculation && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+                    {contractType === 'RENTAL' && (
+                      <span className="text-text-secondary">Planlanan: {priceCalculation.plannedDays} gün</span>
+                    )}
+                    <span className="text-text-secondary">Temel: {formatCurrency(priceCalculation.basePrice)}</span>
+                    {priceCalculation.totalLateFee > 0 && (
+                      <span className="text-orange-300">Gecikme: {formatCurrency(priceCalculation.totalLateFee)}</span>
+                    )}
+                    <span className="font-semibold text-green-300">Final: {formatCurrency(priceCalculation.finalPrice)}</span>
+                  </div>
+                )}
               </div>
-              {totalSettlementCharge > 0 && (
-                <div title="Sözleşmedeki zayi, hurda veya iade satışlarından kaynaklanan kesinti / borç tutarı genel toplama eklenmiştir.">
-                  <span className="text-[11px] text-text-secondary mr-1.5">Zayi Borcu</span>
-                  <span className="font-semibold text-red-400">+{formatCurrency(totalSettlementCharge)}</span>
-                </div>
-              )}
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
-                <span className="font-semibold text-red-300">-{formatCurrency(discountAmount)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
-                <span className="font-semibold text-text-primary">{formatCurrency(discountedTotal)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
-                <span className="font-semibold text-yellow-300">{formatCurrency(vatAmount)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
-                <span className="text-lg font-bold text-green-400">{formatCurrency(grandTotal)}</span>
-              </div>
-              {contractType === 'RENTAL' && (
-                <span className="text-[11px] text-text-secondary">
-                  {plannedDays} gün
-                  {actualDays > 0 ? ` · gerçekleşen ${actualDays} gün` : ''}
-                  {' · '}planlanan süre üzerinden
-                </span>
-              )}
-              {contractType === 'SALE' && (
-                <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
-              )}
-              {contract?.FinalCalculatedPrice != null && (
-                <div>
-                  <span className="text-[11px] text-text-secondary mr-1.5">Final Tutar</span>
-                  <span className="font-semibold text-green-200">{formatCurrency(contract.FinalCalculatedPrice)}</span>
-                </div>
-              )}
-              {!isNew && contract && active && priceCalculation && (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
-                  {contractType === 'RENTAL' && (
-                    <span className="text-text-secondary">Planlanan: {priceCalculation.plannedDays} gün</span>
-                  )}
-                  <span className="text-text-secondary">Temel: {formatCurrency(priceCalculation.basePrice)}</span>
-                  {priceCalculation.totalLateFee > 0 && (
-                    <span className="text-orange-300">Gecikme: {formatCurrency(priceCalculation.totalLateFee)}</span>
-                  )}
-                  <span className="font-semibold text-green-300">Final: {formatCurrency(priceCalculation.finalPrice)}</span>
+              {showingFullContractPrice && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0 border-t border-background-border pt-1.5">
+                  {renderPriceBreakdownFields(fullContractPriceBreakdown, { compactGrand: true })}
+                  <span className="text-[11px] text-text-secondary">
+                    {Number.isFinite(plannedDays) && plannedDays >= 1 ? plannedDays : billedDays} gün · tam sözleşme
+                  </span>
                 </div>
               )}
             </div>

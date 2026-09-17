@@ -48,6 +48,8 @@ type MovementItem = {
 
 type TableOptions = {
   currency?: string;
+  /** Legacy caller alias; normalized to currency. */
+  currencySymbol?: string;
   contractType?: string | null;
   startDate?: string | null;
   endDate?: string | null;

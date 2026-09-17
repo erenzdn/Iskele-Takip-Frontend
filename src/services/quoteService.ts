@@ -4,7 +4,10 @@ import { CreateSiteRequest } from './siteService';
 import { normalizePaginatedResponse, unwrapListItems, type PaginatedResponse } from '../utils/paginatedResponse';
 
 export interface CreateQuoteDetailRequest {
-  ItemId: number;
+  /** Mevcut satır güncellenirken korunur; yeni satırlarda gönderilmez. */
+  QuoteDetailId?: number;
+  /** Manuel kalemlerde bulunmaz. */
+  ItemId?: number;
   Quantity: number;
   is_manual?: boolean;
   Description?: string;
@@ -13,9 +16,9 @@ export interface CreateQuoteDetailRequest {
   /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
   ItemCodeOverride?: string | null;
   /** SALE: satır bazlı birim fiyat override */
-  OverrideUnitPrice?: number;
+  OverrideUnitPrice?: number | null;
   /** RENTAL: satır bazlı aylık fiyat override */
-  OverrideMonthlyPrice?: number;
+  OverrideMonthlyPrice?: number | null;
   /**
    * Manuel kalemler için mevcut mantık korunur:
    * - is_manual: true, Description, Quantity, DailyPrice

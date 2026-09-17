@@ -56,6 +56,11 @@ import {
   validateSiteSelection,
 } from '../../utils/siteSelection';
 import { hasMeaningfulQuoteDraftContent, isQuoteDraftStatus } from '../../utils/quoteDraft';
+import {
+  buildQuoteDetailRequest,
+  hydrateQuotePriceMetadata,
+} from '../../utils/linePriceMetadata';
+import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -197,6 +202,8 @@ export default function QuoteDetailModal({
   const [iskontoInputs, setIskontoInputs] = useState<Record<string, string>>({});
   const [globalIskontoInput, setGlobalIskontoInput] = useState<string | null>(null);
   const [vatRate, setVatRate] = useState<number>(20);
+  /** Kiralama alt toplamları varsayılan 30 gün; true olunca planlanan sürenin tam tutarı açılır. */
+  const [showFullQuotePrice, setShowFullQuotePrice] = useState(false);
   const [quoteCode, setQuoteCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
   const [quoteType, setQuoteType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
@@ -539,46 +546,49 @@ export default function QuoteDetailModal({
       setSubject(String((source as any).Subject ?? (source as any).subject ?? '').trim());
       setNotes(source.Notes || '');
       setIskonto(Number.isFinite(parsedIskonto) ? parsedIskonto : 0);
+      setShowFullQuotePrice(false);
       setVatRate(Number.isFinite(parsedVatRate) ? parsedVatRate : 20);
       setQuoteCode(source.QuoteCode ?? '');
       setCurrency(source.Currency === 'EUR' ? 'EUR' : source.Currency === 'USD' ? 'USD' : 'TRY');
       setLanguage((source as any).Language === 'EN' ? 'EN' : 'TR');
       setQuoteType(resolveContractQuoteType(source));
 
-      const details = (source as any).details ?? source.QuoteDetails ?? [];
+      const details =
+        (source as any).details ??
+        source.QuoteDetails ??
+        (source as any).quoteDetails ??
+        [];
       if (details.length > 0) {
         const items: QuoteLineItem[] = (details as any[]).map((detail: any) => {
           const isManual = detail.is_manual === true || detail.IsManual === true || detail.IsManual === 1;
+          const priceMetadata = hydrateQuotePriceMetadata(
+            detail,
+            resolveContractQuoteType(source)
+          );
           if (isManual) {
             return {
               kind: 'manual',
-              ClientId: `manual-${detail.QuoteDetailId ?? crypto.randomUUID()}`,
-              QuoteDetailId: detail.QuoteDetailId,
+              ClientId: `manual-${detail.QuoteDetailId ?? detail.quoteDetailId ?? crypto.randomUUID()}`,
+              QuoteDetailId: detail.QuoteDetailId ?? detail.quoteDetailId,
               is_manual: true,
               Description: String(detail.Description ?? detail.description ?? '').trim() || 'Manuel Kalem',
-              Quantity: Number(detail.Quantity ?? 1) || 1,
-              UnitPriceSnapshot: Number(detail.UnitPriceSnapshot ?? detail.unitPriceSnapshot ?? detail.DailyPrice ?? 0) || 0,
+              Quantity: Number(detail.Quantity ?? detail.quantity ?? 1) || 1,
+              UnitPriceSnapshot: priceMetadata.unitPriceSnapshot,
               PriceUnit: (detail.PriceUnit ?? detail.priceUnit ?? (resolveContractQuoteType(source) === 'SALE' ? 'EACH' : 'DAY')) as any,
-              PriceSource: (detail.PriceSource ?? detail.priceSource ?? 'MANUAL') as any,
+              PriceSource: priceMetadata.priceSource === 'INVENTORY' ? 'MANUAL' : priceMetadata.priceSource,
             };
           }
           return {
             kind: 'inventory',
-            QuoteDetailId: detail.QuoteDetailId,
-            ItemId: detail.ItemId,
-            Quantity: detail.Quantity,
-            UnitPriceSnapshot: Number(detail.UnitPriceSnapshot ?? detail.unitPriceSnapshot ?? detail.DailyPrice ?? 0) || 0,
+            QuoteDetailId: detail.QuoteDetailId ?? detail.quoteDetailId,
+            ItemId: detail.ItemId ?? detail.itemId,
+            Quantity: detail.Quantity ?? detail.quantity,
+            UnitPriceSnapshot: priceMetadata.unitPriceSnapshot,
             PriceUnit: (detail.PriceUnit ?? detail.priceUnit ?? (resolveContractQuoteType(source) === 'SALE' ? 'EACH' : 'DAY')) as any,
-            MonthlyPriceOverride:
-              detail.MonthlyPriceOverride != null && Number.isFinite(Number(detail.MonthlyPriceOverride))
-                ? Number(detail.MonthlyPriceOverride)
-                : undefined,
-            PriceSource: (detail.PriceSource ?? detail.priceSource ?? 'INVENTORY') as any,
-            OverrideUnitPrice: undefined,
-            OverrideMonthlyPrice:
-              detail.MonthlyPriceOverride != null && Number.isFinite(Number(detail.MonthlyPriceOverride))
-                ? Number(detail.MonthlyPriceOverride)
-                : undefined,
+            MonthlyPriceOverride: priceMetadata.monthlyPriceOverride,
+            PriceSource: priceMetadata.priceSource,
+            OverrideUnitPrice: priceMetadata.overrideUnitPrice,
+            OverrideMonthlyPrice: priceMetadata.overrideMonthlyPrice,
             Item: undefined,
             // ItemName: envanterdeki orijinal ad (detail.ItemName backend'de override birleşik dönebilir)
             ItemName:
@@ -602,33 +612,21 @@ export default function QuoteDetailModal({
           };
         });
         setQuoteItems(items);
-        setPriceOverrideInputs((prev) => {
-          const next = { ...prev };
+        setPriceOverrideInputs(() => {
+          const next: Record<number, string> = {};
           const sourceQuoteType = resolveContractQuoteType(source);
           for (const it of items) {
             if (it.kind !== 'inventory') continue;
-            // Kullanicinin daha once bu satirda dokundugu/temizledigi degeri ezme.
-            if (next[it.ItemId] != null) continue;
-
-            // Yeni model:
-            // - RENTAL: MonthlyPriceOverride doluysa input'u bununla doldur.
-            // - SALE: backend override'ı ayrıca dönmeyebilir; input başlangıçta boş, placeholder UnitPriceSnapshot.
-            if (sourceQuoteType === 'RENTAL') {
-              const candidate =
-                it.OverrideMonthlyPrice != null && Number.isFinite(Number(it.OverrideMonthlyPrice))
-                  ? Number(it.OverrideMonthlyPrice)
-                  : null;
-              if (candidate != null) {
-                const { masked } = normalizeMaskedDecimalTR(String(candidate), {
-                  maxIntDigits: 9,
-                  maxFracDigits: 2,
-                });
-                next[it.ItemId] = masked;
-              } else {
-                next[it.ItemId] = '';
-              }
-            } else {
-              next[it.ItemId] = '';
+            const candidate =
+              sourceQuoteType === 'RENTAL'
+                ? it.OverrideMonthlyPrice
+                : it.OverrideUnitPrice;
+            if (candidate != null && Number.isFinite(candidate)) {
+              const { masked } = normalizeMaskedDecimalTR(String(candidate), {
+                maxIntDigits: 9,
+                maxFracDigits: 2,
+              });
+              next[it.ItemId] = masked;
             }
           }
           return next;
@@ -886,7 +884,7 @@ export default function QuoteDetailModal({
         // DOKUNMA. Backend satır için UnitPriceSnapshot'ı (ve varsa override) zaten
         // normalize edip döndürüyor; envanterin güncel fiyatıyla ezersek geçmiş snapshot bozulur.
         // Sadece eksik envanter referansını ve görselleme alanlarını doldur.
-        const isExistingDetail = item.QuoteDetailId != null;
+        const isExistingDetail = item.QuoteDetailId != null && item.QuoteDetailId > 0;
         if (isExistingDetail) {
           const canonicalName = inv.ItemName;
           const canonicalEn = inv.ItemNameEn ?? undefined;
@@ -966,6 +964,8 @@ export default function QuoteDetailModal({
     }
   };
 
+  const MONTHLY_PRICING_DAYS = 30;
+
   const plannedDays = useMemo(() => {
     if (quoteType !== 'RENTAL') return 0;
     const hasPair = Boolean(startDate.trim() && plannedEndDate.trim());
@@ -982,8 +982,36 @@ export default function QuoteDetailModal({
 
   const billedDays = useMemo(() => {
     if (quoteType !== 'RENTAL') return 0;
-    return Math.max(30, plannedDays);
+    return Math.max(MONTHLY_PRICING_DAYS, plannedDays);
   }, [quoteType, plannedDays]);
+
+  const canShowFullQuotePrice =
+    quoteType === 'RENTAL' && Number.isFinite(billedDays) && billedDays > MONTHLY_PRICING_DAYS;
+
+  const showingFullQuotePrice = canShowFullQuotePrice && showFullQuotePrice;
+
+  /** Ekrandaki yeşil satır tutarı: kiralama için her zaman 1 aylık (30 gün). */
+  const displayPricingDays = quoteType === 'RENTAL' ? MONTHLY_PRICING_DAYS : billedDays;
+
+  const convertDurationDays = calendarDaysBetween(convertContractStartDate, convertContractEndDate);
+
+  const handleConvertStartDateChange = (nextStart: string) => {
+    const days = Number.isFinite(convertDurationDays) && convertDurationDays >= 1 ? convertDurationDays : 30;
+    setConvertContractStartDate(nextStart);
+    if (nextStart) {
+      setConvertContractEndDate(addCalendarDays(nextStart, days));
+    }
+  };
+
+  const handleConvertDurationDaysChange = (raw: string) => {
+    const days = Math.floor(Number(raw));
+    if (!Number.isFinite(days) || days < 1) return;
+    const start = convertContractStartDate.trim() || todayDateInput();
+    if (!convertContractStartDate.trim()) {
+      setConvertContractStartDate(start);
+    }
+    setConvertContractEndDate(addCalendarDays(start, days));
+  };
 
   const effectiveDailyPrice = (item: QuoteLineItem): number => {
     if (item.kind === 'manual') return item.UnitPriceSnapshot;
@@ -993,34 +1021,39 @@ export default function QuoteDetailModal({
     return item.OverrideMonthlyPrice != null ? item.OverrideMonthlyPrice / 30 : item.UnitPriceSnapshot;
   };
 
-  const getLineTotal = (item: QuoteLineItem) => {
+  const getLineTotal = (item: QuoteLineItem, days: number = billedDays) => {
     const daily = effectiveDailyPrice(item);
     if (item.kind === 'manual') return daily * item.Quantity;
     if (quoteType === 'SALE') return daily * item.Quantity;
-    return daily * item.Quantity * billedDays;
+    return daily * item.Quantity * days;
   };
 
   const lineNetInputKey = (item: QuoteLineItem) =>
     item.kind === 'inventory' ? String(item.ItemId) : `man-${item.ClientId}`;
 
-  const totalPrice = quoteItems.reduce((sum, item) => sum + getLineTotal(item), 0);
-
   /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
   const getRowDiscountPercent = (item: QuoteLineItem) =>
     itemIskonto[lineNetInputKey(item)] ?? iskonto;
 
-  /** İskonto sonrası satır tutarı (yeşil Toplam). */
+  /** İskonto sonrası satır tutarı (yeşil Aylık Toplam). */
   const getLineNetTotal = (item: QuoteLineItem) =>
-    lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
+    lineNetFromGross(getLineTotal(item, displayPricingDays), getRowDiscountPercent(item));
 
-  // Toplam tutar kırılımları (satır bazlı iskonto)
-  const subtotal = totalPrice;
-  const discountAmount = quoteItems.reduce((sum, item) => {
-    return sum + lineDiscountAmount(getLineTotal(item), getRowDiscountPercent(item));
-  }, 0);
-  const discountedTotal = subtotal - discountAmount;
-  const vatAmount = discountedTotal * (vatRate / 100);
-  const grandTotal = discountedTotal + vatAmount;
+  const buildPriceBreakdown = (days: number) => {
+    const subtotal = quoteItems.reduce((sum, item) => sum + getLineTotal(item, days), 0);
+    const discountAmount = quoteItems.reduce((sum, item) => {
+      return sum + lineDiscountAmount(getLineTotal(item, days), getRowDiscountPercent(item));
+    }, 0);
+    const discountedTotal = subtotal - discountAmount;
+    const vatAmount = discountedTotal * (vatRate / 100);
+    const grandTotal = discountedTotal + vatAmount;
+    return { subtotal, discountAmount, discountedTotal, vatAmount, grandTotal };
+  };
+
+  const monthlyPriceBreakdown = buildPriceBreakdown(MONTHLY_PRICING_DAYS);
+  const fullQuotePriceBreakdown = buildPriceBreakdown(billedDays);
+  const displayedPriceBreakdown =
+    quoteType === 'RENTAL' ? monthlyPriceBreakdown : fullQuotePriceBreakdown;
 
   /** Panelden ürün + miktar ile listeye ekler. */
   const addItemFromPicker = (item: Inventory, quantity: number) => {
@@ -1047,7 +1080,6 @@ export default function QuoteDetailModal({
         ...quoteItems,
         {
           kind: 'inventory',
-          QuoteDetailId: 0,
           ItemId: item.ItemId,
           Quantity: qty,
           UnitPriceSnapshot: dailyPrice,
@@ -1254,9 +1286,9 @@ export default function QuoteDetailModal({
     setItemIskonto((prev) => ({ ...prev, [key]: pct }));
   };
 
-  /** Yeşil Toplam (net) değişince iskonto % ters hesaplanır; mevcut % akışı bozulmaz. */
+  /** Yeşil Toplam (net) değişince iskonto % ters hesaplanır; kiralama 30 günlük brüt üzerinden. */
   const applyLineNetTarget = (item: QuoteLineItem, targetNet: number) => {
-    const gross = getLineTotal(item);
+    const gross = getLineTotal(item, displayPricingDays);
     const result = discountPercentFromNet(gross, targetNet);
     updateQuoteItemIskonto(lineNetInputKey(item), result.discountPercent);
     return result;
@@ -1293,37 +1325,9 @@ export default function QuoteDetailModal({
   });
 
   const buildQuoteDetailsPayload = () => {
-    const normalizeOptionalOverride = (raw: unknown): string | null => {
-      const s = typeof raw === 'string' ? raw.trim() : '';
-      return s ? s : null;
-    };
-    return quoteItems.map((item) => {
-      if (item.kind === 'manual') {
-        return {
-          is_manual: true,
-          Description: item.Description,
-          Quantity: item.Quantity,
-          DailyPrice: item.UnitPriceSnapshot,
-          Iskonto: getRowDiscountPercent(item),
-        };
-      }
-      const base: Record<string, unknown> = {
-        ItemId: item.ItemId,
-        Quantity: item.Quantity,
-        is_manual: false,
-        ItemNameOverride: normalizeOptionalOverride(item.ItemNameOverride),
-        ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
-        Iskonto: getRowDiscountPercent(item),
-      };
-      if (quoteType === 'SALE') {
-        if (item.OverrideUnitPrice != null && Number.isFinite(item.OverrideUnitPrice)) {
-          base.OverrideUnitPrice = item.OverrideUnitPrice;
-        }
-      } else if (item.OverrideMonthlyPrice != null && Number.isFinite(item.OverrideMonthlyPrice)) {
-        base.OverrideMonthlyPrice = item.OverrideMonthlyPrice;
-      }
-      return base;
-    });
+    return quoteItems.map((item) =>
+      buildQuoteDetailRequest(item, quoteType, getRowDiscountPercent(item))
+    );
   };
 
   const buildQuoteHeaderPayload = (targetStatus: QuoteStatus) => {
@@ -1893,15 +1897,29 @@ export default function QuoteDetailModal({
     setConvertItemStocks({});
     setDecrementStock(quoteType === 'RENTAL' ? true : null);
     if (resolveContractQuoteType(activeQuote) === 'RENTAL') {
-      const qs = activeQuote.StartDate != null && String(activeQuote.StartDate).trim()
-        ? String(activeQuote.StartDate).split('T')[0]
-        : '';
-      const qe =
-        activeQuote.PlannedEndDate != null && String(activeQuote.PlannedEndDate).trim()
+      const quoteStart =
+        startDate.trim() ||
+        (activeQuote.StartDate != null && String(activeQuote.StartDate).trim()
+          ? String(activeQuote.StartDate).split('T')[0]
+          : '');
+      const quoteEnd =
+        plannedEndDate.trim() ||
+        (activeQuote.PlannedEndDate != null && String(activeQuote.PlannedEndDate).trim()
           ? String(activeQuote.PlannedEndDate).split('T')[0]
-          : '';
+          : '');
+      const qs = quoteStart || todayDateInput();
+      const fromDates = quoteEnd ? calendarDaysBetween(qs, quoteEnd) : NaN;
+      const fromQuote = Math.floor(Number(rentalDurationDays));
+      const days =
+        Number.isFinite(fromDates) && fromDates >= 1
+          ? fromDates
+          : Number.isFinite(fromQuote) && fromQuote >= 1
+            ? fromQuote
+            : 30;
       setConvertContractStartDate(qs);
-      setConvertContractEndDate(qe);
+      setConvertContractEndDate(
+        Number.isFinite(fromDates) && fromDates >= 1 ? quoteEnd : addCalendarDays(qs, days)
+      );
     } else {
       setConvertContractStartDate('');
       setConvertContractEndDate('');
@@ -1983,13 +2001,12 @@ export default function QuoteDetailModal({
     if (quoteType === 'RENTAL') {
       if (!convertContractStartDate.trim() || !convertContractEndDate.trim()) {
         setConvertModalError(
-          'Kiralama sözleşmesine dönüşüm için sözleşme başlangıcı ve planlanan bitiş tarihlerini girin.'
+          'Kiralama sözleşmesine dönüşüm için sözleşme başlangıcı, gün sayısı ve planlanan bitiş tarihlerini girin.'
         );
         return;
       }
-      const cs = new Date(convertContractStartDate).getTime();
-      const ce = new Date(convertContractEndDate).getTime();
-      if (!Number.isFinite(cs) || !Number.isFinite(ce) || ce <= cs) {
+      const duration = calendarDaysBetween(convertContractStartDate, convertContractEndDate);
+      if (!Number.isFinite(duration) || duration < 1) {
         setConvertModalError('Planlanan bitiş tarihi başlangıçtan sonra olmalıdır.');
         return;
       }
@@ -2080,6 +2097,42 @@ export default function QuoteDetailModal({
   const formatCurrency = (amount: number) => {
     return formatMoney(amount, currency);
   };
+
+  const renderPriceBreakdownFields = (
+    breakdown: {
+      subtotal: number;
+      discountAmount: number;
+      discountedTotal: number;
+      vatAmount: number;
+      grandTotal: number;
+    },
+    options?: { compactGrand?: boolean }
+  ) => (
+    <>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
+        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.subtotal)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
+        <span className="font-semibold text-red-300">-{formatCurrency(breakdown.discountAmount)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
+        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.discountedTotal)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
+        <span className="font-semibold text-yellow-300">{formatCurrency(breakdown.vatAmount)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
+        <span className={options?.compactGrand ? 'font-semibold text-green-400' : 'text-lg font-bold text-green-400'}>
+          {formatCurrency(breakdown.grandTotal)}
+        </span>
+      </div>
+    </>
+  );
 
   const handlePreviewDocument = async () => {
     if (!activeQuote || !selectedTemplateId) {
@@ -2236,7 +2289,6 @@ export default function QuoteDetailModal({
         } else {
           nextItems.push({
             kind: 'inventory',
-            QuoteDetailId: 0,
             ItemId: itemId,
             Quantity: quantity,
             UnitPriceSnapshot: dailyPrice,
@@ -2955,9 +3007,13 @@ export default function QuoteDetailModal({
                     <th
                       className="text-right whitespace-nowrap"
                       style={{ width: LINE_ITEM_COL.total }}
-                      title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
+                      title={
+                        quoteType === 'RENTAL'
+                          ? 'İskonto sonrası 1 aylık (30 gün) satır tutarı. Tam dönem için alttaki düğmeyi kullanın.'
+                          : 'İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır.'
+                      }
                     >
-                      Toplam
+                      {quoteType === 'RENTAL' ? 'Aylık Toplam' : 'Toplam'}
                     </th>
                     <th
                       className="action-col"
@@ -3285,7 +3341,7 @@ export default function QuoteDetailModal({
                                   setQuoteItems((prev) =>
                                     prev.map((x) =>
                                       x.kind === 'inventory' && x.ItemId === item.ItemId
-                                        ? { ...x, OverrideUnitPrice: numeric }
+                                        ? { ...x, OverrideUnitPrice: numeric === undefined ? null : numeric }
                                         : x
                                     )
                                   );
@@ -3306,7 +3362,7 @@ export default function QuoteDetailModal({
                                     setQuoteItems((prev) =>
                                       prev.map((x) =>
                                         x.kind === 'inventory' && x.ItemId === item.ItemId
-                                          ? { ...x, OverrideUnitPrice: undefined }
+                                          ? { ...x, OverrideUnitPrice: null }
                                           : x
                                       )
                                     );
@@ -3347,7 +3403,7 @@ export default function QuoteDetailModal({
                                   setQuoteItems((prev) =>
                                     prev.map((x) =>
                                       x.kind === 'inventory' && x.ItemId === item.ItemId
-                                        ? { ...x, OverrideMonthlyPrice: numeric }
+                                        ? { ...x, OverrideMonthlyPrice: numeric === undefined ? null : numeric }
                                         : x
                                     )
                                   );
@@ -3368,7 +3424,7 @@ export default function QuoteDetailModal({
                                     setQuoteItems((prev) =>
                                       prev.map((x) =>
                                         x.kind === 'inventory' && x.ItemId === item.ItemId
-                                          ? { ...x, OverrideMonthlyPrice: undefined }
+                                          ? { ...x, OverrideMonthlyPrice: null }
                                           : x
                                       )
                                     );
@@ -3485,8 +3541,12 @@ export default function QuoteDetailModal({
                                   });
                                 }}
                                 className="input w-full text-right py-0.5 text-xs font-medium text-green-500"
-                                aria-label="İskontolu satır tutarı"
-                                title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
+                                aria-label={quoteType === 'RENTAL' ? 'İskontolu aylık satır tutarı' : 'İskontolu satır tutarı'}
+                                title={
+                                  quoteType === 'RENTAL'
+                                    ? 'İskonto sonrası 1 aylık tutar — değiştirirseniz iskonto % otomatik ayarlanır'
+                                    : 'İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır'
+                                }
                               />
                             )}
                           </td>
@@ -3525,34 +3585,41 @@ export default function QuoteDetailModal({
 
           {/* Alt: toplam + kaydet — her zaman görünür */}
           <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
-                <span className="font-semibold text-text-primary">{formatCurrency(subtotal)}</span>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
+                {renderPriceBreakdownFields(displayedPriceBreakdown)}
+                {quoteType === 'RENTAL' && (
+                  <span className="text-[11px] text-text-secondary">
+                    30 gün üzerinden
+                    {Number.isFinite(plannedDays) && plannedDays >= 1 ? ` · planlanan ${plannedDays} gün` : ''}
+                  </span>
+                )}
+                {quoteType === 'RENTAL' && canShowFullQuotePrice && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFullQuotePrice((open) => !open)}
+                    aria-pressed={showingFullQuotePrice}
+                    title={
+                      showingFullQuotePrice
+                        ? 'Tam teklif tutarını gizle'
+                        : 'Planlanan sürenin tam tutarını göster'
+                    }
+                    className="rounded border border-background-border bg-background-elevated px-2 py-0.5 text-[11px] font-medium text-text-primary hover:bg-background-hover"
+                  >
+                    {showingFullQuotePrice ? 'Tam fiyatı gizle' : 'Tam teklif fiyatı'}
+                  </button>
+                )}
+                {quoteType === 'SALE' && (
+                  <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
+                )}
               </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
-                <span className="font-semibold text-red-300">-{formatCurrency(discountAmount)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
-                <span className="font-semibold text-text-primary">{formatCurrency(discountedTotal)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
-                <span className="font-semibold text-yellow-300">{formatCurrency(vatAmount)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
-                <span className="text-lg font-bold text-green-400">{formatCurrency(grandTotal)}</span>
-              </div>
-              {quoteType === 'RENTAL' && (
-                <span className="text-[11px] text-text-secondary">
-                  {plannedDays} gün · fatura min 30 → {billedDays} gün
-                </span>
-              )}
-              {quoteType === 'SALE' && (
-                <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
+              {showingFullQuotePrice && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0 border-t border-background-border pt-1.5">
+                  {renderPriceBreakdownFields(fullQuotePriceBreakdown, { compactGrand: true })}
+                  <span className="text-[11px] text-text-secondary">
+                    {Number.isFinite(plannedDays) && plannedDays >= 1 ? plannedDays : billedDays} gün · tam teklif
+                  </span>
+                </div>
               )}
             </div>
             <div className="flex flex-wrap items-center gap-1.5 shrink-0">
@@ -3860,17 +3927,30 @@ export default function QuoteDetailModal({
               <div className="rounded-lg border border-amber-600/40 bg-amber-950/25 p-3 space-y-2 mb-4">
                 <div className="text-sm font-medium text-text-primary">Sözleşme tarihleri (kiralama zorunlu)</div>
                 <p className="text-xs text-text-secondary">
-                  Teklifte tarih olmasa bile dönüşümde sözleşme başlangıcı ve planlanan bitiş ISO tarih olarak
-                  gönderilmelidir.
+                  Başlangıç tarihi ve gün sayısını girin; planlanan bitiş otomatik dolar. İsterseniz bitiş
+                  tarihini elle de değiştirebilirsiniz.
                 </p>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                   <div className="space-y-0.5">
                     <label className="block text-xs font-medium text-text-primary">Sözleşme başlangıcı *</label>
                     <input
                       type="date"
                       value={convertContractStartDate}
-                      onChange={(e) => setConvertContractStartDate(e.target.value)}
+                      onChange={(e) => handleConvertStartDateChange(e.target.value)}
                       className="input w-full text-sm py-1.5"
+                    />
+                  </div>
+                  <div className="space-y-0.5">
+                    <label className="block text-xs font-medium text-text-primary">Gün *</label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={36500}
+                      step={1}
+                      value={Number.isFinite(convertDurationDays) && convertDurationDays >= 1 ? convertDurationDays : ''}
+                      onChange={(e) => handleConvertDurationDaysChange(e.target.value)}
+                      className="input w-full text-sm py-1.5"
+                      title="Başlangıç tarihine eklenen gün sayısı; bitiş tarihi buna göre hesaplanır."
                     />
                   </div>
                   <div className="space-y-0.5">
