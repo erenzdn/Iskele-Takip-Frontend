@@ -61,6 +61,13 @@ import {
   hydrateQuotePriceMetadata,
 } from '../../utils/linePriceMetadata';
 import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
+import {
+  copyQuoteLineDiscounts,
+  extractContractDetails,
+  sortByQuoteLineOrder,
+  sortByStoredLineOrder,
+  withContractDetails,
+} from '../../utils/lineItemOrder';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -554,11 +561,12 @@ export default function QuoteDetailModal({
       setLanguage((source as any).Language === 'EN' ? 'EN' : 'TR');
       setQuoteType(resolveContractQuoteType(source));
 
-      const details =
+      const details = sortByStoredLineOrder(
         (source as any).details ??
-        source.QuoteDetails ??
-        (source as any).quoteDetails ??
-        [];
+          source.QuoteDetails ??
+          (source as any).quoteDetails ??
+          []
+      );
       if (details.length > 0) {
         const items: QuoteLineItem[] = (details as any[]).map((detail: any) => {
           const isManual = detail.is_manual === true || detail.IsManual === true || detail.IsManual === 1;
@@ -1345,13 +1353,14 @@ export default function QuoteDetailModal({
 
   const buildQuoteDetailsPayload = (lineIskontoMap?: Record<string, number>) => {
     const discounts = lineIskontoMap ?? getCommittedLineIskontoMap();
-    return quoteItems.map((item) =>
-      buildQuoteDetailRequest(
+    return quoteItems.map((item, index) => ({
+      ...buildQuoteDetailRequest(
         item,
         quoteType,
         discounts[lineNetInputKey(item)] ?? getRowDiscountPercent(item)
-      )
-    );
+      ),
+      LineOrder: index + 1,
+    }));
   };
 
   const buildQuoteHeaderPayload = (targetStatus: QuoteStatus) => {
@@ -2108,7 +2117,15 @@ export default function QuoteDetailModal({
       await onDataChanged?.();
       try {
         const c = await contractService.getByIdAsync(result.ContractId);
-        setConvertedContract(c);
+        const quoteLinesWithDiscount = quoteItems.map((item) => ({
+          ...item,
+          Iskonto: committedLines[lineNetInputKey(item)] ?? getRowDiscountPercent(item),
+        }));
+        const ordered = copyQuoteLineDiscounts(
+          sortByQuoteLineOrder(extractContractDetails(c), quoteLinesWithDiscount),
+          quoteLinesWithDiscount
+        );
+        setConvertedContract(withContractDetails(c, ordered));
         setIsContractModalOpen(true);
       } catch (openError) {
         console.error('Open contract after convert error:', openError);

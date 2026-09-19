@@ -16,6 +16,14 @@ import {
   normalizePaginatedResponse,
   type PaginatedResponse,
 } from '../utils/paginatedResponse';
+import {
+  copyQuoteLineDiscounts,
+  extractContractDetails,
+  extractQuoteDetails,
+  sortByQuoteLineOrder,
+  sortByStoredLineOrder,
+  withContractDetails,
+} from '../utils/lineItemOrder';
 
 export interface CreateContractDetailRequest {
   ItemId: number;
@@ -223,6 +231,28 @@ function buildContractsEndpoint(query?: ContractListQuery): string {
   return qs ? `/contracts?${qs}` : '/contracts';
 }
 
+async function alignContractDetailsWithSourceQuote(contract: Contract): Promise<Contract> {
+  const details = sortByStoredLineOrder(extractContractDetails(contract));
+  if (details.length === 0) return contract;
+
+  const sourceQuoteId = Number(
+    (contract as { SourceQuoteId?: number | null }).SourceQuoteId ??
+      (contract as { sourceQuoteId?: number | null }).sourceQuoteId
+  );
+  let ordered = details;
+  if (Number.isFinite(sourceQuoteId) && sourceQuoteId > 0) {
+    try {
+      const { quoteService } = await import('./quoteService');
+      const quote = await quoteService.getByIdAsync(sourceQuoteId);
+      const quoteDetails = extractQuoteDetails(quote);
+      ordered = copyQuoteLineDiscounts(sortByQuoteLineOrder(details, quoteDetails), quoteDetails);
+    } catch {
+      ordered = details;
+    }
+  }
+  return withContractDetails(contract, ordered);
+}
+
 export const contractService = {
   async getPageAsync(query?: ContractListQuery): Promise<PaginatedResponse<Contract>> {
     const raw = await apiClient.get<Contract[] | PaginatedResponse<Contract>>(
@@ -243,7 +273,8 @@ export const contractService = {
   },
 
   async getByIdAsync(id: number): Promise<Contract> {
-    return apiClient.get<Contract>(`/contracts/${id}`);
+    const raw = await apiClient.get<Contract>(`/contracts/${id}`);
+    return alignContractDetailsWithSourceQuote(raw);
   },
 
   async listAsync(query: ContractListQuery): Promise<Contract[]> {
