@@ -19,19 +19,19 @@ describe('resolveImageExportAlignment', () => {
     ).toBe('left');
   });
 
-  it('paragraf text-align center olsa bile varsayılan olarak sola hizalar', () => {
+  it('hiçbir hizalama bilgisi yoksa "none" döner (paragrafın kendi hizasına uyar)', () => {
     expect(
       resolveImageExportAlignment({
         align: 'none',
         wrapperStyle: '',
         containerStyle: 'width: 150px; height: auto; cursor: pointer;',
       })
-    ).toBe('left');
+    ).toBe('none');
   });
 });
 
 describe('prepareTemplateContentForExport', () => {
-  it('ortalanmış paragraftaki logoyu PDF için sola hizalar', () => {
+  it('hizası belirtilmemiş logoyu sola zorlamaz, ata paragrafın hizasını değiştirmez', () => {
     const content = {
       type: 'doc',
       content: [
@@ -54,6 +54,40 @@ describe('prepareTemplateContentForExport', () => {
           type: 'heading',
           attrs: { level: 1, textAlign: 'center' },
           content: [{ type: 'text', text: 'KİRALAMA SÖZLEŞMESİ' }],
+        },
+      ],
+    };
+
+    const exported = prepareTemplateContentForExport(content) as {
+      content: Array<{ attrs?: Record<string, unknown>; content?: Array<{ attrs?: Record<string, unknown> }> }>;
+    };
+
+    const paragraph = exported.content[0];
+    const image = paragraph.content?.[0]?.attrs;
+    expect(image?.align).toBe('none');
+    expect(String(image?.style)).toContain('display: inline-block');
+    expect(image?.src).toBe('image:42');
+    // Editörde görüldüğü gibi paragrafın kendi hizası korunur, export sırasında değiştirilmez
+    expect(paragraph.attrs?.textAlign).toBe('center');
+  });
+
+  it('açıkça sola hizalanmış logoyu float: left ile dışa aktarır', () => {
+    const content = {
+      type: 'doc',
+      content: [
+        {
+          type: 'paragraph',
+          content: [
+            {
+              type: 'imageResize',
+              attrs: {
+                src: 'blob:local',
+                width: 150,
+                align: 'left',
+                'data-image-id': '42',
+              },
+            },
+          ],
         },
       ],
     };

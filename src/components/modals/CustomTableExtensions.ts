@@ -4,7 +4,7 @@ import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 
 export const BORDERLESS_STYLE =
-  'border: none !important; border-width: 0 !important; border-style: none !important; border-spacing: 0 !important; border-collapse: separate !important; box-shadow: none !important; outline: none !important;';
+  'border: none !important; border-width: 0 !important; border-style: none !important; border-spacing: 0 !important; box-shadow: none !important; outline: none !important;';
 
 function appendBorderlessStyle(existing: string | null | undefined): string {
   const base = (existing || '').trim();
@@ -129,8 +129,8 @@ export function resolveImageExportAlignment(
   if (/margin\s*:\s*0\s+0\s+0\s+auto/i.test(containerStyle)) return 'right';
   if (/margin\s*:\s*0\s+auto/i.test(containerStyle)) return 'center';
 
-  // Editörde inline görsel varsayılanı sola yaslı görünür
-  return 'left';
+  // Hizası belirtilmemiş görsel editörde paragrafın hizasına uyar (inline-block); PDF de aynısını yapar
+  return 'none';
 }
 
 function buildImageBlockAlignStyle(
@@ -159,27 +159,6 @@ function buildImageBlockAlignStyle(
   return parts.join('; ') + ';';
 }
 
-function syncTextAlignForImageExport(
-  paragraph: TemplateWalkNode | undefined,
-  cell: TemplateWalkNode | undefined,
-  align: ImageExportAlignment
-) {
-  if (paragraph?.attrs) {
-    paragraph.attrs.textAlign = align;
-  }
-
-  if (!cell?.attrs) return;
-
-  const rawStyle = String(cell.attrs.style || '')
-    .replace(/text-align\s*:\s*[^;]+;?/gi, '')
-    .replace(/;\s*;/g, ';')
-    .trim()
-    .replace(/^;|;$/g, '')
-    .trim();
-
-  cell.attrs.style = rawStyle ? `${rawStyle}; text-align: ${align}` : `text-align: ${align}`;
-}
-
 function ensureTableCellExportStyle(node: TemplateWalkNode) {
   if (node.type !== 'tableCell' && node.type !== 'tableHeader') return;
   if (!node.attrs) node.attrs = {};
@@ -194,14 +173,6 @@ function ensureTableCellExportStyle(node: TemplateWalkNode) {
   }
 
   node.attrs.style = style;
-}
-
-function ensureTableExportStyle(node: TemplateWalkNode) {
-  if (node.type !== 'table' || !node.attrs) return;
-  const style = String(node.attrs.style || '');
-  if (!/width\s*:/i.test(style)) {
-    node.attrs.style = style ? `${style}; width: 100%` : 'width: 100%';
-  }
 }
 
 function extractImageWidth(attrs: Record<string, unknown>): string | null {
@@ -245,9 +216,7 @@ function buildImageExportStyle(
 
 function normalizeImageNodeForExport(
   node: { attrs?: Record<string, unknown> },
-  insideTableCell: boolean,
-  paragraph?: TemplateWalkNode,
-  cell?: TemplateWalkNode
+  insideTableCell: boolean
 ) {
   if (!node.attrs) node.attrs = {};
 
@@ -262,7 +231,6 @@ function normalizeImageNodeForExport(
   if (insideTableCell) {
     node.attrs.align = align;
     node.attrs.style = buildImageBlockAlignStyle(node.attrs, align);
-    syncTextAlignForImageExport(paragraph, cell, align);
     return;
   }
 
@@ -295,23 +263,20 @@ export function prepareTemplateContentForExport(content: unknown): unknown {
   const walkNode = (node: TemplateWalkNode, ancestors: TemplateWalkNode[]) => {
     if (!node || typeof node !== 'object') return;
 
-    const cell = [...ancestors]
-      .reverse()
-      .find((ancestor) => ancestor.type === 'tableCell' || ancestor.type === 'tableHeader');
-    const paragraph = [...ancestors].reverse().find((ancestor) => ancestor.type === 'paragraph');
-    const insideTableCell = Boolean(cell);
+    const insideTableCell = ancestors.some(
+      (ancestor) => ancestor.type === 'tableCell' || ancestor.type === 'tableHeader'
+    );
 
     if (node.type === 'tableCell' || node.type === 'tableHeader') {
       ensureTableCellExportStyle(node);
     }
 
     if ((node.type === 'image' || node.type === 'imageResize') && node.attrs) {
-      normalizeImageNodeForExport(node, insideTableCell, paragraph, cell);
+      normalizeImageNodeForExport(node, insideTableCell);
     }
 
     if (node.type === 'table') {
       if (!node.attrs) node.attrs = {};
-      ensureTableExportStyle(node);
       const strippedStyle = stripVerticalTableMargins(node.attrs.style as string | undefined);
       if (strippedStyle) {
         node.attrs.style = strippedStyle;

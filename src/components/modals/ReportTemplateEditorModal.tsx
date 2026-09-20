@@ -18,6 +18,9 @@ import {
   LINE_HEIGHT_OPTIONS,
   getActiveLineHeight,
 } from './LineHeightExtension';
+import { EditorPagination, editorPaginationPluginKey } from './EditorPaginationExtension';
+import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
+import { useDocumentTheme } from '../../hooks/useDocumentTheme';
 import {
   DEFAULT_PAGE_MARGINS,
   getPageMargins,
@@ -64,6 +67,8 @@ export default function ReportTemplateEditorModal({
   const [pageMargins, setPageMargins] = useState<PageMargins>(DEFAULT_PAGE_MARGINS);
   const [, setToolbarTick] = useState(0);
 
+  useDocumentTheme();
+
   const editor = useEditor({
     extensions: [
       StarterKit,
@@ -78,6 +83,8 @@ export default function ReportTemplateEditorModal({
       }),
       Underline,
       LineHeight,
+      EditorPagination,
+      EditorWidgetPreview.configure({ context: 'report' }),
     ],
     content: template?.Content || {
       type: 'doc',
@@ -122,6 +129,11 @@ export default function ReportTemplateEditorModal({
       setPageMargins(getPageMargins(template.Content));
     }
   }, [template]);
+
+  useEffect(() => {
+    if (!editor?.view) return;
+    editor.view.dispatch(editor.state.tr.setMeta(editorPaginationPluginKey, { refresh: true }));
+  }, [editor, pageMargins]);
 
   const insertPlaceholder = (key: string) => {
     if (!editor) return;
@@ -406,7 +418,7 @@ export default function ReportTemplateEditorModal({
 
         <div className="template-editor-workspace flex-1 p-2 md:p-4 flex justify-center overflow-auto min-h-0">
           <div
-            className="template-editor-paper text-text-primary my-2"
+            className="template-editor-paper doc-root my-2"
             style={getPageMarginsPaperStyle(pageMargins)}
           >
             <EditorContent editor={editor} />

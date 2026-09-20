@@ -16,6 +16,14 @@ import {
   normalizePaginatedResponse,
   type PaginatedResponse,
 } from '../utils/paginatedResponse';
+import {
+  copyQuoteLineDiscounts,
+  extractContractDetails,
+  extractQuoteDetails,
+  sortByQuoteLineOrder,
+  sortByStoredLineOrder,
+  withContractDetails,
+} from '../utils/lineItemOrder';
 
 export interface CreateContractDetailRequest {
   ItemId: number;
@@ -23,6 +31,8 @@ export interface CreateContractDetailRequest {
   RentedQuantity: number;
   /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
   ItemCodeOverride?: string | null;
+  /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
+  Iskonto?: number;
 }
 
 export interface CreateContractManualDetailRequest {
@@ -30,6 +40,8 @@ export interface CreateContractManualDetailRequest {
   Description: string;
   RentedQuantity: number;
   UnitPriceSnapshot: number;
+  /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
+  Iskonto?: number;
 }
 
 export type CreateContractDetailPayload = CreateContractDetailRequest | CreateContractManualDetailRequest;
@@ -68,6 +80,8 @@ export interface UpdateContractRequest {
   /** Kiralama sözleşmesi planlanan bitiş (ISO 8601) */
   PlannedEndDate?: string;
   Language?: 'TR' | 'EN';
+  /** Mevcut satırların iskontosunu güncellemek için */
+  details?: Array<{ DetailId: number; Iskonto: number }>;
 }
 
 export interface UpdateContractResponse {
@@ -103,6 +117,7 @@ export type AddContractDetailInventoryRequest = {
   ItemCodeOverride?: string | null;
   /** Kiralama sözleşmesi için: gönderilmezse backend "şimdi" kabul eder */
   EffectiveStartDate?: string;
+  Iskonto?: number;
 };
 
 export type AddContractDetailManualRequest = {
@@ -110,6 +125,7 @@ export type AddContractDetailManualRequest = {
   Description: string;
   RentedQuantity: number;
   UnitPriceSnapshot?: number;
+  Iskonto?: number;
 };
 
 export type AddContractDetailRequest = AddContractDetailInventoryRequest | AddContractDetailManualRequest;
@@ -215,6 +231,28 @@ function buildContractsEndpoint(query?: ContractListQuery): string {
   return qs ? `/contracts?${qs}` : '/contracts';
 }
 
+async function alignContractDetailsWithSourceQuote(contract: Contract): Promise<Contract> {
+  const details = sortByStoredLineOrder(extractContractDetails(contract));
+  if (details.length === 0) return contract;
+
+  const sourceQuoteId = Number(
+    (contract as { SourceQuoteId?: number | null }).SourceQuoteId ??
+      (contract as { sourceQuoteId?: number | null }).sourceQuoteId
+  );
+  let ordered = details;
+  if (Number.isFinite(sourceQuoteId) && sourceQuoteId > 0) {
+    try {
+      const { quoteService } = await import('./quoteService');
+      const quote = await quoteService.getByIdAsync(sourceQuoteId);
+      const quoteDetails = extractQuoteDetails(quote);
+      ordered = copyQuoteLineDiscounts(sortByQuoteLineOrder(details, quoteDetails), quoteDetails);
+    } catch {
+      ordered = details;
+    }
+  }
+  return withContractDetails(contract, ordered);
+}
+
 export const contractService = {
   async getPageAsync(query?: ContractListQuery): Promise<PaginatedResponse<Contract>> {
     const raw = await apiClient.get<Contract[] | PaginatedResponse<Contract>>(
@@ -235,7 +273,8 @@ export const contractService = {
   },
 
   async getByIdAsync(id: number): Promise<Contract> {
-    return apiClient.get<Contract>(`/contracts/${id}`);
+    const raw = await apiClient.get<Contract>(`/contracts/${id}`);
+    return alignContractDetailsWithSourceQuote(raw);
   },
 
   async listAsync(query: ContractListQuery): Promise<Contract[]> {

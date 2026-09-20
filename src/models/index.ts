@@ -345,6 +345,8 @@ export interface ContractDetail {
   ItemCode?: string;
   /** Satır bazlı ürün kodu override (envanter satırları için). */
   ItemCodeOverride?: string | null;
+  /** Satır bazlı iskonto yüzdesi (0–100). */
+  Iskonto?: number;
   Contract?: Contract;
   Item?: Inventory;
 }
@@ -551,6 +553,8 @@ export interface InventoryContractLineItem {
   OverrideUnitPrice?: number;
   /** UI state: kiralama aylık fiyat override */
   OverrideMonthlyPrice?: number;
+  /** Satır iskontosu (%). Zeyilname ürün eklemede ilk değer için. */
+  Iskonto?: number;
 }
 
 export interface ManualContractLineItem {
@@ -1046,6 +1050,8 @@ export interface QuoteDetail {
   ItemCodeOverride?: string | null;
   ItemNameEn?: string | null;
   CategoryId?: number;
+  /** Satır bazlı iskonto yüzdesi (0–100). */
+  Iskonto?: number;
 }
 
 // Teklif Detay Item (UI için)
@@ -1069,7 +1075,7 @@ export type QuoteLineItem = InventoryQuoteLineItem | ManualQuoteLineItem;
 
 export interface InventoryQuoteLineItem {
   kind: 'inventory';
-  QuoteDetailId: number;
+  QuoteDetailId?: number;
   Item?: Inventory;
   ItemId: number;
   Quantity: number;
@@ -1078,9 +1084,9 @@ export interface InventoryQuoteLineItem {
   MonthlyPriceOverride?: number | null;
   PriceSource: PriceSource;
   /** UI state: SALE için birim fiyat override */
-  OverrideUnitPrice?: number;
+  OverrideUnitPrice?: number | null;
   /** UI state: RENTAL için aylık fiyat override */
-  OverrideMonthlyPrice?: number;
+  OverrideMonthlyPrice?: number | null;
   ItemName: string;
   /** UI state: satır bazlı ürün adı override */
   ItemNameOverride?: string | null;
@@ -1356,6 +1362,66 @@ export interface Addendum {
   ApprovedByName?: string | null;
   RejectedByUserId?: number | null;
   RejectedByName?: string | null;
+  /** Bu kayıt hangi zeyilnameyi tersine çevirir */
+  ReversesAddendumId?: number | null;
+  /** Bu kaydı hangi zeyilname tersine çevirdi */
+  ReversedByAddendumId?: number | null;
+  ReversedAt?: string | null;
+  /** ReversesAddendumId != null */
+  IsReversal: boolean;
+  /** ReversedByAddendumId != null */
+  IsReversed: boolean;
+  ReversesAddendumNumber?: number | null;
+  ReversesAddendumCode?: string | null;
+  ReversedByAddendumNumber?: number | null;
+  ReversedByAddendumCode?: string | null;
   details?: AddendumDetail[];
   Details?: AddendumDetail[];
+}
+
+/** GET /addendums/:id/reversal-preview */
+export interface AddendumReversalPreviewDetail {
+  ChangeType: ChangeType;
+  ContractDetailId?: number | null;
+  QuantityChange?: number | null;
+  ItemId?: number | null;
+  NewUnitPrice?: number | null;
+  NewMonthlyOverride?: number | null;
+  ItemName?: string | null;
+  ItemCode?: string | null;
+  ContractDetailDescription?: string | null;
+  Description?: string | null;
+}
+
+export interface AddendumReversalWarning {
+  sourceDetailId: number;
+  message: string;
+}
+
+export interface AddendumReversalSkipped {
+  sourceDetailId: number;
+  changeType: string;
+  reason: string;
+}
+
+export interface AddendumReversalPreview {
+  sourceAddendumId: number;
+  sourceAddendumNumber: number | null;
+  sourceAddendumCode: string | null;
+  reversalDetails: AddendumReversalPreviewDetail[];
+  warnings: AddendumReversalWarning[];
+  skipped: AddendumReversalSkipped[];
+}
+
+export interface CreateAddendumReversalRequest {
+  Reason: string;
+  EffectiveDate?: string;
+  AddendumCode?: string;
+}
+
+export interface CreateAddendumReversalResult {
+  addendum: Addendum;
+  details: AddendumDetail[];
+  warnings: AddendumReversalWarning[];
+  skipped: AddendumReversalSkipped[];
 }

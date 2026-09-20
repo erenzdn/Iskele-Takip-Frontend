@@ -2,9 +2,13 @@ import { apiClient } from './apiClient';
 import { ContractQuoteType, Quote, QuoteDetail, QuoteStatus } from '../models';
 import { CreateSiteRequest } from './siteService';
 import { normalizePaginatedResponse, unwrapListItems, type PaginatedResponse } from '../utils/paginatedResponse';
+import { extractQuoteDetails, sortByStoredLineOrder } from '../utils/lineItemOrder';
 
 export interface CreateQuoteDetailRequest {
-  ItemId: number;
+  /** Mevcut satır güncellenirken korunur; yeni satırlarda gönderilmez. */
+  QuoteDetailId?: number;
+  /** Manuel kalemlerde bulunmaz. */
+  ItemId?: number;
   Quantity: number;
   is_manual?: boolean;
   Description?: string;
@@ -13,15 +17,19 @@ export interface CreateQuoteDetailRequest {
   /** Envanter satırları için satır bazlı ürün kodu override (boş/whitespace => null). */
   ItemCodeOverride?: string | null;
   /** SALE: satır bazlı birim fiyat override */
-  OverrideUnitPrice?: number;
+  OverrideUnitPrice?: number | null;
   /** RENTAL: satır bazlı aylık fiyat override */
-  OverrideMonthlyPrice?: number;
+  OverrideMonthlyPrice?: number | null;
   /**
    * Manuel kalemler için mevcut mantık korunur:
    * - is_manual: true, Description, Quantity, DailyPrice
    * Backend bunu UnitPriceSnapshot olarak saklar.
    */
   DailyPrice?: number;
+  /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
+  Iskonto?: number;
+  /** 1 tabanlı görünen sıra; dönüşümde sözleşmeye taşınması için gönderilir. */
+  LineOrder?: number;
 }
 
 export interface CreateQuoteRequest {
@@ -170,6 +178,7 @@ function normalizeQuote(raw: any): Quote {
     isConvertedRaw === 1 ||
     isConvertedRaw === 'true' ||
     (convertedContractId != null && convertedContractId !== '');
+  const details = sortByStoredLineOrder(extractQuoteDetails(raw));
   return {
     ...(raw as Quote),
     ConvertedContractId:
@@ -179,6 +188,12 @@ function normalizeQuote(raw: any): Quote {
     ConvertedAt: raw?.ConvertedAt ?? raw?.convertedAt ?? null,
     IsConverted: isConverted,
     RentalDurationDays: raw?.RentalDurationDays ?? raw?.rentalDurationDays ?? null,
+    ...(details.length > 0
+      ? {
+          QuoteDetails: details as QuoteDetail[],
+          details,
+        }
+      : {}),
   };
 }
 
@@ -392,14 +407,10 @@ export const quoteService = {
   async cloneQuoteAsync(id: number): Promise<CloneQuoteResponse> {
     const raw = await apiClient.post<any>(`/quotes/${id}/clone`, {});
     const normalized = normalizeQuote(raw);
-    const details: QuoteDetail[] | undefined = Array.isArray(raw?.details)
-      ? raw.details
-      : Array.isArray(raw?.QuoteDetails)
-        ? raw.QuoteDetails
-        : undefined;
+    const details = extractQuoteDetails(normalized);
     return {
       ...(normalized as Quote),
-      QuoteDetails: details ?? normalized.QuoteDetails,
+      QuoteDetails: (details as QuoteDetail[]) ?? normalized.QuoteDetails,
       details,
       message: typeof raw?.message === 'string' ? raw.message : 'Teklif kopyalandi.',
     } as CloneQuoteResponse;

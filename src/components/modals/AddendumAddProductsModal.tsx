@@ -1,12 +1,20 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PlusIcon, TrashIcon, XIcon } from '@phosphor-icons/react';
-import type { ContractQuoteType, CurrencyCode, Inventory, Warehouse } from '../../models';
+import type {
+  ContractLineItem,
+  ContractQuoteType,
+  CurrencyCode,
+  Inventory,
+  Warehouse,
+} from '../../models';
 import { addendumService } from '../../services/addendumService';
 import { inventoryService } from '../../services/inventoryService';
+import { applyWarehouseIdToLines } from '../../utils/addendum';
+import { resolveAddendumAddedItemPricing } from '../../utils/addendumAddPricing';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import {
-  clampDiscountPercent,
+  clampDiscountRange,
   discountPercentFromNet,
   lineNetFromGross,
 } from '../../utils/lineDiscount';
@@ -15,6 +23,7 @@ import { isStockErrorMessage } from '../../utils/parseStockError';
 import { toast } from '../../hooks/useToast';
 import ProductPickerModal from './ProductPickerModal';
 import StockErrorPanel from '../StockErrorPanel';
+import ContractLinesReferenceDrawer from '../contracts/ContractLinesReferenceDrawer';
 
 type StagingLine = {
   key: string;
@@ -33,28 +42,13 @@ interface AddendumAddProductsModalProps {
   items: Inventory[];
   warehouses: Warehouse[];
   currency?: CurrencyCode;
+  /** Aynı ürün sözleşmede varsa ilk fiyat buradan gelir */
+  contractLines?: ContractLineItem[];
+  /** Sözleşme genel iskontosu; yeni üründe ve satır iskontosu yoksa kullanılır */
+  contractDiscountPercent?: number;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
   zIndexClass?: string;
-}
-
-function unitPriceForInventory(
-  inv: Inventory,
-  cur: CurrencyCode,
-  cType: ContractQuoteType
-): number {
-  if (cType === 'SALE') {
-    return cur === 'EUR'
-      ? inv.UnitPriceEur ?? 0
-      : cur === 'USD'
-        ? inv.UnitPriceUsd ?? 0
-        : inv.UnitPrice ?? 0;
-  }
-  return cur === 'EUR'
-    ? (inv.MonthlyListPriceEur ?? 0) / 30
-    : cur === 'USD'
-      ? (inv.MonthlyListPriceUsd ?? 0) / 30
-      : (inv.MonthlyListPrice || 0) / 30;
 }
 
 function parseDecimalInput(raw: string): number | null {
@@ -71,6 +65,8 @@ export default function AddendumAddProductsModal({
   items,
   warehouses,
   currency = 'TRY',
+  contractLines = [],
+  contractDiscountPercent = 0,
   onClose,
   onSaved,
   zIndexClass = 'z-[75]',
@@ -80,6 +76,7 @@ export default function AddendumAddProductsModal({
   const [defaultWarehouseId, setDefaultWarehouseId] = useState<number | ''>('');
   const [globalIskonto, setGlobalIskonto] = useState(0);
   const [showPicker, setShowPicker] = useState(false);
+  const [showContractPeek, setShowContractPeek] = useState(false);
   const [isBusy, setIsBusy] = useState(false);
   const [stockError, setStockError] = useState<string | null>(null);
   const [lineNetDrafts, setLineNetDrafts] = useState<Record<string, string>>({});
@@ -91,8 +88,9 @@ export default function AddendumAddProductsModal({
     if (!open) return;
     setLines([]);
     setDefaultWarehouseId('');
-    setGlobalIskonto(0);
+    setGlobalIskonto(clampDiscountRange(contractDiscountPercent));
     setShowPicker(false);
+    setShowContractPeek(false);
     setIsBusy(false);
     setStockError(null);
     setLineNetDrafts({});
@@ -104,11 +102,11 @@ export default function AddendumAddProductsModal({
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !showPicker && !isBusy) onClose();
+      if (e.key === 'Escape' && !showPicker && !showContractPeek && !isBusy) onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, showPicker, isBusy, onClose]);
+  }, [open, showPicker, showContractPeek, isBusy, onClose]);
 
   const pickedItemIds = useMemo(() => new Set(lines.map((l) => l.item.ItemId)), [lines]);
 
@@ -137,7 +135,14 @@ export default function AddendumAddProductsModal({
       return 'removed' as const;
     }
     const key = `add-${item.ItemId}-${Date.now()}`;
-    const unitPrice = unitPriceForInventory(item, currency, contractType);
+    const pricing = resolveAddendumAddedItemPricing({
+      item,
+      contractType,
+      currency,
+      contractLines,
+      preferredWarehouseId: defaultWarehouseId,
+      fallbackDiscountPercent: globalIskonto,
+    });
     setLines((prev) => [
       ...prev,
       {
@@ -145,11 +150,23 @@ export default function AddendumAddProductsModal({
         item,
         quantity: Math.max(1, quantity),
         warehouseId: defaultWarehouseId,
-        unitPrice,
-        discountPercent: globalIskonto,
+        unitPrice: pricing.unitPrice,
+        discountPercent: pricing.discountPercent,
       },
     ]);
     return 'added' as const;
+  };
+
+  const applyWarehouseToAllLines = (warehouseId: number, { notify }: { notify?: boolean } = {}) => {
+    setLines((prev) => applyWarehouseIdToLines(prev, warehouseId));
+    if (notify) toast.success('Depo tüm satırlara uygulandı');
+  };
+
+  const handleDefaultWarehouseChange = (raw: string) => {
+    const nextId = Number(raw) || '';
+    setDefaultWarehouseId(nextId);
+    if (!nextId) return;
+    applyWarehouseToAllLines(nextId);
   };
 
   const applyDefaultWarehouseToAll = () => {
@@ -157,12 +174,11 @@ export default function AddendumAddProductsModal({
       toast.warning('Önce varsayılan depo seçin');
       return;
     }
-    setLines((prev) => prev.map((l) => ({ ...l, warehouseId: defaultWarehouseId })));
-    toast.success('Depo tüm satırlara uygulandı');
+    applyWarehouseToAllLines(defaultWarehouseId, { notify: true });
   };
 
   const applyGlobalIskontoToAll = (pct: number) => {
-    const clamped = clampDiscountPercent(pct);
+    const clamped = clampDiscountRange(pct);
     setGlobalIskonto(clamped);
     setLines((prev) => prev.map((l) => ({ ...l, discountPercent: clamped })));
     setLineNetDrafts({});
@@ -269,7 +285,7 @@ export default function AddendumAddProductsModal({
 
   const modalTree = (
     <div className={`fixed inset-0 ${zIndexClass} flex items-center justify-center p-4`}>
-      <div className="absolute inset-0 bg-black/60" onClick={() => !isBusy && onClose()} aria-hidden />
+      <div className="absolute inset-0 bg-black/60" onClick={() => !isBusy && !showPicker && !showContractPeek && onClose()} aria-hidden />
       <div
         className="relative w-full max-w-6xl max-h-[92vh] flex flex-col rounded-2xl border border-background-border bg-background-panel shadow-2xl"
         role="dialog"
@@ -311,7 +327,7 @@ export default function AddendumAddProductsModal({
               </label>
               <select
                 value={defaultWarehouseId}
-                onChange={(e) => setDefaultWarehouseId(Number(e.target.value) || '')}
+                onChange={(e) => handleDefaultWarehouseChange(e.target.value)}
                 className="input w-full"
                 disabled={isBusy}
               >
@@ -339,7 +355,7 @@ export default function AddendumAddProductsModal({
                 type="number"
                 min={0}
                 max={100}
-                step={0.01}
+                step="any"
                 value={globalIskonto}
                 onChange={(e) => {
                   const v = parseFloat(e.target.value);
@@ -350,6 +366,15 @@ export default function AddendumAddProductsModal({
               />
             </div>
             <div className="flex-1" />
+            <button
+              type="button"
+              className="btn-secondary text-sm"
+              disabled={isBusy}
+              onClick={() => setShowContractPeek(true)}
+            >
+              Sözleşme ürünleri
+              {contractLines.length > 0 ? ` (${contractLines.length})` : ''}
+            </button>
             <button
               type="button"
               className="btn-primary text-sm inline-flex items-center gap-1.5"
@@ -497,7 +522,7 @@ export default function AddendumAddProductsModal({
                             type="number"
                             min={0}
                             max={100}
-                            step={0.01}
+                            step="any"
                             className="input w-20 text-right ml-auto"
                             disabled={isBusy}
                             value={
@@ -510,7 +535,7 @@ export default function AddendumAddProductsModal({
                               const v = parseFloat(raw);
                               if (Number.isFinite(v)) {
                                 updateLine(line.key, {
-                                  discountPercent: clampDiscountPercent(v),
+                                  discountPercent: clampDiscountRange(v),
                                 });
                                 setLineNetDrafts((prev) => {
                                   if (!(line.key in prev)) return prev;
@@ -615,8 +640,18 @@ export default function AddendumAddProductsModal({
         quotePricing={isRental ? 'rental' : 'sale'}
         currency={currency}
         pickedItemIds={pickedItemIds}
-        zIndexClass="z-[80]"
+        zIndexClass="z-[90]"
         onItemSelect={(item, quantity) => addOrToggleItem(item, quantity)}
+      />
+      <ContractLinesReferenceDrawer
+        open={showContractPeek}
+        onClose={() => setShowContractPeek(false)}
+        lines={contractLines}
+        contractType={contractType}
+        currency={currency}
+        highlightedItemIds={pickedItemIds}
+        highlightLabel="Ekleniyor"
+        zIndexClass="z-[85]"
       />
     </div>
   );

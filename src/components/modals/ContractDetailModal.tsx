@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { CheckIcon, ClipboardIcon, DotsSixVerticalIcon, XIcon } from '@phosphor-icons/react';
 import { useNavigate } from 'react-router-dom';
 import {
+  Addendum,
   AuditLog,
   Contract,
   ContractQuoteType,
@@ -38,7 +39,7 @@ import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
-import { discountPercentFromNet, lineDiscountAmount, lineNetFromGross } from '../../utils/lineDiscount';
+import { clampDiscountRange, discountPercentFromNet, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -51,7 +52,7 @@ import SettleNonReturnModal from './SettleNonReturnModal';
 import InventoryDetailModal from './InventoryDetailModal';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import { addendumService } from '../../services/addendumService';
-import { buildContractItemDisplayEntries, type AddendumLineSource } from '../../utils/addendum';
+import { buildAddendumExtrasDisplayGroups, buildContractItemDisplayEntries, getChangeTypeLabel, getLineAddendumBadgeLabel, type AddendumLineSource, type LineAddendumEvent } from '../../utils/addendum';
 import {
   filterContractTemplatesByKind,
   partitionContractTemplates,
@@ -69,12 +70,51 @@ import {
   validateSiteSelection,
 } from '../../utils/siteSelection';
 import { LINE_ITEM_COL, LINE_ITEM_COL_SPAN } from '../../constants/lineItemTableColumns';
+import { normalizeContractDetailPrice } from '../../utils/linePriceMetadata';
+import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
+
+type InventoryLineItem = Extract<ContractLineItem, { kind: 'inventory' }>;
+
+function inventoryLineRowKey(item: InventoryLineItem, rowIndex: number): string {
+  return item.DetailId != null && item.DetailId > 0
+    ? `d-${item.DetailId}`
+    : `${item.ItemId}-${item.WarehouseId}-r${rowIndex}`;
+}
+
+function findInventoryLineByReturnKey(
+  items: ContractLineItem[],
+  key: string
+): InventoryLineItem | undefined {
+  if (key.startsWith('d-')) {
+    const detailId = Number(key.slice(2));
+    if (Number.isFinite(detailId)) {
+      const byDetail = items.find(
+        (i): i is InventoryLineItem => i.kind === 'inventory' && i.DetailId === detailId
+      );
+      if (byDetail) return byDetail;
+    }
+  }
+  const parts = key.split('-');
+  if (parts.length >= 2) {
+    const itemId = Number(parts[0]);
+    const warehouseId = Number(parts[1]);
+    if (Number.isFinite(itemId) && Number.isFinite(warehouseId)) {
+      return items.find(
+        (i): i is InventoryLineItem =>
+          i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
+      );
+    }
+  }
+  return undefined;
+}
+
+type ContractDetailTab = 'info' | 'return' | 'returns' | 'history' | 'addenda' | 'addendum-extras';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
   isNew: boolean;
   onClose: () => void;
-  initialTab?: 'info' | 'return' | 'returns' | 'history' | 'addenda';
+  initialTab?: ContractDetailTab;
   /** Yeni sözleşme: menüden gelen varsayılan tip (kiralama / satış sayfası) */
   defaultTypeForNew?: ContractQuoteType;
   /** true ise yeni kayıtta tip seçilemez (ayrı menü sayfaları) */
@@ -136,19 +176,15 @@ export default function ContractDetailModal({
   const [sitesLoading, setSitesLoading] = useState(false);
   const [isNewSiteMode, setIsNewSiteMode] = useState(false);
   const [newSiteForm, setNewSiteForm] = useState<NewSiteFormState>(EMPTY_NEW_SITE_FORM);
-  const [startDate, setStartDate] = useState(
-    new Date().toISOString().split('T')[0]
-  );
-  const [plannedEndDate, setPlannedEndDate] = useState(
-    new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-  );
+  const [startDate, setStartDate] = useState(() => todayDateInput());
+  const [plannedEndDate, setPlannedEndDate] = useState(() => addCalendarDays(todayDateInput(), 30));
   const [actualEndDate, setActualEndDate] = useState<string>('');
   const [contractItems, setContractItems] = useState<ContractLineItem[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | ''>('');
   const [isBusy, setIsBusy] = useState(false);
 
-  // İade işlemi state'leri - returnDetailKey: "itemId-warehouseId" formatında
+  // İade işlemi state'leri - returnDetailKey: inventoryLineRowKey (DetailId veya itemId-warehouseId-rN)
   const [returnDetailKey, setReturnDetailKey] = useState<string | null>(null);
   const [returnWarehouseId, setReturnWarehouseId] = useState<number | ''>('');
   /** İade miktarı inputu – sadece rakam */
@@ -175,7 +211,7 @@ export default function ContractDetailModal({
   const [isTemplateEditorOpen, setIsTemplateEditorOpen] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<ContractTemplate | null>(null);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
-  const [activeTab, setActiveTab] = useState<'info' | 'return' | 'returns' | 'history' | 'addenda'>(
+  const [activeTab, setActiveTab] = useState<ContractDetailTab>(
     initialTab
   );
   const [pendingOpenAddendumCreate, setPendingOpenAddendumCreate] = useState(false);
@@ -195,12 +231,17 @@ export default function ContractDetailModal({
   const [archiveReason, setArchiveReason] = useState('');
   const [archiveReasonError, setArchiveReasonError] = useState<string | null>(null);
   const [showUnarchiveConfirm, setShowUnarchiveConfirm] = useState(false);
+  const [showCloseConfirm, setShowCloseConfirm] = useState(false);
   const [iskonto, setIskonto] = useState<number>(0);
-  /** Satır bazlı iskonto (%) - key: "ItemId-WarehouseId". Üstteki iskonto değişince tüm satırlara yansır; satırda tek tek de düzenlenebilir. */
+  /** Satır bazlı iskonto (%) - key: "ItemId-WarehouseId" | `man-${ClientId}`. */
   const [itemIskonto, setItemIskonto] = useState<Record<string, number>>({});
+  const [iskontoInputs, setIskontoInputs] = useState<Record<string, string>>({});
+  const [globalIskontoInput, setGlobalIskontoInput] = useState<string | null>(null);
   /** İskontolu satır tutarı taslağı. key: "ItemId-WarehouseId" | `man-${ClientId}` */
   const [lineNetInputs, setLineNetInputs] = useState<Record<string, string>>({});
   const [vatRate, setVatRate] = useState<number>(20);
+  /** Kiralama alt toplamları varsayılan 30 gün; true olunca planlanan sürenin tam tutarı açılır. */
+  const [showFullContractPrice, setShowFullContractPrice] = useState(false);
   const [contractCode, setContractCode] = useState<string>('');
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
   const [contractType, setContractType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
@@ -235,6 +276,7 @@ export default function ContractDetailModal({
   /** Depo stok cache: key = "itemId-warehouseId", value = müsait stok miktarı */
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
   const [saveStockError, setSaveStockError] = useState<string | null>(null);
+  const [contractPriceError, setContractPriceError] = useState<string | null>(null);
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
@@ -242,6 +284,17 @@ export default function ContractDetailModal({
   const [isAddingMaterialTable, setIsAddingMaterialTable] = useState(false);
   const [addendumLineSources, setAddendumLineSources] = useState<Map<number, AddendumLineSource>>(
     () => new Map()
+  );
+  const [addendumLineHistory, setAddendumLineHistory] = useState<Map<number, LineAddendumEvent[]>>(
+    () => new Map()
+  );
+  const [approvedAddenda, setApprovedAddenda] = useState<Addendum[]>([]);
+  const [addendumDisplayNoById, setAddendumDisplayNoById] = useState<Map<number, number>>(
+    () => new Map()
+  );
+  const [openHistoryDetailId, setOpenHistoryDetailId] = useState<number | null>(null);
+  const [historyPopoverPos, setHistoryPopoverPos] = useState<{ top: number; left: number } | null>(
+    null
   );
   const [showManualLineModal, setShowManualLineModal] = useState(false);
   const currentUser = useAuthStore((s) => s.user);
@@ -390,15 +443,45 @@ export default function ContractDetailModal({
     const id = contractId ?? contract?.ContractId;
     if (!id || isNew || !canViewContracts) {
       setAddendumLineSources(new Map());
+      setAddendumLineHistory(new Map());
+      setApprovedAddenda([]);
+      setAddendumDisplayNoById(new Map());
+      setOpenHistoryDetailId(null);
+      setHistoryPopoverPos(null);
       return;
     }
     try {
-      const sources = await addendumService.loadAddedLineSourcesAsync(id);
+      const { sources, history, addenda, displayNoByAddendumId } =
+        await addendumService.loadContractAddendumLineMapsAsync(id);
       setAddendumLineSources(sources);
+      setAddendumLineHistory(history);
+      setApprovedAddenda(addenda);
+      setAddendumDisplayNoById(displayNoByAddendumId);
     } catch (error) {
       console.error('Load addendum line sources error:', error);
       setAddendumLineSources(new Map());
+      setAddendumLineHistory(new Map());
+      setApprovedAddenda([]);
+      setAddendumDisplayNoById(new Map());
     }
+  };
+
+  const closeAddendumHistoryPopover = () => {
+    setOpenHistoryDetailId(null);
+    setHistoryPopoverPos(null);
+  };
+
+  const toggleAddendumHistoryPopover = (
+    detailId: number,
+    anchorEl: HTMLElement
+  ) => {
+    if (openHistoryDetailId === detailId) {
+      closeAddendumHistoryPopover();
+      return;
+    }
+    const rect = anchorEl.getBoundingClientRect();
+    setOpenHistoryDetailId(detailId);
+    setHistoryPopoverPos({ top: rect.bottom + 4, left: rect.left });
   };
 
   useEffect(() => {
@@ -460,8 +543,31 @@ export default function ContractDetailModal({
       setContractLogs([]);
       setContractReturns([]);
       setAddendumLineSources(new Map());
+      setAddendumLineHistory(new Map());
+      setApprovedAddenda([]);
+      setAddendumDisplayNoById(new Map());
+      closeAddendumHistoryPopover();
     }
   }, [contract?.ContractId, isNew, isRentalContract, canViewContracts]);
+
+  useEffect(() => {
+    if (openHistoryDetailId == null) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeAddendumHistoryPopover();
+    };
+    const onPointer = (e: MouseEvent) => {
+      const target = e.target as Element | null;
+      if (target?.closest?.('[data-addendum-history-popover]')) return;
+      if (target?.closest?.('[data-addendum-history-badge]')) return;
+      closeAddendumHistoryPopover();
+    };
+    document.addEventListener('keydown', onKey);
+    document.addEventListener('mousedown', onPointer);
+    return () => {
+      document.removeEventListener('keydown', onKey);
+      document.removeEventListener('mousedown', onPointer);
+    };
+  }, [openHistoryDetailId]);
 
   const loadTemplates = async () => {
     try {
@@ -520,6 +626,7 @@ export default function ContractDetailModal({
         setActualEndDate(source.ActualEndDate.split('T')[0]);
       }
       setIskonto((source as { Iskonto?: number }).Iskonto ?? 0);
+      setShowFullContractPrice(false);
       setVatRate((source as { VatRate?: number }).VatRate ?? 20);
       setContractCode((source as { ContractCode?: string }).ContractCode ?? '');
       setCurrency((source as { Currency?: string }).Currency === 'EUR' ? 'EUR' : (source as { Currency?: string }).Currency === 'USD' ? 'USD' : 'TRY');
@@ -528,15 +635,25 @@ export default function ContractDetailModal({
         setContractType(resolveContractQuoteType(source as Contract));
       }
       // Backend GET /contracts/:id "details" döndürür, ContractDetails değil
-      const details = (source as any).details ?? source.ContractDetails ?? [];
+      const details =
+        (source as any).details ??
+        source.ContractDetails ??
+        (source as any).contractDetails ??
+        [];
       if (details.length > 0) {
+        const priceErrors: string[] = [];
+        const globalIsk = (source as { Iskonto?: number }).Iskonto ?? 0;
         const items: ContractLineItem[] = details.map((detail: any) => {
+          const normalizedPrice = normalizeContractDetailPrice(detail);
+          if (normalizedPrice.error) priceErrors.push(normalizedPrice.error);
+          const unitPriceSnapshot = normalizedPrice.value ?? 0;
           const isManual = detail.IsManual === true || detail.is_manual === true || detail.IsManual === 1 || detail.is_manual === 1;
+          const lineIskonto = lineIskontoFromApi(detail, globalIsk);
           if (isManual) {
             return {
               kind: 'manual',
-              ClientId: `manual-${detail.DetailId ?? crypto.randomUUID()}`,
-              DetailId: detail.DetailId,
+              ClientId: `manual-${detail.DetailId ?? detail.detailId ?? crypto.randomUUID()}`,
+              DetailId: detail.DetailId ?? detail.detailId,
               SourceAddendumId:
                 (detail.AddendumId ??
                   detail.addendumId ??
@@ -551,26 +668,28 @@ export default function ContractDetailModal({
                   null) as number | null,
               IsManual: true,
               Description: String(detail.Description ?? detail.description ?? '').trim() || 'Manuel Kalem',
-              RentedQuantity: Number(detail.RentedQuantity ?? 1) || 1,
-              UnitPriceSnapshot: Number(detail.UnitPriceSnapshot ?? detail.unitPriceSnapshot ?? 0) || 0,
+              RentedQuantity: Number(detail.RentedQuantity ?? detail.rentedQuantity ?? 1) || 1,
+              UnitPriceSnapshot: unitPriceSnapshot,
               PriceUnit: (detail.PriceUnit ?? detail.priceUnit ?? (resolveContractQuoteType(source as Contract) === 'SALE' ? 'EACH' : 'DAY')) as any,
               PriceSource: (detail.PriceSource ?? detail.priceSource ?? 'MANUAL') as any,
             };
           }
-          const wh = warehouses.find((w) => w.WarehouseId === detail.WarehouseId);
+          const detailWarehouseId = detail.WarehouseId ?? detail.warehouseId;
+          const wh = warehouses.find((w) => w.WarehouseId === detailWarehouseId);
           return {
             kind: 'inventory',
-            DetailId: detail.DetailId,
-            ItemId: detail.ItemId,
-            WarehouseId: detail.WarehouseId ?? 0,
-            WarehouseName: wh?.WarehouseName ?? detail.WarehouseName ?? '',
-            RentedQuantity: detail.RentedQuantity,
-            ReturnedQuantity: detail.ReturnedQuantity,
-            UnitPriceSnapshot: Number(detail.UnitPriceSnapshot ?? detail.unitPriceSnapshot ?? 0) || 0,
+            DetailId: detail.DetailId ?? detail.detailId,
+            ItemId: detail.ItemId ?? detail.itemId,
+            WarehouseId: detailWarehouseId ?? 0,
+            WarehouseName: wh?.WarehouseName ?? detail.WarehouseName ?? detail.warehouseName ?? '',
+            RentedQuantity: detail.RentedQuantity ?? detail.rentedQuantity,
+            ReturnedQuantity: detail.ReturnedQuantity ?? detail.returnedQuantity,
+            UnitPriceSnapshot: unitPriceSnapshot,
             PriceUnit: (detail.PriceUnit ?? detail.priceUnit ?? (resolveContractQuoteType(source as Contract) === 'SALE' ? 'EACH' : 'DAY')) as any,
             MonthlyPriceOverride:
-              detail.MonthlyPriceOverride != null && Number.isFinite(Number(detail.MonthlyPriceOverride))
-                ? Number(detail.MonthlyPriceOverride)
+              (detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride) != null &&
+              Number.isFinite(Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride))
+                ? Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride)
                 : undefined,
             PriceSource: (detail.PriceSource ?? detail.priceSource ?? 'INVENTORY') as any,
             EffectiveStartDate: detail.EffectiveStartDate ?? detail.effectiveStartDate ?? undefined,
@@ -587,7 +706,7 @@ export default function ContractDetailModal({
                 detail.sourceAddendumNo ??
                 null) as number | null,
             Item: undefined,
-            ItemName: detail.ItemName ?? '',
+            ItemName: detail.ItemName ?? detail.itemName ?? '',
             ItemNameEn: detail.ItemNameEn ?? detail.itemNameEn ?? undefined,
             ItemCode: detail.ItemCode ?? detail.itemCode ?? undefined,
             ItemCodeOverride:
@@ -600,23 +719,27 @@ export default function ContractDetailModal({
               (detail.ItemNameOverride ??
                 detail.itemNameOverride ??
                 null) as string | null,
+            Iskonto: lineIskonto,
             OverrideUnitPrice: undefined,
             OverrideMonthlyPrice:
-              detail.MonthlyPriceOverride != null && Number.isFinite(Number(detail.MonthlyPriceOverride))
-                ? Number(detail.MonthlyPriceOverride)
+              (detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride) != null &&
+              Number.isFinite(Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride))
+                ? Number(detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride)
                 : undefined,
           };
         });
+        setContractPriceError(priceErrors.length > 0 ? priceErrors.join(' ') : null);
         setContractItems(items);
-        const globalIsk = (source as { Iskonto?: number }).Iskonto ?? 0;
-        setItemIskonto((prev) => {
-          const next = { ...prev };
-          items.forEach((i) => {
-            if (i.kind === 'inventory') next[`${i.ItemId}-${i.WarehouseId}`] = globalIsk;
+        setItemIskonto(() => {
+          const next: Record<string, number> = {};
+          items.forEach((i, idx) => {
+            const key = i.kind === 'inventory' ? `${i.ItemId}-${i.WarehouseId}` : `man-${i.ClientId}`;
+            next[key] = lineIskontoFromApi(details[idx], globalIsk);
           });
           return next;
         });
       } else {
+        setContractPriceError(null);
         setContractItems([]);
       }
       // Şantiyeleri yükle
@@ -783,19 +906,27 @@ export default function ContractDetailModal({
     }
   };
 
-  const plannedDays = Math.ceil(
-    (new Date(plannedEndDate).getTime() - new Date(startDate).getTime()) /
-      (1000 * 60 * 60 * 24)
-  );
+  const MONTHLY_PRICING_DAYS = 30;
 
-  const billedDays = contractType === 'RENTAL' ? Math.max(30, Number.isFinite(plannedDays) ? plannedDays : 0) : 0;
+  const plannedDays = calendarDaysBetween(startDate, plannedEndDate);
 
-  const actualDays = actualEndDate
-    ? Math.ceil(
-        (new Date(actualEndDate).getTime() - new Date(startDate).getTime()) /
-          (1000 * 60 * 60 * 24)
-      )
-    : 0;
+  const billedDays = contractType === 'RENTAL' ? Math.max(MONTHLY_PRICING_DAYS, Number.isFinite(plannedDays) ? plannedDays : 0) : 0;
+
+  const canShowFullContractPrice =
+    contractType === 'RENTAL' && Number.isFinite(billedDays) && billedDays > MONTHLY_PRICING_DAYS;
+
+  const showingFullContractPrice = canShowFullContractPrice && showFullContractPrice;
+
+  /** Ekrandaki yeşil satır tutarı: kiralama için her zaman 1 aylık (30 gün). */
+  const displayPricingDays = contractType === 'RENTAL' ? MONTHLY_PRICING_DAYS : billedDays;
+
+  const actualDays = actualEndDate ? calendarDaysBetween(startDate, actualEndDate) : 0;
+
+  const handleDurationDaysChange = (raw: string) => {
+    const days = Math.floor(Number(raw));
+    if (!Number.isFinite(days) || days < 1 || !startDate) return;
+    setPlannedEndDate(addCalendarDays(startDate, days));
+  };
 
   const formatPriceInput = (value: number | undefined): string => {
     if (value == null || !Number.isFinite(value)) return '';
@@ -806,6 +937,13 @@ export default function ContractDetailModal({
     const d = (digits ?? '').replace(/\D/g, '').replace(/^0+(?=\d)/, '');
     if (!d) return '';
     return d.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  };
+
+  const formatNetPriceInput = (value: number | undefined): string => {
+    if (value == null || !Number.isFinite(value)) return '';
+    const [intPart, frac = '00'] = roundTo(value, 2).toFixed(2).split('.');
+    const maskedInt = formatThousandsTR(intPart);
+    return `${maskedInt || '0'},${frac}`;
   };
 
   const coerceDecimalDotToComma = (raw: string): string => {
@@ -874,12 +1012,15 @@ export default function ContractDetailModal({
     return item.UnitPriceSnapshot;
   };
 
-  const getLineTotal = (item: ContractLineItem) => {
+  const getLineTotal = (item: ContractLineItem, days: number = billedDays) => {
     const daily = effectiveDailyPrice(item);
     if (item.kind === 'manual') return daily * item.RentedQuantity;
     if (contractType === 'SALE') return daily * item.RentedQuantity;
-    return daily * item.RentedQuantity * billedDays;
+    return daily * item.RentedQuantity * days;
   };
+
+  const lineNetInputKey = (item: ContractLineItem) =>
+    item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : `man-${item.ClientId}`;
 
   const initialTotalPrice = contractItems.reduce((sum, item) => sum + getLineTotal(item), 0);
 
@@ -888,44 +1029,70 @@ export default function ContractDetailModal({
       buildContractItemDisplayEntries(
         contractItems,
         addendumLineSources,
-        !isNew && canViewContracts
+        false,
+        addendumDisplayNoById
       ),
-    [contractItems, addendumLineSources, isNew, canViewContracts]
+    [contractItems, addendumLineSources, addendumDisplayNoById]
+  );
+
+  const openLineHistoryEvents = useMemo(() => {
+    if (openHistoryDetailId == null) return null;
+    return addendumLineHistory.get(openHistoryDetailId) ?? null;
+  }, [openHistoryDetailId, addendumLineHistory]);
+
+  const openLineHistoryQuantity = useMemo(() => {
+    if (openHistoryDetailId == null) return null;
+    const line = contractItems.find((i) => i.DetailId === openHistoryDetailId);
+    return line?.RentedQuantity ?? null;
+  }, [openHistoryDetailId, contractItems]);
+
+  /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
+  const getRowDiscountPercent = (item: ContractLineItem) =>
+    itemIskonto[lineNetInputKey(item)] ?? iskonto;
+
+  const getLineNetTotal = (item: ContractLineItem) =>
+    lineNetFromGross(getLineTotal(item, displayPricingDays), getRowDiscountPercent(item));
+
+  const addendumExtrasGroups = useMemo(
+    () =>
+      !isNew && canViewContracts
+        ? buildAddendumExtrasDisplayGroups({
+            addenda: approvedAddenda,
+            contractItems,
+            sources: addendumLineSources,
+            formatNet: (item) => formatMoney(getLineNetTotal(item), currency),
+            displayNoByAddendumId: addendumDisplayNoById,
+          })
+        : [],
+    // getLineNetTotal bağımlılıkları: contractItems, itemIskonto, iskonto, displayPricingDays, contractType, currency
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [approvedAddenda, contractItems, addendumLineSources, addendumDisplayNoById, isNew, canViewContracts, currency, itemIskonto, iskonto]
   );
 
   const addendumItemCount = useMemo(
-    () => contractItemDisplayEntries.filter((entry) => entry.kind === 'row' && entry.isAddendumRow).length,
-    [contractItemDisplayEntries]
+    () => addendumExtrasGroups.reduce((sum, g) => sum + g.rows.length, 0),
+    [addendumExtrasGroups]
   );
 
-  const baseContractItemCount = contractItems.length - addendumItemCount;
+  const buildPriceBreakdown = (days: number) => {
+    const subtotal = contractItems.reduce((sum, item) => sum + getLineTotal(item, days), 0);
+    const discountAmount = contractItems.reduce((sum, item) => {
+      return sum + lineDiscountAmount(getLineTotal(item, days), getRowDiscountPercent(item));
+    }, 0);
+    const discountedTotal = subtotal - discountAmount;
+    const vatAmount = discountedTotal * (vatRate / 100);
+    const grandTotal = discountedTotal + vatAmount;
+    return { subtotal, discountAmount, discountedTotal, vatAmount, grandTotal };
+  };
 
-  /** Satır için iskonto oranı: satıra özel yoksa üstteki global iskonto. */
-  const getItemIskonto = (itemId: number, warehouseId: number) =>
-    itemIskonto[`${itemId}-${warehouseId}`] ?? iskonto;
-
-  const getRowDiscountPercent = (item: ContractLineItem) =>
-    item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto;
-
-  const getLineNetTotal = (item: ContractLineItem) =>
-    lineNetFromGross(getLineTotal(item), getRowDiscountPercent(item));
-
-  const lineNetInputKey = (item: ContractLineItem) =>
-    item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : `man-${item.ClientId}`;
-
-  // Toplam tutar kırılımları (satır bazlı iskonto)
-  const subtotal = initialTotalPrice;
-  const discountAmount = contractItems.reduce((sum, item) => {
-    return sum + lineDiscountAmount(getLineTotal(item), getRowDiscountPercent(item));
-  }, 0);
+  const monthlyPriceBreakdown = buildPriceBreakdown(MONTHLY_PRICING_DAYS);
+  const fullContractPriceBreakdown = buildPriceBreakdown(billedDays);
+  const displayedPriceBreakdown =
+    contractType === 'RENTAL' ? monthlyPriceBreakdown : fullContractPriceBreakdown;
 
   const totalSettlementCharge = contractReturns.reduce((sum, ret) => {
     return sum + (ret.IsNonPhysicalSettlement ? (ret.SettlementCharge || 0) : 0);
   }, 0);
-
-  const discountedTotal = subtotal - discountAmount;
-  const vatAmount = discountedTotal * (vatRate / 100);
-  const grandTotal = discountedTotal + vatAmount;
 
   /** Panelden ürün + miktar ile listeye ekler. */
   const addItemFromPicker = async (item: Inventory, quantity: number) => {
@@ -971,6 +1138,13 @@ export default function ContractDetailModal({
             : i
         )
       );
+      setLineNetInputs((prev) => {
+        const key = `${itemId}-${whId}`;
+        if (!(key in prev)) return prev;
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
     } else {
       const dailyPriceAtRent = unitPriceForContractInventory(item, currency, contractType);
       setContractItems([
@@ -1209,36 +1383,39 @@ export default function ContractDetailModal({
     });
   };
 
-  const updateContractItemIskonto = (itemId: number, warehouseId: number, value: number) => {
-    const pct = Math.max(0, Math.min(100, value));
-    setItemIskonto((prev) => ({ ...prev, [`${itemId}-${warehouseId}`]: pct }));
+  const updateContractItemIskonto = (key: string, value: number) => {
+    const pct = clampDiscountRange(value);
+    setItemIskonto((prev) => ({ ...prev, [key]: pct }));
   };
 
-  /** Yeşil Toplam (net) → iskonto % ters hesabı. */
+  /** Yeşil Toplam (net) → iskonto % ters hesabı. Brütü aşarsa iskonto %0, fiyat değişmez. */
   const applyLineNetTarget = (item: ContractLineItem, targetNet: number) => {
-    const result = discountPercentFromNet(getLineTotal(item), targetNet);
-    if (item.kind === 'inventory') {
-      updateContractItemIskonto(item.ItemId, item.WarehouseId, result.discountPercent);
-    } else {
-      setIskonto(result.discountPercent);
-    }
+    const result = discountPercentFromNet(getLineTotal(item, displayPricingDays), targetNet);
+    updateContractItemIskonto(lineNetInputKey(item), result.discountPercent);
     return result;
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
   const handleGlobalIskontoChange = (value: number) => {
-    setIskonto(value);
-    setItemIskonto((prev) => {
-      const next = { ...prev };
+    const pct = clampDiscountRange(value);
+    setIskonto(pct);
+    setItemIskonto(() => {
+      const next: Record<string, number> = {};
       contractItems.forEach((i) => {
-        if (i.kind === 'inventory') next[`${i.ItemId}-${i.WarehouseId}`] = value;
+        next[lineNetInputKey(i)] = pct;
       });
       return next;
     });
     setLineNetInputs({});
+    setIskontoInputs({});
+    setGlobalIskontoInput(null);
   };
 
   const handleSave = async () => {
+    if (contractPriceError) {
+      toast.error(contractPriceError);
+      return;
+    }
     const source = fullContract ?? contract;
     const validationError = firstValidationError([
       validateRequired(String(selectedCustomerId || ''), 'Müşteri'),
@@ -1311,6 +1488,7 @@ export default function ContractDetailModal({
               Description: item.Description,
               RentedQuantity: item.RentedQuantity,
               UnitPriceSnapshot: item.UnitPriceSnapshot,
+              Iskonto: getRowDiscountPercent(item),
             };
           }
           return {
@@ -1318,6 +1496,7 @@ export default function ContractDetailModal({
             WarehouseId: item.WarehouseId,
             RentedQuantity: item.RentedQuantity,
             ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
+            Iskonto: getRowDiscountPercent(item),
           };
         });
 
@@ -1438,6 +1617,16 @@ export default function ContractDetailModal({
               updateBody.PlannedEndDate = new Date(nextPed).toISOString();
             }
           }
+        }
+
+        const persistedLineIskontos = contractItems
+          .filter((item) => Number(item.DetailId) > 0)
+          .map((item) => ({
+            DetailId: item.DetailId,
+            Iskonto: getRowDiscountPercent(item),
+          }));
+        if (persistedLineIskontos.length > 0) {
+          updateBody.details = persistedLineIskontos;
         }
 
         if (Object.keys(updateBody).length === 0) {
@@ -1698,13 +1887,7 @@ export default function ContractDetailModal({
     if (!isRentalContract) return;
     const effectiveContractForReturn = fullContract ?? contract;
     if (!contract || !effectiveContractForReturn || !active || !returnDetailKey) return;
-    const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
-    const itemId = Number(itemIdStr);
-    const warehouseId = Number(warehouseIdStr);
-    const item = contractItems.find(
-      (i): i is Extract<ContractLineItem, { kind: 'inventory' }> =>
-        i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
-    );
+    const item = findInventoryLineByReturnKey(contractItems, returnDetailKey);
     if (!item) return;
     const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
     const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
@@ -1720,15 +1903,10 @@ export default function ContractDetailModal({
     const effectiveContractForReturn = fullContract ?? contract;
     if (!contract || !effectiveContractForReturn || !active || !returnDetailKey) return;
 
-    const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
-    const itemId = Number(itemIdStr);
-    const warehouseId = Number(warehouseIdStr);
-
-    const item = contractItems.find(
-      (i): i is Extract<ContractLineItem, { kind: 'inventory' }> =>
-        i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
-    );
+    const item = findInventoryLineByReturnKey(contractItems, returnDetailKey);
     if (!item) return;
+    const itemId = item.ItemId;
+    const warehouseId = item.WarehouseId;
 
     const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
     const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
@@ -1790,12 +1968,12 @@ export default function ContractDetailModal({
     }
   };
 
-  const openReturnForm = (item: Extract<ContractLineItem, { kind: 'inventory' }>) => {
+  const openReturnForm = (item: InventoryLineItem, rowIndex: number) => {
     if (!isRentalContract) return;
     const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
     if (remainingOnRent > 0) {
       setIsReturning(false); // Önceki istek takılı kaldıysa input disabled kalmasın
-      setReturnDetailKey(`${item.ItemId}-${item.WarehouseId}`);
+      setReturnDetailKey(inventoryLineRowKey(item, rowIndex));
       setReturnQuantityStr('1');
       setReturnWarehouseId(item.WarehouseId); // Varsayılan: aynı depoya iade
     }
@@ -1824,6 +2002,48 @@ export default function ContractDetailModal({
     const safe = Number.isFinite(n) ? n : 0;
     return formatMoney(safe, currency);
   };
+
+  const renderPriceBreakdownFields = (
+    breakdown: {
+      subtotal: number;
+      discountAmount: number;
+      discountedTotal: number;
+      vatAmount: number;
+      grandTotal: number;
+    },
+    options?: { includeSettlement?: boolean; compactGrand?: boolean }
+  ) => (
+    <>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
+        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.subtotal)}</span>
+      </div>
+      {options?.includeSettlement && totalSettlementCharge > 0 && (
+        <div title="Sözleşmedeki zayi, hurda veya iade satışlarından kaynaklanan kesinti / borç tutarı genel toplama eklenmiştir.">
+          <span className="text-[11px] text-text-secondary mr-1.5">Zayi Borcu</span>
+          <span className="font-semibold text-red-400">+{formatCurrency(totalSettlementCharge)}</span>
+        </div>
+      )}
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
+        <span className="font-semibold text-red-300">-{formatCurrency(breakdown.discountAmount)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
+        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.discountedTotal)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
+        <span className="font-semibold text-yellow-300">{formatCurrency(breakdown.vatAmount)}</span>
+      </div>
+      <div>
+        <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
+        <span className={options?.compactGrand ? 'font-semibold text-green-400' : 'text-lg font-bold text-green-400'}>
+          {formatCurrency(breakdown.grandTotal)}
+        </span>
+      </div>
+    </>
+  );
 
   const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
     if (!contract || !activeTemplateId) {
@@ -1928,14 +2148,28 @@ export default function ContractDetailModal({
     });
   };
 
-  const compactBtn = '!py-1.5 !px-3 text-xs';
-  const fieldLabel = 'block text-[11px] font-medium text-text-secondary mb-0.5';
+  const requestClose = () => {
+    if (isBusy) return;
+    if (isReadOnly) {
+      onClose();
+      return;
+    }
+    setShowCloseConfirm(true);
+  };
+
+  const compactBtn = '!py-1 !px-2.5 text-xs';
+  const fieldLabel = 'block text-[10px] font-medium text-text-secondary leading-none mb-0.5';
+  const fieldInput = 'input w-full text-xs py-1';
+  const tabBtn = (active: boolean) =>
+    `px-2.5 py-1 text-xs font-medium transition-colors ${
+      active ? 'text-accent border-b-2 border-accent' : 'text-text-secondary hover:text-text-primary'
+    }`;
 
   const modalTree = (
     <div className={`fixed inset-0 flex flex-col overflow-hidden bg-background-main ${stackAboveParent ? 'z-[60]' : 'z-50'}`}>
-      <header className="shrink-0 flex items-center justify-between px-3 py-2 bg-background-panel border-b border-background-border gap-2">
-        <div className="flex items-center gap-2 min-w-0 flex-wrap">
-          <h1 className="text-base font-semibold text-text-primary tracking-tight truncate">
+      <header className="shrink-0 flex items-center justify-between px-3 py-1 bg-background-panel border-b border-background-border gap-2">
+        <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
+          <h1 className="text-sm font-semibold text-text-primary tracking-tight truncate">
             {isNew ? 'Yeni Sözleşme' : `Sözleşme #${contract?.ContractId ?? ''} Detayı`}
           </h1>
           <span className="text-xs font-medium text-text-secondary whitespace-nowrap">
@@ -2050,24 +2284,33 @@ export default function ContractDetailModal({
           )}
           <button
             type="button"
-            onClick={onClose}
-            className="p-1.5 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+            onClick={requestClose}
+            className="p-1 rounded text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
             aria-label="Kapat"
             title="Kapat"
           >
-            <XIcon size={20} weight="regular" />
+            <XIcon size={18} weight="regular" />
           </button>
         </div>
       </header>
 
       {!isNew && archivable && (
-        <section className="shrink-0 px-3 py-1.5 border-b border-green-800/40 bg-green-950/20 text-xs text-green-100">
+        <section className="shrink-0 px-3 py-1 border-b border-green-800/40 bg-green-950/20 text-[11px] text-green-100">
           Bu sözleşme {cancelled ? 'iptal edilmiş' : 'tamamlanmış'}; bilgiler salt okunurdur. Listeden kaldırmak için{' '}
           <span className="font-medium">Arşivle</span> kullanın.
         </section>
       )}
+      {contractPriceError && (
+        <section
+          className="shrink-0 px-3 py-1 border-b border-red-700/50 bg-red-950/30 text-[11px] text-red-100"
+          role="alert"
+        >
+          Fiyat bilgisi yüklenemedi: {contractPriceError} Hesaplamalar güvenilir olmadığı için
+          kayıt engellendi.
+        </section>
+      )}
       {!isNew && archived && (
-        <section className="shrink-0 px-3 py-1.5 border-b border-amber-700/40 bg-amber-900/15 text-xs text-amber-100">
+        <section className="shrink-0 px-3 py-1 border-b border-amber-700/40 bg-amber-900/15 text-[11px] text-amber-100">
           Bu kayıt arşivlenmiştir; düzenleme, iptal ve iade yapılamaz. Bilgiler salt okunurdur.
           {effectiveContract?.ArchiveReason?.trim() ? (
             <span className="ml-1 text-amber-200/90">
@@ -2077,32 +2320,28 @@ export default function ContractDetailModal({
         </section>
       )}
       {!isNew && cancelled && !archived && (
-        <section className="shrink-0 px-3 py-1.5 border-b border-amber-700/40 bg-amber-900/15 text-xs text-amber-100">
+        <section className="shrink-0 px-3 py-1 border-b border-amber-700/40 bg-amber-900/15 text-[11px] text-amber-100">
           Bu sözleşme iptal edilmiş; tekrar iptal edilemez.
         </section>
       )}
       {!isNew && !active && !cancelled && !completed && effectiveContract && (
-        <section className="shrink-0 px-3 py-1.5 border-b border-background-border bg-background-panel text-xs text-text-secondary">
+        <section className="shrink-0 px-3 py-1 border-b border-background-border bg-background-panel text-[11px] text-text-secondary">
           Sözleşme durumu belirlenemedi. Sayfayı yenileyip tekrar deneyin.
         </section>
       )}
       {!isNew && active && !canCancelContract && (
-        <section className="shrink-0 px-3 py-1.5 border-b border-amber-700/40 bg-amber-900/15 text-xs text-amber-100">
+        <section className="shrink-0 px-3 py-1 border-b border-amber-700/40 bg-amber-900/15 text-[11px] text-amber-100">
           Bu sözleşmeyi iptal etmek için yetkiniz bulunmuyor. Eski &quot;Sil&quot; işlemi kaldırıldı;
           bağlı teklifi serbest bırakmak için <span className="font-medium">sözleşme iptal</span> yetkisi gerekir.
         </section>
       )}
 
       {!isNew && (
-        <div className="shrink-0 flex gap-1 px-3 border-b border-background-border bg-background-panel">
+        <div className="shrink-0 flex gap-0.5 px-2 border-b border-background-border bg-background-panel">
           <button
             type="button"
             onClick={() => setActiveTab('info')}
-            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-              activeTab === 'info'
-                ? 'text-accent border-b-2 border-accent'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
+            className={tabBtn(activeTab === 'info')}
           >
             Bilgiler
           </button>
@@ -2113,15 +2352,11 @@ export default function ContractDetailModal({
                 setIsReturning(false);
                 setActiveTab('return');
               }}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                activeTab === 'return'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
+              className={tabBtn(activeTab === 'return')}
             >
               İade Al
               {contractItems.some(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0) && (
-                <span className="ml-1.5 bg-green-600/30 text-green-400 text-xs px-1.5 py-0.5 rounded-full">
+                <span className="ml-1 bg-green-600/30 text-green-400 text-[10px] px-1 py-0.5 rounded-full">
                   {contractItems.filter(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0).length}
                 </span>
               )}
@@ -2131,15 +2366,11 @@ export default function ContractDetailModal({
             <button
               type="button"
               onClick={() => setActiveTab('returns')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                activeTab === 'returns'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
+              className={tabBtn(activeTab === 'returns')}
             >
               İade Geçmişi
               {contractReturns.length > 0 && (
-                <span className="ml-1.5 bg-accent/20 text-accent text-xs px-1.5 py-0.5 rounded-full">
+                <span className="ml-1 bg-accent/20 text-accent text-[10px] px-1 py-0.5 rounded-full">
                   {contractReturns.length}
                 </span>
               )}
@@ -2148,11 +2379,7 @@ export default function ContractDetailModal({
           <button
             type="button"
             onClick={() => setActiveTab('history')}
-            className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-              activeTab === 'history'
-                ? 'text-accent border-b-2 border-accent'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
+            className={tabBtn(activeTab === 'history')}
           >
             Geçmiş
           </button>
@@ -2160,13 +2387,21 @@ export default function ContractDetailModal({
             <button
               type="button"
               onClick={() => setActiveTab('addenda')}
-              className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-                activeTab === 'addenda'
-                  ? 'text-accent border-b-2 border-accent'
-                  : 'text-text-secondary hover:text-text-primary'
-              }`}
+              className={tabBtn(activeTab === 'addenda')}
             >
               Zeyilnameler
+            </button>
+          )}
+          {canViewContracts && addendumItemCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('addendum-extras')}
+              className={tabBtn(activeTab === 'addendum-extras')}
+            >
+              Zeyilname ekleri
+              <span className="ml-1 bg-amber-500/20 text-amber-300 text-[10px] px-1 py-0.5 rounded-full">
+                {addendumItemCount}
+              </span>
             </button>
           )}
         </div>
@@ -2182,36 +2417,74 @@ export default function ContractDetailModal({
               Bu sözleşmede kiralanan malzeme bulunmuyor veya yükleniyor...
             </div>
           ) : (
-            <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border">
-              <table className="w-full table-compact text-text-primary">
-                <thead className="sticky top-0 z-10 bg-background-surface">
-                  <tr className="border-b border-background-border">
-                    <th className="text-left">Ürün</th>
-                    <th className="text-left">Depo</th>
-                    <th className="text-right">Kirada</th>
-                    <th className="text-right">İade</th>
-                    <th className="text-center">İşlem</th>
+            <div className="min-h-0 flex-1 overflow-auto">
+              <table className="table-data-grid table-excel-rows text-text-primary">
+                <thead>
+                  <tr>
+                    <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
+                      Ürün Kodu
+                    </th>
+                    <th className="text-left" style={{ width: LINE_ITEM_COL.itemNameWithWarehouse }}>
+                      Ürün Adı
+                    </th>
+                    <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.warehouse }}>
+                      Depo
+                    </th>
+                    <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.quantity }}>
+                      Kirada
+                    </th>
+                    <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.quantity }}>
+                      İade
+                    </th>
+                    <th className="text-center whitespace-nowrap" style={{ width: '14%' }}>
+                      İşlem
+                    </th>
                   </tr>
                 </thead>
                 <tbody>
-                  {contractItems.filter((i) => i.kind === 'inventory').map((item) => {
+                  {contractItems.filter((i) => i.kind === 'inventory').map((item, rowIndex) => {
                     const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
-                    const itemKey = `${item.ItemId}-${item.WarehouseId}`;
-                    const isReturnFormOpen = returnDetailKey === itemKey;
+                    const rowKey = inventoryLineRowKey(item, rowIndex);
+                    const isReturnFormOpen = returnDetailKey === rowKey;
+                    const invItem = availableItems.find((i) => i.ItemId === item.ItemId) ?? item.Item ?? null;
+                    const displayItemCode =
+                      (item.ItemCode ?? item.ItemCodeOverride ?? invItem?.ItemCode) || '—';
+                    const canonicalItemName = invItem?.ItemName ?? item.ItemName;
+                    const itemEnName = invItem?.ItemNameEn ?? item.ItemNameEn;
+                    const displayItemName =
+                      language === 'EN'
+                        ? item.ItemNameOverride ?? itemEnName ?? canonicalItemName
+                        : item.ItemNameOverride ?? canonicalItemName;
 
                     return (
-                      <Fragment key={itemKey}>
+                      <Fragment key={rowKey}>
                         <tr
-                          className={`border-b border-background-border hover:bg-background-hover ${
-                            isReturnFormOpen ? 'bg-accent/5' : ''
-                          }`}
+                          className={`${
+                            isReturnFormOpen ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''
+                          } ${rowIndex % 2 === 0 ? 'bg-background-panel' : 'bg-background-secondary/35'}`}
                         >
-                          <td className="max-w-[220px]">
-                            <div className="truncate font-medium" title={formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}>
-                              {formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
-                            </div>
+                          <td className="text-text-secondary">
+                            {displayItemCode !== '—' ? (
+                              <span className="item-code-badge cell-clip" title={displayItemCode}>
+                                {displayItemCode}
+                              </span>
+                            ) : (
+                              <span className="text-text-secondary">—</span>
+                            )}
                           </td>
-                          <td className="text-text-secondary">{item.WarehouseName ?? '—'}</td>
+                          <td className="font-medium">
+                            <button
+                              type="button"
+                              className="cell-clip text-left hover:text-primary hover:underline transition-colors cursor-pointer max-w-full"
+                              title={formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
+                              onClick={() => setSelectedInventoryForDetail(invItem)}
+                            >
+                              {displayItemName}
+                            </button>
+                          </td>
+                          <td className="text-text-secondary cell-clip" title={item.WarehouseName ?? undefined}>
+                            {item.WarehouseName ?? '—'}
+                          </td>
                           <td className="text-right tabular-nums">
                             <span className={remainingOnRent > 0 ? 'font-medium text-orange-400' : 'text-text-secondary'}>
                               {remainingOnRent}
@@ -2220,7 +2493,7 @@ export default function ContractDetailModal({
                           </td>
                           <td className="text-right tabular-nums">
                             {item.ReturnedQuantity > 0 ? (
-                              <span className="inline-flex items-center gap-0.5 text-green-400">
+                              <span className="inline-flex items-center justify-end gap-0.5 text-green-400">
                                 <CheckIcon size={12} weight="bold" aria-hidden />
                                 {item.ReturnedQuantity}
                               </span>
@@ -2230,11 +2503,11 @@ export default function ContractDetailModal({
                           </td>
                           <td className="text-center whitespace-nowrap">
                             {remainingOnRent > 0 ? (
-                              <div className="inline-flex items-center gap-1">
+                              <div className="inline-flex items-center justify-center gap-0.5">
                                 <button
                                   type="button"
                                   onClick={() => setSettleItem({ item, remainingOnRent })}
-                                  className={`btn-secondary ${compactBtn} bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30`}
+                                  className="btn-secondary text-[10px] px-1 py-0 leading-none h-[1.125rem] min-h-0 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30"
                                   disabled={isReturning}
                                   title="Zayi / Satış (Sanal İade)"
                                 >
@@ -2242,48 +2515,48 @@ export default function ContractDetailModal({
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => openReturnForm(item)}
-                                  className={`btn-success ${compactBtn}`}
+                                  onClick={() => openReturnForm(item, rowIndex)}
+                                  className="btn-success text-[10px] px-1 py-0 leading-none h-[1.125rem] min-h-0"
                                   disabled={isReturning}
                                 >
-                                  İade Al
+                                  İade
                                 </button>
                               </div>
                             ) : (
-                              <span className="text-xs text-green-400">Tamamlandı</span>
+                              <span className="text-[10px] text-green-400">Tamam</span>
                             )}
                           </td>
                         </tr>
                         {isReturnFormOpen && remainingOnRent > 0 && (
                           <tr className="bg-background-surface">
-                            <td colSpan={5} className="border-b border-background-border px-2 py-2">
-                              <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
-                                <label className="text-xs text-text-secondary">Miktar</label>
+                            <td colSpan={6} className="px-2 py-1.5 border-b border-background-border">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <label className="text-[11px] text-text-secondary">Miktar</label>
                                 <input
                                   type="text"
                                   inputMode="numeric"
                                   autoComplete="off"
                                   value={returnQuantityStr}
                                   onChange={(e) => handleNumericInput(setReturnQuantityStr, e)}
-                                  className="input w-16 py-1 text-sm"
+                                  className="input w-14 py-0.5 text-xs"
                                   placeholder="1"
                                   disabled={isReturning}
                                   aria-label="İade miktarı"
                                 />
-                                <span className="text-xs text-text-secondary">/ {remainingOnRent}</span>
-                                <label className="text-xs text-text-secondary">Tarih</label>
+                                <span className="text-[11px] text-text-secondary">/ {remainingOnRent}</span>
+                                <label className="text-[11px] text-text-secondary">Tarih</label>
                                 <input
                                   type="date"
                                   value={returnDate}
                                   onChange={(e) => setReturnDate(e.target.value)}
-                                  className="input w-32 py-1 text-sm"
+                                  className="input w-28 py-0.5 text-xs"
                                   disabled={isReturning}
                                 />
-                                <label className="text-xs text-text-secondary">Hedef Depo</label>
+                                <label className="text-[11px] text-text-secondary">Hedef Depo</label>
                                 <select
                                   value={returnWarehouseId}
                                   onChange={(e) => setReturnWarehouseId(Number(e.target.value) || '')}
-                                  className="input min-w-[140px] py-1 text-sm"
+                                  className="input min-w-[120px] py-0.5 text-xs"
                                   disabled={isReturning}
                                 >
                                   <option value="">Kaynak depo</option>
@@ -2322,7 +2595,7 @@ export default function ContractDetailModal({
             </div>
           )}
           <div className="mt-3 flex shrink-0 gap-2">
-            <button type="button" onClick={onClose} className={`btn-secondary flex-1 ${compactBtn}`}>
+            <button type="button" onClick={requestClose} className={`btn-secondary flex-1 ${compactBtn}`}>
               Kapat
             </button>
           </div>
@@ -2339,74 +2612,128 @@ export default function ContractDetailModal({
             </div>
           ) : (
             <>
-              <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border">
-                <table className="w-full table-compact text-text-primary">
-                  <thead className="sticky top-0 z-10 bg-background-surface">
-                    <tr className="border-b border-background-border">
-                      <th className="text-left">Ürün</th>
-                      <th className="text-left">Depo</th>
-                      <th className="text-right">Miktar</th>
-                      <th className="text-left">İade Tarihi</th>
-                      <th className="text-left">Tür</th>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <table className="table-data-grid table-excel-rows text-text-primary">
+                  <thead>
+                    <tr>
+                      <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
+                        Ürün Kodu
+                      </th>
+                      <th className="text-left" style={{ width: LINE_ITEM_COL.itemNameWithWarehouse }}>
+                        Ürün Adı
+                      </th>
+                      <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.warehouse }}>
+                        Depo
+                      </th>
+                      <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.quantity }}>
+                        Miktar
+                      </th>
+                      <th className="text-left whitespace-nowrap" style={{ width: '10%' }}>
+                        İade Tarihi
+                      </th>
+                      <th className="text-left whitespace-nowrap" style={{ width: '8%' }}>
+                        Tür
+                      </th>
                       <th className="text-left">Detay</th>
-                      <th className="text-right whitespace-nowrap">Kayıt</th>
+                      <th className="text-right whitespace-nowrap" style={{ width: '10%' }}>
+                        Kayıt
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
-                    {contractReturns.map((ret) => (
-                      <tr
-                        key={ret.ReturnId}
-                        className={`border-b border-background-border hover:bg-background-hover ${
-                          ret.IsNonPhysicalSettlement ? 'bg-red-500/5' : ''
-                        }`}
-                      >
-                        <td className="max-w-[180px]">
-                          <div className="truncate font-medium" title={ret.ItemName}>{ret.ItemName}</div>
-                        </td>
-                        <td className="text-text-secondary">{ret.WarehouseName ?? '—'}</td>
-                        <td className="text-right tabular-nums">{ret.ReturnQuantity}</td>
-                        <td className="whitespace-nowrap">{new Date(ret.ReturnDate).toLocaleDateString('tr-TR')}</td>
-                        <td>
-                          {ret.IsNonPhysicalSettlement ? (
-                            <span className="inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold bg-red-500/20 text-red-300">
-                              Zayi / Satış
+                    {contractReturns.map((ret, rowIndex) => {
+                      const invItem = availableItems.find((i) => i.ItemId === ret.ItemId);
+                      const displayItemCode = invItem?.ItemCode || '—';
+                      return (
+                        <tr
+                          key={ret.ReturnId}
+                          className={`${
+                            ret.IsNonPhysicalSettlement ? 'bg-red-500/5' : ''
+                          } ${rowIndex % 2 === 0 ? 'bg-background-panel' : 'bg-background-secondary/35'}`}
+                        >
+                          <td className="text-text-secondary">
+                            {displayItemCode !== '—' ? (
+                              <span className="item-code-badge cell-clip" title={displayItemCode}>
+                                {displayItemCode}
+                              </span>
+                            ) : (
+                              <span className="text-text-secondary">—</span>
+                            )}
+                          </td>
+                          <td className="font-medium">
+                            <span className="cell-clip" title={ret.ItemName}>
+                              {ret.ItemName}
                             </span>
-                          ) : (
-                            <span className="inline-block rounded px-1.5 py-0.5 text-[11px] font-semibold bg-green-500/20 text-green-400">
-                              Normal
-                            </span>
-                          )}
-                        </td>
-                        <td className="text-text-secondary">
-                          {ret.IsNonPhysicalSettlement ? (
-                            <div className="space-y-0.5">
-                              {ret.SettlementReason && (
-                                <div>
-                                  {ret.SettlementReason === 'SALE' ? 'Satış' : ret.SettlementReason === 'DEFECT' ? 'Hurda / Defo' : ret.SettlementReason}
-                                </div>
-                              )}
-                              {ret.SettlementCharge != null && (
-                                <div className="text-red-300">Bedel: {formatMoney(ret.SettlementCharge, currency)}</div>
-                              )}
-                            </div>
-                          ) : ret.LateDays > 0 ? (
-                            <span className="text-orange-400">
-                              {ret.LateDays} gün · {formatMoney(ret.LateFee, currency)}
-                            </span>
-                          ) : (
-                            <span>—</span>
-                          )}
-                        </td>
-                        <td className="text-right text-text-secondary whitespace-nowrap text-[11px]">
-                          {formatShortDateTime(ret.CreatedAt)}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                          <td className="text-text-secondary cell-clip" title={ret.WarehouseName ?? undefined}>
+                            {ret.WarehouseName ?? '—'}
+                          </td>
+                          <td className="text-right tabular-nums">{ret.ReturnQuantity}</td>
+                          <td className="whitespace-nowrap tabular-nums">
+                            {new Date(ret.ReturnDate).toLocaleDateString('tr-TR')}
+                          </td>
+                          <td>
+                            {ret.IsNonPhysicalSettlement ? (
+                              <span className="addendum-badge bg-red-500/20 text-red-300 border-red-500/30">
+                                Zayi
+                              </span>
+                            ) : (
+                              <span className="addendum-badge bg-green-500/20 text-green-400 border-green-500/30">
+                                Normal
+                              </span>
+                            )}
+                          </td>
+                          <td className="text-text-secondary cell-clip">
+                            {ret.IsNonPhysicalSettlement ? (
+                              <span
+                                title={
+                                  [
+                                    ret.SettlementReason === 'SALE'
+                                      ? 'Satış'
+                                      : ret.SettlementReason === 'DEFECT'
+                                        ? 'Hurda / Defo'
+                                        : ret.SettlementReason,
+                                    ret.SettlementCharge != null
+                                      ? `Bedel: ${formatMoney(ret.SettlementCharge, currency)}`
+                                      : null,
+                                  ]
+                                    .filter(Boolean)
+                                    .join(' · ')
+                                }
+                              >
+                                {ret.SettlementReason === 'SALE'
+                                  ? 'Satış'
+                                  : ret.SettlementReason === 'DEFECT'
+                                    ? 'Hurda / Defo'
+                                    : ret.SettlementReason ?? '—'}
+                                {ret.SettlementCharge != null ? (
+                                  <span className="text-red-300">
+                                    {' '}
+                                    · {formatMoney(ret.SettlementCharge, currency)}
+                                  </span>
+                                ) : null}
+                              </span>
+                            ) : ret.LateDays > 0 ? (
+                              <span className="text-orange-400">
+                                {ret.LateDays} gün · {formatMoney(ret.LateFee, currency)}
+                              </span>
+                            ) : (
+                              <span>—</span>
+                            )}
+                          </td>
+                          <td className="text-right text-text-secondary whitespace-nowrap text-[11px] tabular-nums">
+                            {formatShortDateTime(ret.CreatedAt)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   {contractReturns.some((r) => r.LateFee > 0) && (
                     <tfoot className="sticky bottom-0 bg-orange-900/40 border-t border-orange-800/40">
                       <tr>
-                        <td colSpan={6} className="text-right font-medium">Toplam Gecikme Ücreti</td>
+                        <td colSpan={7} className="text-right font-medium">
+                          Toplam Gecikme Ücreti
+                        </td>
                         <td className="text-right font-bold text-orange-300 tabular-nums">
                           {formatCurrency(contractReturns.reduce((sum, r) => sum + r.LateFee, 0))}
                         </td>
@@ -2418,7 +2745,7 @@ export default function ContractDetailModal({
             </>
           )}
           <div className="mt-3 flex shrink-0 gap-2">
-            <button type="button" onClick={onClose} className={`btn-secondary flex-1 ${compactBtn}`}>
+            <button type="button" onClick={requestClose} className={`btn-secondary flex-1 ${compactBtn}`}>
               Kapat
             </button>
           </div>
@@ -2430,7 +2757,7 @@ export default function ContractDetailModal({
             <h3 className="text-lg font-semibold mb-3">Aktivite Geçmişi</h3>
             <AuditLogTimeline logs={contractLogs} loading={contractLogsLoading} />
             <div className="flex gap-3 mt-6">
-              <button onClick={onClose} className="btn-secondary flex-1">
+              <button type="button" onClick={requestClose} className="btn-secondary flex-1">
                 Kapat
               </button>
             </div>
@@ -2444,6 +2771,7 @@ export default function ContractDetailModal({
             contractType={contractType}
             contractActive={active}
             contractLines={contractItems}
+            contractDiscountPercent={iskonto}
             items={availableItems}
             warehouses={warehouses}
             currency={currency}
@@ -2462,12 +2790,116 @@ export default function ContractDetailModal({
         </div>
       )}
 
+      {activeTab === 'addendum-extras' && !isNew && canViewContracts && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+          <div className="mb-2 shrink-0 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold text-text-primary">Zeyilname ekleri</h3>
+              <p className="text-[11px] text-text-secondary mt-0.5">
+                Zeyilname ile eklenen kalemler. Miktar/fiyat değişimleri Bilgiler sekmesindeki ana
+                satırlara yansır; genel toplam birleşik listeyi kapsar.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setActiveTab('info')}
+              className={`btn-secondary ${compactBtn}`}
+            >
+              Bilgilere dön
+            </button>
+          </div>
+          {addendumExtrasGroups.length === 0 ? (
+            <div className="py-8 text-center text-sm text-text-secondary">
+              Zeyilname ile eklenen kalem bulunmuyor.
+            </div>
+          ) : (
+            <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border bg-background-panel">
+              <table className="table-data-grid table-excel-rows text-text-primary w-full">
+                <thead>
+                  <tr>
+                    <th className="text-left w-14">Z</th>
+                    <th className="text-left w-28">Kod</th>
+                    <th className="text-left">Ürün / Açıklama</th>
+                    <th className="text-left w-28">Tip</th>
+                    <th className="text-right w-20">Miktar</th>
+                    <th className="text-right w-28">Net</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {addendumExtrasGroups.map((group) => (
+                    <Fragment key={group.addendumId}>
+                      <tr className="addendum-separator-row">
+                        <td colSpan={6}>
+                          {group.isReversal ? 'Ters zeyilname' : 'Zeyilname'} #
+                          {group.addendumNo ?? group.addendumId}
+                          {group.isReversal &&
+                            (group.reversesAddendumNo != null || group.reversesAddendumId != null) && (
+                              <span className="ml-2 font-normal normal-case tracking-normal opacity-80">
+                                · kaynak #
+                                {group.reversesAddendumNo ?? group.reversesAddendumId}
+                              </span>
+                            )}
+                          {group.isReversed && !group.isReversal && (
+                            <span className="ml-2 font-normal normal-case tracking-normal opacity-80">
+                              · tersine çevrildi
+                            </span>
+                          )}
+                          <span className="ml-2 font-normal normal-case tracking-normal opacity-80">
+                            · {group.rows.length} kalem
+                          </span>
+                        </td>
+                      </tr>
+                      {group.rows.map((row) => (
+                        <tr key={row.key} className="addendum-row">
+                          <td>
+                            <span className="addendum-badge">
+                              Z{group.addendumNo != null ? group.addendumNo : group.addendumId}
+                            </span>
+                          </td>
+                          <td className="text-text-secondary">
+                            {row.code ? (
+                              <span className="item-code-badge cell-clip" title={row.code}>
+                                {row.code}
+                              </span>
+                            ) : (
+                              '—'
+                            )}
+                          </td>
+                          <td>
+                            <span className="cell-clip" title={row.name}>
+                              {row.name}
+                            </span>
+                          </td>
+                          <td className="text-text-secondary text-[11px]">
+                            {row.changeTypeLabel ?? (group.isReversal ? '—' : 'Yeni Kalem')}
+                          </td>
+                          <td
+                            className={`text-right tabular-nums ${
+                              row.quantityDisplay.startsWith('-') ? 'text-red-300' : ''
+                            }`}
+                          >
+                            {row.quantityDisplay}
+                          </td>
+                          <td className="text-right tabular-nums text-text-secondary">
+                            {row.netDisplay ?? '—'}
+                          </td>
+                        </tr>
+                      ))}
+                    </Fragment>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
       {(activeTab === 'info' || isNew) && (
-        <div className="flex-1 min-h-0 flex flex-col p-2 gap-2">
+        <div className="flex-1 min-h-0 flex flex-col p-1.5 gap-1">
           {cancelled && effectiveContract && (
-            <section className="shrink-0 rounded-lg border border-amber-700/50 bg-amber-900/20 px-3 py-2">
-              <h3 className="text-xs font-semibold text-amber-100 mb-1">İptal Bilgileri</h3>
-              <div className="text-xs text-amber-50/90 flex flex-wrap gap-x-4 gap-y-1">
+            <section className="shrink-0 rounded border border-amber-700/50 bg-amber-900/20 px-2.5 py-1">
+              <h3 className="text-[10px] font-semibold text-amber-100 mb-0.5">İptal Bilgileri</h3>
+              <div className="text-[11px] text-amber-50/90 flex flex-wrap gap-x-3 gap-y-0.5">
                 <p>
                   <span className="font-medium">İptal Tarihi:</span>{' '}
                   {effectiveContract.CancelledAt
@@ -2490,8 +2922,8 @@ export default function ContractDetailModal({
             />
           )}
 
-          <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2">
-            <div className={`grid gap-x-2.5 gap-y-1.5 ${selectedCustomerId ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
+          <section className="shrink-0 rounded border border-background-border bg-background-panel px-2.5 py-1">
+            <div className={`grid gap-x-2 gap-y-1 ${selectedCustomerId ? 'grid-cols-1 md:grid-cols-3' : 'grid-cols-1 md:grid-cols-2'}`}>
               <div className="min-w-0">
                 <label className={fieldLabel} htmlFor="contract-customer-search">
                   Müşteri *
@@ -2503,6 +2935,7 @@ export default function ContractDetailModal({
                   value={selectedCustomerId}
                   onChange={handleCustomerChange}
                   disabled={isReadOnly}
+                  compact
                 />
               </div>
 
@@ -2512,7 +2945,7 @@ export default function ContractDetailModal({
                     Merkez Yetkili *
                   </label>
                   {authorizedContactsLoading ? (
-                    <div className="input w-full min-w-0 text-text-secondary text-sm py-1.5">Yükleniyor...</div>
+                    <div className={`${fieldInput} min-w-0 text-text-secondary`}>Yükleniyor...</div>
                   ) : authorizedContacts.length > 0 ? (
                     <select
                       value={selectedAuthorizedContactId}
@@ -2521,7 +2954,7 @@ export default function ContractDetailModal({
                         setAuthorizedContactError(null);
                       }}
                       disabled={isReadOnly}
-                      className="input min-w-0 w-full text-sm py-1.5"
+                      className={`${fieldInput} min-w-0`}
                     >
                       <option value="">Yetkili seçin</option>
                       {authorizedContacts.map((contact) => (
@@ -2534,12 +2967,12 @@ export default function ContractDetailModal({
                       ))}
                     </select>
                   ) : (
-                    <div className="input min-w-0 w-full text-red-300 bg-background-secondary text-sm py-1.5 truncate">
+                    <div className={`${fieldInput} min-w-0 text-red-300 bg-background-secondary truncate`}>
                       Bu müşteri için yetkili tanımlı değil
                     </div>
                   )}
                   {authorizedContactError && (
-                    <p className="text-xs text-red-300 truncate">{authorizedContactError}</p>
+                    <p className="text-[10px] text-red-300 truncate">{authorizedContactError}</p>
                   )}
                 </div>
               )}
@@ -2563,97 +2996,115 @@ export default function ContractDetailModal({
               )}
             </div>
 
-            <div className="mt-1.5 flex flex-wrap gap-x-2.5 gap-y-1.5">
-              <div className="min-w-[120px] w-[150px]">
+            <div className="mt-1 flex flex-wrap items-end gap-x-2 gap-y-1">
+              <div className="min-w-[110px] w-[140px]">
                 <label className={fieldLabel}>Sözleşme Kodu</label>
                 <input
                   type="text"
                   value={contractCode}
                   onChange={(e) => setContractCode(e.target.value)}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="Örn: SZ-2026-001"
                   maxLength={50}
                 />
               </div>
 
-              <div className="min-w-[120px] w-[140px]">
+              <div className="min-w-[100px] w-[120px]">
                 <label className={fieldLabel}>Sözleşme Tipi</label>
                 {isNew ? (
                   lockNewContractType ? (
-                    <div className="input w-full bg-background-secondary text-text-secondary text-sm py-1.5 px-2 rounded-lg border border-background-border">
+                    <div className={`${fieldInput} bg-background-secondary text-text-secondary px-2 rounded-lg border border-background-border`}>
                       {contractType === 'SALE' ? 'Satış' : 'Kiralama'}
                     </div>
                   ) : (
                     <select
                       value={contractType}
                       onChange={(e) => setContractType(e.target.value as ContractQuoteType)}
-                      className="input w-full text-sm py-1.5"
+                      className={fieldInput}
                     >
                       <option value="RENTAL">Kiralama</option>
                       <option value="SALE">Satış</option>
                     </select>
                   )
                 ) : (
-                  <div className="input w-full bg-background-secondary text-text-secondary text-sm py-1.5 px-2 rounded-lg border border-background-border">
+                  <div className={`${fieldInput} bg-background-secondary text-text-secondary px-2 rounded-lg border border-background-border`}>
                     {contractType === 'SALE' ? 'Satış' : 'Kiralama'}
                   </div>
                 )}
               </div>
 
-              <div className="min-w-[120px] w-[140px]">
+              <div className="min-w-[110px] w-[130px]">
                 <label className={fieldLabel}>Başlangıç</label>
                 <input
                   type="date"
                   value={startDate}
-                  onChange={(e) => setStartDate(e.target.value)}
+                  onChange={(e) => {
+                    const nextStart = e.target.value;
+                    const currentDays = Number.isFinite(plannedDays) && plannedDays >= 1 ? plannedDays : 0;
+                    setStartDate(nextStart);
+                    if (isRentalContract && nextStart && currentDays >= 1) {
+                      setPlannedEndDate(addCalendarDays(nextStart, currentDays));
+                    }
+                  }}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                 />
               </div>
 
               {isRentalContract && (
-                <div className="min-w-[120px] w-[140px]">
-                  <label className={fieldLabel} title="Başlangıç veya planlanan bitişi değiştirdiğinizde sunucu planlanan tutarı güncel tarih aralığına göre yeniden hesaplar.">
-                    Planlanan Bitiş
-                  </label>
-                  <input
-                    type="date"
-                    value={plannedEndDate}
-                    onChange={(e) => setPlannedEndDate(e.target.value)}
-                    disabled={isReadOnly}
-                    className="input w-full text-sm py-1.5"
-                  />
-                </div>
+                <>
+                  <div className="min-w-[64px] w-[72px]">
+                    <label className={fieldLabel} title="Kiralama süresi. Değiştirince planlanan bitiş tarihi güncellenir.">
+                      Gün
+                    </label>
+                    <input
+                      type="number"
+                      min={1}
+                      max={36500}
+                      step={1}
+                      value={Number.isFinite(plannedDays) && plannedDays >= 1 ? plannedDays : ''}
+                      onChange={(e) => handleDurationDaysChange(e.target.value)}
+                      disabled={isReadOnly}
+                      className={fieldInput}
+                      title="Başlangıç tarihine eklenen gün sayısı; bitiş tarihi buna göre hesaplanır."
+                    />
+                  </div>
+                  <div className="min-w-[110px] w-[130px]">
+                    <label className={fieldLabel} title="Başlangıç, gün sayısı veya planlanan bitişi değiştirdiğinizde sunucu planlanan tutarı güncel tarih aralığına göre yeniden hesaplar.">
+                      Planlanan Bitiş
+                    </label>
+                    <input
+                      type="date"
+                      value={plannedEndDate}
+                      onChange={(e) => setPlannedEndDate(e.target.value)}
+                      disabled={isReadOnly}
+                      className={fieldInput}
+                    />
+                  </div>
+                </>
               )}
 
-              <div className="min-w-[100px] w-[120px]">
-                <label className={fieldLabel}>Sözleşme Sahibi</label>
-                <div className="input w-full bg-background-secondary text-text-secondary py-1.5 px-2 text-xs rounded-lg border border-background-border truncate">
-                  {currentUser?.fullName || currentUser?.username || '—'}
-                </div>
-              </div>
-
-              <div className="min-w-[72px] w-[88px]">
+              <div className="min-w-[64px] w-[72px]">
                 <label className={fieldLabel} title="Tüm satırlara uygulanır; tabloda satır bazlı değiştirebilirsiniz">İskonto %</label>
                 <input
-                  type="number"
-                  value={Number(iskonto) || 0}
-                  onChange={(e) => {
-                    const v = parseFloat(e.target.value);
-                    handleGlobalIskontoChange(Number.isFinite(v) ? v : 0);
+                  type="text"
+                  inputMode="decimal"
+                  value={globalIskontoInput ?? String(Number(iskonto) || 0).replace('.', ',')}
+                  onChange={(e) => setGlobalIskontoInput(e.target.value)}
+                  onBlur={() => {
+                    const parsed = parseDiscountInput(globalIskontoInput ?? '');
+                    if (parsed != null) handleGlobalIskontoChange(parsed);
+                    setGlobalIskontoInput(null);
                   }}
                   disabled={isReadOnly}
-                  min={0}
-                  max={100}
-                  step={0.01}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="0"
                   title="Tüm satırlara uygulanır"
                 />
               </div>
 
-              <div className="min-w-[72px] w-[88px]">
+              <div className="min-w-[56px] w-[68px]">
                 <label className={fieldLabel}>KDV %</label>
                 <input
                   type="number"
@@ -2663,18 +3114,18 @@ export default function ContractDetailModal({
                   min={0}
                   max={100}
                   step={1}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                   placeholder="20"
                 />
               </div>
 
-              <div className="min-w-[110px] w-[130px]">
+              <div className="min-w-[90px] w-[110px]">
                 <label className={fieldLabel}>Para Birimi</label>
                 <select
                   value={currency}
                   onChange={(e) => setCurrency(e.target.value as 'TRY' | 'EUR' | 'USD')}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                 >
                   <option value="TRY">TRY (TL)</option>
                   <option value="EUR">EUR (€)</option>
@@ -2682,13 +3133,13 @@ export default function ContractDetailModal({
                 </select>
               </div>
 
-              <div className="min-w-[100px] w-[120px]">
+              <div className="min-w-[80px] w-[100px]">
                 <label className={fieldLabel}>Dil</label>
                 <select
                   value={language}
                   onChange={(e) => setLanguage(e.target.value as 'TR' | 'EN')}
                   disabled={isReadOnly}
-                  className="input w-full text-sm py-1.5"
+                  className={fieldInput}
                 >
                   <option value="TR">Türkçe</option>
                   <option value="EN">English</option>
@@ -2696,12 +3147,13 @@ export default function ContractDetailModal({
               </div>
 
               {!isReadOnly && (
-                <div className="min-w-[140px] w-[170px]">
+                <div className="min-w-[120px] w-[150px]">
                   <label className={fieldLabel}>Varsayılan depo *</label>
                   <select
                     value={selectedWarehouseId}
                     onChange={(e) => setSelectedWarehouseId(Number(e.target.value) || '')}
-                    className="input w-full text-sm py-1.5"
+                    className={fieldInput}
+                    title={!selectedWarehouseId ? 'Ürün eklemek için depo seçin' : undefined}
                   >
                     <option value="">Depo seçin</option>
                     {warehouses.map((wh) => (
@@ -2710,131 +3162,131 @@ export default function ContractDetailModal({
                       </option>
                     ))}
                   </select>
-                  {!selectedWarehouseId && (
-                    <span className="text-[10px] text-amber-400">Ürün eklemek için depo seçin.</span>
-                  )}
                 </div>
               )}
 
-              <div className="min-w-[260px] flex-[1.4] space-y-2">
-                {isRentalContract && (
-                  <div>
-                    <label className={fieldLabel}>Belge türü</label>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        onClick={() => void handleDocumentKindChange('contract')}
-                        disabled={isEnsuringExtresiTemplate}
-                        className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                          documentKind === 'contract'
-                            ? 'bg-primary text-white'
-                            : 'bg-background-hover text-text-secondary hover:text-text-primary'
-                        }`}
-                      >
-                        Sözleşme
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleDocumentKindChange('extre')}
-                        disabled={isEnsuringExtresiTemplate}
-                        className={`flex-1 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
-                          documentKind === 'extre'
-                            ? 'bg-warning text-white'
-                            : 'bg-background-hover text-text-secondary hover:text-text-primary'
-                        }`}
-                      >
-                        {isEnsuringExtresiTemplate ? 'Hazırlanıyor...' : 'Kullanım Extresi'}
-                      </button>
-                    </div>
-                  </div>
-                )}
-                <div>
-                  <div className="flex items-center justify-between gap-2">
-                    <label className={fieldLabel}>Şablon</label>
+              {isRentalContract && (
+                <div className="min-w-[200px] w-[220px]">
+                  <label className={fieldLabel}>Belge türü</label>
+                  <div className="flex gap-1">
                     <button
                       type="button"
-                      onClick={() => navigate('/document-templates?tab=contract')}
-                      className="text-[10px] text-primary hover:underline"
+                      onClick={() => void handleDocumentKindChange('contract')}
+                      disabled={isEnsuringExtresiTemplate}
+                      className={`flex-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                        documentKind === 'contract'
+                          ? 'bg-primary text-white'
+                          : 'bg-background-hover text-text-secondary hover:text-text-primary'
+                      }`}
                     >
-                      Şablonları yönet
+                      Sözleşme
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => void handleDocumentKindChange('extre')}
+                      disabled={isEnsuringExtresiTemplate}
+                      className={`flex-1 rounded px-2 py-1 text-[11px] font-medium transition-colors ${
+                        documentKind === 'extre'
+                          ? 'bg-warning text-white'
+                          : 'bg-background-hover text-text-secondary hover:text-text-primary'
+                      }`}
+                    >
+                      {isEnsuringExtresiTemplate ? '...' : 'Extre'}
                     </button>
                   </div>
-                  <div className="flex gap-1">
-                    <select
-                      value={activeTemplateId}
-                      onChange={(e) => setActiveTemplateId(Number(e.target.value) || '')}
-                      className="input w-full text-sm py-1.5"
-                      disabled={isEnsuringExtresiTemplate || visibleTemplates.length === 0}
-                    >
-                      <option value="">
-                        {visibleTemplates.length === 0 ? 'Bu tür için şablon yok' : 'Şablon seçin'}
+                </div>
+              )}
+
+              <div className="min-w-[220px] flex-1">
+                <div className="flex items-center justify-between gap-2">
+                  <label className={fieldLabel}>Şablon</label>
+                  <button
+                    type="button"
+                    onClick={() => navigate('/document-templates?tab=contract')}
+                    className="text-[10px] text-primary hover:underline leading-none"
+                  >
+                    Yönet
+                  </button>
+                </div>
+                <div className="flex gap-1">
+                  <select
+                    value={activeTemplateId}
+                    onChange={(e) => setActiveTemplateId(Number(e.target.value) || '')}
+                    className={fieldInput}
+                    disabled={isEnsuringExtresiTemplate || visibleTemplates.length === 0}
+                  >
+                    <option value="">
+                      {visibleTemplates.length === 0 ? 'Bu tür için şablon yok' : 'Şablon seçin'}
+                    </option>
+                    {visibleTemplates.map((t) => (
+                      <option key={t.TemplateId} value={t.TemplateId}>
+                        {t.TemplateName} {t.IsDefault ? '(Varsayılan)' : ''}
                       </option>
-                      {visibleTemplates.map((t) => (
-                        <option key={t.TemplateId} value={t.TemplateId}>
-                          {t.TemplateName} {t.IsDefault ? '(Varsayılan)' : ''}
-                        </option>
-                      ))}
-                    </select>
-                    {activeTemplateId && (
-                      <button
-                        type="button"
-                        onClick={async () => {
-                          const template = visibleTemplates.find((t) => t.TemplateId === Number(activeTemplateId));
-                          if (!template) return;
-                          try {
-                            setLoadingTemplate(true);
-                            const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
-                            setEditingTemplate(fullTemplate);
-                            setIsNewTemplate(false);
-                            setIsTemplateEditorOpen(true);
-                          } catch (error) {
-                            console.error('Şablon yükleme hatası:', error);
-                            toast.error(getApiErrorMessage(error));
-                          } finally {
-                            setLoadingTemplate(false);
-                          }
-                        }}
-                        disabled={loadingTemplate}
-                        className={`btn-secondary shrink-0 ${compactBtn}`}
-                      >
-                        {loadingTemplate ? '...' : 'Düzenle'}
-                      </button>
-                    )}
+                    ))}
+                  </select>
+                  {activeTemplateId && (
                     <button
                       type="button"
-                      onClick={() => {
-                        setEditingTemplate(null);
-                        setIsNewTemplate(true);
-                        setIsTemplateEditorOpen(true);
+                      onClick={async () => {
+                        const template = visibleTemplates.find((t) => t.TemplateId === Number(activeTemplateId));
+                        if (!template) return;
+                        try {
+                          setLoadingTemplate(true);
+                          const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
+                          setEditingTemplate(fullTemplate);
+                          setIsNewTemplate(false);
+                          setIsTemplateEditorOpen(true);
+                        } catch (error) {
+                          console.error('Şablon yükleme hatası:', error);
+                          toast.error(getApiErrorMessage(error));
+                        } finally {
+                          setLoadingTemplate(false);
+                        }
                       }}
+                      disabled={loadingTemplate}
                       className={`btn-secondary shrink-0 ${compactBtn}`}
                     >
-                      Yeni
+                      {loadingTemplate ? '...' : 'Düzenle'}
                     </button>
-                  </div>
-                  {documentKind === 'extre' && extreTemplates.length === 0 && !isEnsuringExtresiTemplate && (
-                    <span className="text-[10px] text-amber-400 mt-1 block">
-                      Extre şablonu seçildiğinde otomatik oluşturulur.
-                    </span>
                   )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEditingTemplate(null);
+                      setIsNewTemplate(true);
+                      setIsTemplateEditorOpen(true);
+                    }}
+                    className={`btn-secondary shrink-0 ${compactBtn}`}
+                  >
+                    Yeni
+                  </button>
                 </div>
               </div>
             </div>
           </section>
 
-          <section className="rounded-lg border border-background-border bg-background-panel flex-1 min-h-0 flex flex-col overflow-hidden">
-            <div className="shrink-0 flex flex-wrap items-center justify-between gap-2 px-3 py-1.5 border-b border-background-border">
-              <h3 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+          <section className="rounded border border-background-border bg-background-panel flex-1 min-h-0 flex flex-col overflow-hidden">
+            <div className="shrink-0 flex flex-wrap items-center justify-between gap-1.5 px-2.5 py-1 border-b border-background-border">
+              <h3 className="text-[11px] font-semibold text-text-secondary uppercase tracking-wider">
                 {contractType === 'SALE' ? 'Satış Kalemleri' : 'Kiralanan Malzemeler'}
                 {contractItems.length > 0 && (
                   <span className="ml-1.5 font-normal normal-case tracking-normal text-text-secondary/80">
-                    {addendumItemCount > 0
-                      ? `(${baseContractItemCount} + ${addendumItemCount} zeyilname)`
-                      : `(${contractItems.length})`}
+                    ({contractItems.length}
+                    {addendumItemCount > 0 ? ` · ${addendumItemCount} zeyilname` : ''})
                   </span>
                 )}
               </h3>
               <div className="flex flex-wrap items-center gap-1.5">
+                {addendumItemCount > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('addendum-extras')}
+                    className={`btn-secondary ${compactBtn}`}
+                    title="Zeyilname ile eklenen kalemleri ayrı sayfada göster"
+                  >
+                    Zeyilname ekleri ({addendumItemCount})
+                  </button>
+                )}
                 {isNew && !isReadOnly && (
                   <button
                     type="button"
@@ -2948,9 +3400,13 @@ export default function ContractDetailModal({
                       <th
                         className="text-right whitespace-nowrap"
                         style={{ width: LINE_ITEM_COL.total }}
-                        title="İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır."
+                        title={
+                          isRentalContract
+                            ? 'İskonto sonrası 1 aylık (30 gün) satır tutarı. Tam dönem için alttaki düğmeyi kullanın.'
+                            : 'İskonto sonrası satır tutarı. Düzenlerseniz iskonto % otomatik hesaplanır.'
+                        }
                       >
-                        Toplam
+                        {isRentalContract ? 'Aylık Toplam' : 'Toplam'}
                       </th>
                       <th className="text-center w-12">İşlem</th>
                     </tr>
@@ -2964,28 +3420,25 @@ export default function ContractDetailModal({
                       </tr>
                     ) : (
                     contractItemDisplayEntries.map((entry, rowIndex) => {
-                      if (entry.kind === 'separator') {
-                        return (
-                          <tr key="addendum-separator" className="addendum-separator-row">
-                            <td colSpan={isReadOnly ? LINE_ITEM_COL_SPAN.contract.readOnly : LINE_ITEM_COL_SPAN.contract.editable}>
-                              Zeyilname ile eklenen kalemler
-                            </td>
-                          </tr>
-                        );
-                      }
+                      if (entry.kind === 'separator') return null;
 
                       const { item, isAddendumRow, addendumNo } = entry;
                       const remainingOnRent = item.kind === 'inventory' ? item.RentedQuantity - item.ReturnedQuantity : 0;
                       // İskonto / iade formu için ürün+depo anahtarı (iş kuralı)
                       const itemKey = item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : item.ClientId;
-                      // Liste satırı: aynı ürün zeyilname ile yeniden eklenebildiği için DetailId zorunlu
                       const rowKey =
                         item.kind === 'inventory'
-                          ? item.DetailId != null
-                            ? `d-${item.DetailId}`
-                            : `${item.ItemId}-${item.WarehouseId}-r${rowIndex}`
+                          ? inventoryLineRowKey(item, rowIndex)
                           : item.ClientId;
-                      const isReturnFormOpen = item.kind === 'inventory' ? returnDetailKey === itemKey : false;
+                      const lineDetailId =
+                        item.DetailId != null && item.DetailId > 0 ? item.DetailId : null;
+                      const lineHistoryEvents =
+                        lineDetailId != null ? addendumLineHistory.get(lineDetailId) : undefined;
+                      const historyBadgeLabel = getLineAddendumBadgeLabel(lineHistoryEvents);
+                      const hasLineHistory = Boolean(historyBadgeLabel);
+                      const showAddendumHighlight = hasLineHistory || isAddendumRow;
+                      const isReturnFormOpen =
+                        item.kind === 'inventory' ? returnDetailKey === rowKey : false;
                       const invItem =
                         item.kind === 'inventory'
                           ? availableItems.find((i) => i.ItemId === item.ItemId)
@@ -3016,15 +3469,15 @@ export default function ContractDetailModal({
                             onDragOver={!isReadOnly ? (e) => handleContractItemDragOver(e, rowIndex) : undefined}
                             onDrop={!isReadOnly ? (e) => handleContractItemDrop(e, rowIndex) : undefined}
                             className={`${
-                              isAddendumRow ? 'addendum-row ' : ''
+                              showAddendumHighlight ? 'addendum-row ' : ''
                             }${
                               justAdded
                                 ? 'bg-green-500/20'
                                 : isRowActive
                                   ? 'ring-2 ring-inset ring-primary/60 bg-primary/15'
-                                  : !isAddendumRow && rowIndex % 2 === 0
+                                  : !showAddendumHighlight && rowIndex % 2 === 0
                                     ? 'bg-background-panel'
-                                    : !isAddendumRow
+                                    : !showAddendumHighlight
                                       ? 'bg-background-secondary/35'
                                       : ''
                             } ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
@@ -3047,7 +3500,22 @@ export default function ContractDetailModal({
                             )}
                             <td className="text-text-secondary">
                               <span className="inline-flex items-center gap-1 min-w-0 max-w-full">
-                                {isAddendumRow ? (
+                                {historyBadgeLabel && lineDetailId != null ? (
+                                  <button
+                                    type="button"
+                                    data-addendum-history-badge
+                                    className="addendum-badge cursor-pointer hover:brightness-110 focus:outline-none focus-visible:ring-1 focus-visible:ring-amber-400/60"
+                                    title="Zeyilname kırılımını göster"
+                                    aria-label="Zeyilname kırılımını göster"
+                                    aria-expanded={openHistoryDetailId === lineDetailId}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      toggleAddendumHistoryPopover(lineDetailId, e.currentTarget);
+                                    }}
+                                  >
+                                    {historyBadgeLabel}
+                                  </button>
+                                ) : isAddendumRow ? (
                                   <span
                                     className="addendum-badge"
                                     title="Bu kalem onaylı zeyilname ile sözleşmeye eklenmiştir"
@@ -3421,14 +3889,15 @@ export default function ContractDetailModal({
                             </td>
                             <td className="text-right tabular-nums">
                               {isReadOnly ? (
-                                Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0
+                                getRowDiscountPercent(item)
                               ) : (
                                 <input
-                                  type="number"
-                                  min={0}
-                                  max={100}
-                                  step={0.01}
-                                  value={Number(item.kind === 'inventory' ? getItemIskonto(item.ItemId, item.WarehouseId) : iskonto) || 0}
+                                  type="text"
+                                  inputMode="decimal"
+                                  value={
+                                    iskontoInputs[netKey] ??
+                                    String(getRowDiscountPercent(item)).replace('.', ',')
+                                  }
                                   ref={(el) => {
                                     const key = `${rowIndex}-5`;
                                     if (el) itemsGridRefs.current.set(key, el);
@@ -3440,17 +3909,20 @@ export default function ContractDetailModal({
                                   }}
                                   onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 5)}
                                   onChange={(e) => {
-                                    const v = parseFloat(e.target.value);
-                                    if (item.kind === 'inventory') {
-                                      updateContractItemIskonto(
-                                        item.ItemId,
-                                        item.WarehouseId,
-                                        Number.isFinite(v) ? v : 0
-                                      );
-                                    } else {
-                                      setIskonto(Number.isFinite(v) ? v : 0);
+                                    setIskontoInputs((prev) => ({ ...prev, [netKey]: e.target.value }));
+                                  }}
+                                  onBlur={() => {
+                                    const parsed = parseDiscountInput(iskontoInputs[netKey] ?? '');
+                                    if (parsed != null) {
+                                      updateContractItemIskonto(netKey, parsed);
+                                      setLineNetInputs((prev) => {
+                                        if (!(netKey in prev)) return prev;
+                                        const next = { ...prev };
+                                        delete next[netKey];
+                                        return next;
+                                      });
                                     }
-                                    setLineNetInputs((prev) => {
+                                    setIskontoInputs((prev) => {
                                       if (!(netKey in prev)) return prev;
                                       const next = { ...prev };
                                       delete next[netKey];
@@ -3469,7 +3941,7 @@ export default function ContractDetailModal({
                                 <input
                                   type="text"
                                   inputMode="decimal"
-                                  value={lineNetInputs[netKey] ?? formatPriceInput(lineNet)}
+                                  value={lineNetInputs[netKey] ?? formatNetPriceInput(lineNet)}
                                   ref={(el) => {
                                     const key = `${rowIndex}-6`;
                                     if (el) itemsGridRefs.current.set(key, el);
@@ -3518,8 +3990,12 @@ export default function ContractDetailModal({
                                     });
                                   }}
                                   className="input w-full text-right py-0.5 text-xs font-medium text-green-500"
-                                  aria-label="İskontolu satır tutarı"
-                                  title="İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır"
+                                  aria-label={isRentalContract ? 'İskontolu aylık satır tutarı' : 'İskontolu satır tutarı'}
+                                  title={
+                                    isRentalContract
+                                      ? 'İskonto sonrası 1 aylık tutar — değiştirirseniz iskonto % otomatik ayarlanır'
+                                      : 'İskonto sonrası tutar — değiştirirseniz iskonto % otomatik ayarlanır'
+                                  }
                                 />
                               )}
                             </td>
@@ -3527,7 +4003,7 @@ export default function ContractDetailModal({
                               {isRentalContract && !isNew && item.kind === 'inventory' && active && remainingOnRent > 0 && isReadOnly ? (
                                 <button
                                   type="button"
-                                  onClick={() => openReturnForm(item)}
+                                  onClick={() => openReturnForm(item, rowIndex)}
                                   className="btn-secondary text-[10px] px-1 py-0 leading-none h-[1.125rem] min-h-0"
                                   disabled={isReturning}
                                   title={
@@ -3596,59 +4072,59 @@ export default function ContractDetailModal({
           </section>
 
           <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
-            <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">Ara Toplam</span>
-                <span className="font-semibold text-text-primary">{formatCurrency(subtotal)}</span>
+            <div className="flex flex-col gap-1.5 min-w-0">
+              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
+                {renderPriceBreakdownFields(displayedPriceBreakdown, { includeSettlement: true })}
+                {contractType === 'RENTAL' && (
+                  <span className="text-[11px] text-text-secondary">
+                    30 gün üzerinden
+                    {Number.isFinite(plannedDays) && plannedDays >= 1 ? ` · planlanan ${plannedDays} gün` : ''}
+                    {Number.isFinite(actualDays) && actualDays > 0 ? ` · gerçekleşen ${actualDays} gün` : ''}
+                  </span>
+                )}
+                {contractType === 'RENTAL' && canShowFullContractPrice && (
+                  <button
+                    type="button"
+                    onClick={() => setShowFullContractPrice((open) => !open)}
+                    aria-pressed={showingFullContractPrice}
+                    title={
+                      showingFullContractPrice
+                        ? 'Tam sözleşme tutarını gizle'
+                        : 'Planlanan sürenin tam tutarını göster'
+                    }
+                    className="rounded border border-background-border bg-background-elevated px-2 py-0.5 text-[11px] font-medium text-text-primary hover:bg-background-hover"
+                  >
+                    {showingFullContractPrice ? 'Tam fiyatı gizle' : 'Tam sözleşme fiyatı'}
+                  </button>
+                )}
+                {contractType === 'SALE' && (
+                  <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
+                )}
+                {contract?.FinalCalculatedPrice != null && (
+                  <div>
+                    <span className="text-[11px] text-text-secondary mr-1.5">Final Tutar</span>
+                    <span className="font-semibold text-green-200">{formatCurrency(contract.FinalCalculatedPrice)}</span>
+                  </div>
+                )}
+                {!isNew && contract && active && priceCalculation && (
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
+                    {contractType === 'RENTAL' && (
+                      <span className="text-text-secondary">Planlanan: {priceCalculation.plannedDays} gün</span>
+                    )}
+                    <span className="text-text-secondary">Temel: {formatCurrency(priceCalculation.basePrice)}</span>
+                    {priceCalculation.totalLateFee > 0 && (
+                      <span className="text-orange-300">Gecikme: {formatCurrency(priceCalculation.totalLateFee)}</span>
+                    )}
+                    <span className="font-semibold text-green-300">Final: {formatCurrency(priceCalculation.finalPrice)}</span>
+                  </div>
+                )}
               </div>
-              {totalSettlementCharge > 0 && (
-                <div title="Sözleşmedeki zayi, hurda veya iade satışlarından kaynaklanan kesinti / borç tutarı genel toplama eklenmiştir.">
-                  <span className="text-[11px] text-text-secondary mr-1.5">Zayi Borcu</span>
-                  <span className="font-semibold text-red-400">+{formatCurrency(totalSettlementCharge)}</span>
-                </div>
-              )}
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">İskonto</span>
-                <span className="font-semibold text-red-300">-{formatCurrency(discountAmount)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
-                <span className="font-semibold text-text-primary">{formatCurrency(discountedTotal)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
-                <span className="font-semibold text-yellow-300">{formatCurrency(vatAmount)}</span>
-              </div>
-              <div>
-                <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
-                <span className="text-lg font-bold text-green-400">{formatCurrency(grandTotal)}</span>
-              </div>
-              {contractType === 'RENTAL' && (
-                <span className="text-[11px] text-text-secondary">
-                  {plannedDays} gün
-                  {actualDays > 0 ? ` · gerçekleşen ${actualDays} gün` : ''}
-                  {' · '}planlanan süre üzerinden
-                </span>
-              )}
-              {contractType === 'SALE' && (
-                <span className="text-[11px] text-text-secondary">Satış: birim fiyat, süre çarpanı yok</span>
-              )}
-              {contract?.FinalCalculatedPrice != null && (
-                <div>
-                  <span className="text-[11px] text-text-secondary mr-1.5">Final Tutar</span>
-                  <span className="font-semibold text-green-200">{formatCurrency(contract.FinalCalculatedPrice)}</span>
-                </div>
-              )}
-              {!isNew && contract && active && priceCalculation && (
-                <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px]">
-                  {contractType === 'RENTAL' && (
-                    <span className="text-text-secondary">Planlanan: {priceCalculation.plannedDays} gün</span>
-                  )}
-                  <span className="text-text-secondary">Temel: {formatCurrency(priceCalculation.basePrice)}</span>
-                  {priceCalculation.totalLateFee > 0 && (
-                    <span className="text-orange-300">Gecikme: {formatCurrency(priceCalculation.totalLateFee)}</span>
-                  )}
-                  <span className="font-semibold text-green-300">Final: {formatCurrency(priceCalculation.finalPrice)}</span>
+              {showingFullContractPrice && (
+                <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0 border-t border-background-border pt-1.5">
+                  {renderPriceBreakdownFields(fullContractPriceBreakdown, { compactGrand: true })}
+                  <span className="text-[11px] text-text-secondary">
+                    {Number.isFinite(plannedDays) && plannedDays >= 1 ? plannedDays : billedDays} gün · tam sözleşme
+                  </span>
                 </div>
               )}
             </div>
@@ -3675,7 +4151,7 @@ export default function ContractDetailModal({
               )}
               {!isReadOnly && !completed && (
                 <>
-                  <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                  <button type="button" onClick={requestClose} className={`btn-secondary ${compactBtn}`}>
                     İptal
                   </button>
                   <button
@@ -3689,7 +4165,7 @@ export default function ContractDetailModal({
                 </>
               )}
               {isReadOnly && (
-                <button type="button" onClick={onClose} className={`btn-secondary ${compactBtn}`}>
+                <button type="button" onClick={requestClose} className={`btn-secondary ${compactBtn}`}>
                   Kapat
                 </button>
               )}
@@ -3744,6 +4220,19 @@ export default function ContractDetailModal({
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={showCloseConfirm}
+        title="Sözleşme kapatılsın mı?"
+        message="Sözleşme penceresini kapatmak istediğinize emin misiniz? Kaydedilmemiş değişiklikler kaybolabilir."
+        confirmLabel="Kapat"
+        cancelLabel="Geri dön"
+        onConfirm={() => {
+          setShowCloseConfirm(false);
+          onClose();
+        }}
+        onCancel={() => setShowCloseConfirm(false)}
+      />
 
       <ConfirmModal
         open={showCancelConfirm}
@@ -3874,13 +4363,7 @@ export default function ContractDetailModal({
           open={showReturnConfirm}
           title="Onaylıyor musunuz?"
           message={returnDetailKey ? (() => {
-            const [itemIdStr, warehouseIdStr] = returnDetailKey.split('-');
-            const itemId = Number(itemIdStr);
-            const warehouseId = Number(warehouseIdStr);
-            const item = contractItems.find(
-              (i): i is Extract<ContractLineItem, { kind: 'inventory' }> =>
-                i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
-            );
+            const item = findInventoryLineByReturnKey(contractItems, returnDetailKey);
             const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
             return item
               ? `Bu iadeyi onaylıyor musunuz? (${qty} adet, ${formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)})`
@@ -3924,11 +4407,12 @@ export default function ContractDetailModal({
         currency={currency}
         onClose={() => setShowManualLineModal(false)}
         onAdd={(data) => {
+          const clientId = `manual-${crypto.randomUUID()}`;
           setContractItems((prev) => [
             ...prev,
             {
               kind: 'manual',
-              ClientId: `manual-${crypto.randomUUID()}`,
+              ClientId: clientId,
               IsManual: true,
               Description: data.Description,
               RentedQuantity: data.Quantity,
@@ -3937,6 +4421,7 @@ export default function ContractDetailModal({
               PriceSource: 'MANUAL',
             },
           ]);
+          setItemIskonto((prev) => ({ ...prev, [`man-${clientId}`]: iskonto }));
         }}
       />
       {settleItem && contract && (
@@ -3972,6 +4457,76 @@ export default function ContractDetailModal({
           onClose={() => setSelectedInventoryForDetail(null)}
         />
       )}
+      {openHistoryDetailId != null &&
+        historyPopoverPos &&
+        openLineHistoryEvents &&
+        openLineHistoryEvents.length > 0 && (
+          <div
+            data-addendum-history-popover
+            role="dialog"
+            aria-label="Zeyilname kırılımı"
+            className="fixed z-[200] min-w-[240px] max-w-[300px] rounded-lg border border-amber-500/35 bg-background-panel shadow-lg py-2"
+            style={{ top: historyPopoverPos.top, left: historyPopoverPos.left }}
+          >
+            <p className="px-3 pb-1.5 text-[10px] font-semibold uppercase tracking-wider text-text-secondary">
+              Zeyilname kırılımı
+            </p>
+            <ul className="max-h-56 overflow-y-auto px-1.5 space-y-1">
+              {openLineHistoryEvents.map((ev) => {
+                const qtyLabel =
+                  ev.quantityDelta == null
+                    ? '—'
+                    : ev.quantityDelta > 0
+                      ? `+${ev.quantityDelta}`
+                      : String(ev.quantityDelta);
+                const priceLabel =
+                  ev.newUnitPrice != null ? formatCurrency(ev.newUnitPrice) : null;
+                const tags = [
+                  ev.isReversal ? 'Ters kayıt' : null,
+                  ev.isFromReversedAddendum ? 'Tersine çevrildi' : null,
+                ].filter(Boolean);
+                return (
+                  <li
+                    key={`${ev.addendumId}-${ev.addendumDetailId}`}
+                    className="rounded border border-background-border/60 bg-background-secondary/40 px-2.5 py-1.5 text-xs"
+                  >
+                    <div className="flex items-baseline justify-between gap-2">
+                      <span className="font-semibold text-text-primary tabular-nums">
+                        Z#{ev.addendumNo ?? ev.addendumId}
+                      </span>
+                      <span
+                        className={`shrink-0 tabular-nums font-medium ${
+                          ev.quantityDelta != null && ev.quantityDelta < 0
+                            ? 'text-red-300'
+                            : ev.quantityDelta != null && ev.quantityDelta > 0
+                              ? 'text-emerald-300'
+                              : 'text-text-secondary'
+                        }`}
+                      >
+                        {qtyLabel}
+                      </span>
+                    </div>
+                    <div className="mt-0.5 text-[11px] text-text-secondary">
+                      {getChangeTypeLabel(ev.changeType)}
+                      {priceLabel ? ` · ${priceLabel}` : ''}
+                    </div>
+                    {tags.length > 0 && (
+                      <div className="mt-0.5 text-[10px] text-amber-300/90">{tags.join(' · ')}</div>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+            {openLineHistoryQuantity != null && (
+              <p className="mt-1.5 border-t border-background-border px-3 pt-1.5 text-[11px] text-text-secondary">
+                Satır toplamı:{' '}
+                <span className="font-semibold tabular-nums text-text-primary">
+                  {openLineHistoryQuantity}
+                </span>
+              </p>
+            )}
+          </div>
+        )}
     </div>
   );
 

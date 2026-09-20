@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { XIcon } from '@phosphor-icons/react';
 import type {
@@ -12,12 +12,17 @@ import type {
 } from '../../models';
 import { addendumService } from '../../services/addendumService';
 import {
+  applyAddendumDisplayNumbers,
+  buildContractAddendumDisplayNoMap,
   canApproveOrRejectAddendum,
   canDeleteAddendum,
+  canReverseAddendum,
   canSubmitAddendum,
+  formatAddendumRefLabel,
+  getAddendumDisplayStatusLabel,
   getAddendumStatusBadgeClass,
-  getAddendumStatusLabel,
   getChangeTypeLabel,
+  getReverseBlockedReason,
   isAddendumEditable,
 } from '../../utils/addendum';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
@@ -28,6 +33,8 @@ import ConfirmModal from './ConfirmModal';
 import PdfPreviewModal from './PdfPreviewModal';
 import AddendumLineItemModal from './AddendumLineItemModal';
 import AddendumAddProductsModal from './AddendumAddProductsModal';
+import AddendumReverseModal from './AddendumReverseModal';
+import ContractLinesReferenceDrawer from '../contracts/ContractLinesReferenceDrawer';
 
 function todayDateInputValue(): string {
   return new Date().toISOString().split('T')[0];
@@ -58,15 +65,21 @@ interface AddendumDetailModalProps {
   /** null = yeni oluştur */
   addendumId: number | null;
   contractLines: ContractLineItem[];
+  /** Sözleşme genel iskontosu (%); zeyilnameye ürün eklerken ilk değer */
+  contractDiscountPercent?: number;
   items: Inventory[];
   warehouses: Warehouse[];
   currency?: CurrencyCode;
   templateId?: number | '';
+  /** Sözleşme aktif mi (tersine çevirme için) */
+  contractActive?: boolean;
+  /** Aynı sözleşmedeki diğer zeyilnameler (aktif ters kayıt kontrolü) */
+  siblingAddenda?: Addendum[];
   canUpdate: boolean;
   canDelete: boolean;
   onClose: () => void;
-  /** Liste + sözleşme yenileme */
-  onChanged: (opts?: { approved?: boolean }) => Promise<void> | void;
+  /** Liste + sözleşme yenileme; openAddendumId ile detayı yeni kayda taşı */
+  onChanged: (opts?: { approved?: boolean; openAddendumId?: number }) => Promise<void> | void;
   zIndexClass?: string;
 }
 
@@ -76,10 +89,13 @@ export default function AddendumDetailModal({
   contractType,
   addendumId,
   contractLines,
+  contractDiscountPercent = 0,
   items,
   warehouses,
   currency = 'TRY',
   templateId = '',
+  contractActive = true,
+  siblingAddenda = [],
   canUpdate,
   canDelete,
   onClose,
@@ -97,10 +113,12 @@ export default function AddendumDetailModal({
 
   const [showLineModal, setShowLineModal] = useState(false);
   const [showAddProductsModal, setShowAddProductsModal] = useState(false);
+  const [showContractPeek, setShowContractPeek] = useState(false);
   const [editingDetail, setEditingDetail] = useState<AddendumDetail | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
+  const [showReverseModal, setShowReverseModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
@@ -109,6 +127,30 @@ export default function AddendumDetailModal({
   const status = addendum?.Status ?? 'draft';
   const editable = Boolean(addendum && isAddendumEditable(status) && canUpdate);
   const details = addendum?.details ?? addendum?.Details ?? [];
+  const contractPeekHighlightedIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const d of details) {
+      if (d.ItemId != null && d.ItemId > 0) ids.add(d.ItemId);
+    }
+    return ids;
+  }, [details]);
+  const showReverse =
+    addendum != null &&
+    canReverseAddendum({
+      addendum,
+      contractActive,
+      canUpdate,
+      siblingAddenda,
+    });
+  const reverseBlockedReason =
+    addendum != null && addendum.Status === 'approved' && canUpdate
+      ? getReverseBlockedReason({
+          addendum,
+          contractActive,
+          canUpdate,
+          siblingAddenda,
+        })
+      : null;
 
   const loadAddendum = async (id: number) => {
     setLoading(true);
@@ -131,10 +173,13 @@ export default function AddendumDetailModal({
     if (!open) {
       setAddendum(null);
       setShowLineModal(false);
+      setShowAddProductsModal(false);
+      setShowContractPeek(false);
       setEditingDetail(null);
       setConfirmApprove(false);
       setConfirmDelete(false);
       setShowRejectModal(false);
+      setShowReverseModal(false);
       setRejectionReason('');
       createStartedRef.current = false;
       return;
@@ -188,6 +233,14 @@ export default function AddendumDetailModal({
       if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
     };
   }, [pdfPreviewUrl]);
+
+  const displayAddendum = useMemo(() => {
+    if (!addendum) return null;
+    const peers = siblingAddenda.some((row) => row.AddendumId === addendum.AddendumId)
+      ? siblingAddenda
+      : [...siblingAddenda, addendum];
+    return applyAddendumDisplayNumbers(addendum, buildContractAddendumDisplayNoMap(peers));
+  }, [addendum, siblingAddenda]);
 
   if (!open) return null;
 
@@ -390,11 +443,7 @@ export default function AddendumDetailModal({
   };
 
   const titleNo =
-    addendum?.AddendumNo != null
-      ? `#${addendum.AddendumNo}`
-      : addendum
-        ? `#${addendum.AddendumId}`
-        : '';
+    displayAddendum?.AddendumNo != null ? `#${displayAddendum.AddendumNo}` : '';
 
   const modalTree = (
     <div className={`fixed inset-0 flex flex-col bg-background-main ${zIndexClass}`}>
@@ -404,11 +453,30 @@ export default function AddendumDetailModal({
             Zeyilname / Ek Protokol {titleNo}
           </h2>
           {addendum && (
-            <span
-              className={`shrink-0 text-xs px-2 py-0.5 rounded-full border ${getAddendumStatusBadgeClass(status)}`}
-            >
-              {getAddendumStatusLabel(status)}
-            </span>
+            <div className="flex flex-wrap items-center gap-1.5 shrink-0">
+              <span
+                className={`text-xs px-2 py-0.5 rounded-full border ${getAddendumStatusBadgeClass(status)}`}
+              >
+                {getAddendumDisplayStatusLabel(addendum)}
+              </span>
+              {addendum.IsReversal && (
+                <span className="text-xs px-2 py-0.5 rounded-full border bg-violet-500/20 text-violet-200 border-violet-500/40">
+                  Ters zeyilname
+                </span>
+              )}
+              {addendum.IsReversed && (
+                <span
+                  className="text-xs px-2 py-0.5 rounded-full border bg-slate-500/25 text-slate-200 border-slate-500/40"
+                  title={
+                    addendum.ReversedAt
+                      ? `Tersine çevrilme: ${formatShortDateTime(addendum.ReversedAt)}`
+                      : undefined
+                  }
+                >
+                  Tersine çevrildi
+                </span>
+              )}
+            </div>
           )}
         </div>
         <button
@@ -431,6 +499,72 @@ export default function AddendumDetailModal({
               <div className="rounded-xl border border-red-500/40 bg-red-900/20 px-4 py-3 text-sm text-red-200">
                 <span className="font-medium">Red gerekçesi: </span>
                 {addendum.RejectionReason}
+              </div>
+            )}
+
+            {(addendum.IsReversal || addendum.IsReversed) && (
+              <div className="rounded-xl border border-violet-500/30 bg-violet-900/15 px-4 py-3 text-sm text-violet-100 space-y-1.5">
+                {addendum.IsReversal && addendum.ReversesAddendumId != null && (
+                  <div>
+                    <span className="font-medium">Kaynak zeyilname: </span>
+                    <button
+                      type="button"
+                      className="underline underline-offset-2 hover:text-white"
+                      disabled={isBusy}
+                      onClick={() =>
+                        void Promise.resolve(
+                          onChanged({ openAddendumId: addendum.ReversesAddendumId! })
+                        )
+                      }
+                    >
+                      {formatAddendumRefLabel({
+                        number: displayAddendum?.ReversesAddendumNumber,
+                        code: addendum.ReversesAddendumCode,
+                        id: addendum.ReversesAddendumId,
+                      })}
+                      {addendum.ReversesAddendumCode
+                        ? ` (${addendum.ReversesAddendumCode})`
+                        : ''}
+                    </button>
+                    <span className="text-violet-200/80"> — bu kayıt onu tersine çevirir</span>
+                  </div>
+                )}
+                {addendum.IsReversed && addendum.ReversedByAddendumId != null && (
+                  <div
+                    title={
+                      addendum.ReversedAt
+                        ? `Tersine çevrilme: ${formatShortDateTime(addendum.ReversedAt)}`
+                        : undefined
+                    }
+                  >
+                    <span className="font-medium">Tersine çeviren: </span>
+                    <button
+                      type="button"
+                      className="underline underline-offset-2 hover:text-white"
+                      disabled={isBusy}
+                      onClick={() =>
+                        void Promise.resolve(
+                          onChanged({ openAddendumId: addendum.ReversedByAddendumId! })
+                        )
+                      }
+                    >
+                      {formatAddendumRefLabel({
+                        number: displayAddendum?.ReversedByAddendumNumber,
+                        code: addendum.ReversedByAddendumCode,
+                        id: addendum.ReversedByAddendumId,
+                      })}
+                      {addendum.ReversedByAddendumCode
+                        ? ` (${addendum.ReversedByAddendumCode})`
+                        : ''}
+                    </button>
+                    {addendum.ReversedAt && (
+                      <span className="text-violet-200/80">
+                        {' '}
+                        — {formatShortDateTime(addendum.ReversedAt)}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
             )}
 
@@ -491,29 +625,44 @@ export default function AddendumDetailModal({
             <section className="rounded-xl border border-background-border bg-background-panel p-4 space-y-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="text-sm font-semibold text-text-primary">Kalemler</h3>
-                {editable && (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="btn-primary text-sm"
-                      disabled={isBusy}
-                      onClick={() => setShowAddProductsModal(true)}
-                    >
-                      Ürün Ekle
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary text-sm"
-                      disabled={isBusy}
-                      onClick={() => {
-                        setEditingDetail(null);
-                        setShowLineModal(true);
-                      }}
-                    >
-                      Mevcut Kalemi Değiştir
-                    </button>
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    disabled={isBusy}
+                    onClick={() => setShowContractPeek(true)}
+                  >
+                    Sözleşme ürünleri
+                    {contractLines.length > 0 ? ` (${contractLines.length})` : ''}
+                  </button>
+                  {editable && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary text-sm"
+                        disabled={isBusy}
+                        onClick={() => {
+                          setShowContractPeek(false);
+                          setShowAddProductsModal(true);
+                        }}
+                      >
+                        Ürün Ekle
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary text-sm"
+                        disabled={isBusy}
+                        onClick={() => {
+                          setShowContractPeek(false);
+                          setEditingDetail(null);
+                          setShowLineModal(true);
+                        }}
+                      >
+                        Mevcut Kalemi Değiştir
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {details.length === 0 ? (
@@ -534,8 +683,11 @@ export default function AddendumDetailModal({
                       </tr>
                     </thead>
                     <tbody>
-                      {details.map((d) => (
-                        <tr key={d.DetailId} className="border-b border-background-border/60">
+                      {details.map((d, idx) => (
+                        <tr
+                          key={d.DetailId > 0 ? d.DetailId : `detail-${idx}-${d.ChangeType}-${d.ContractDetailId ?? d.ItemId ?? 0}`}
+                          className="border-b border-background-border/60"
+                        >
                           <td className="py-2 pr-3 whitespace-nowrap">
                             {getChangeTypeLabel(d.ChangeType)}
                           </td>
@@ -656,6 +808,31 @@ export default function AddendumDetailModal({
               </button>
             </>
           )}
+          {showReverse && addendum && (
+            <button
+              type="button"
+              className="btn-secondary border-violet-500/40 text-violet-200"
+              disabled={isBusy}
+              onClick={() => setShowReverseModal(true)}
+            >
+              Tersine Çevir
+            </button>
+          )}
+          {!showReverse &&
+            addendum &&
+            addendum.Status === 'approved' &&
+            canUpdate &&
+            reverseBlockedReason &&
+            !addendum.IsReversed && (
+              <button
+                type="button"
+                className="btn-secondary opacity-50 cursor-not-allowed"
+                disabled
+                title={reverseBlockedReason}
+              >
+                Tersine Çevir
+              </button>
+            )}
           {canDelete && addendum && canDeleteAddendum(status) && (
             <button
               type="button"
@@ -673,7 +850,7 @@ export default function AddendumDetailModal({
         open={confirmApprove}
         title="Zeyilnameyi onayla"
         message={
-          'Bu işlem geri alınamaz.\nOnay sonrası değişiklikler sözleşmeye uygulanır.\n\nOnay sonrası değişiklik geri alınamaz.'
+          'Onay sonrası değişiklikler sözleşmeye uygulanır.\nGerekirse daha sonra ters zeyilname ile etkisi geri alınabilir.'
         }
         confirmLabel="Onayla"
         cancelLabel="Vazgeç"
@@ -739,6 +916,8 @@ export default function AddendumDetailModal({
           items={items}
           warehouses={warehouses}
           currency={currency}
+          contractLines={contractLines}
+          contractDiscountPercent={contractDiscountPercent}
           zIndexClass="z-[75]"
           onClose={() => setShowAddProductsModal(false)}
           onSaved={async () => {
@@ -747,6 +926,17 @@ export default function AddendumDetailModal({
           }}
         />
       )}
+
+      <ContractLinesReferenceDrawer
+        open={showContractPeek}
+        onClose={() => setShowContractPeek(false)}
+        lines={contractLines}
+        contractType={contractType}
+        currency={currency}
+        highlightedItemIds={contractPeekHighlightedIds}
+        highlightLabel="Bu zeyilnamede"
+        zIndexClass="z-[80]"
+      />
 
       {addendum && (
         <AddendumLineItemModal
@@ -777,6 +967,18 @@ export default function AddendumDetailModal({
         downloadFileName={`zeyilname_${addendum?.AddendumId ?? ''}.pdf`}
         onClose={closePdfPreview}
       />
+
+      {addendum && (
+        <AddendumReverseModal
+          open={showReverseModal}
+          sourceAddendum={displayAddendum ?? addendum}
+          zIndexClass="z-[85]"
+          onClose={() => setShowReverseModal(false)}
+          onCreated={async (newAddendumId) => {
+            await Promise.resolve(onChanged({ openAddendumId: newAddendumId }));
+          }}
+        />
+      )}
     </div>
   );
 

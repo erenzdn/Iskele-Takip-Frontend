@@ -35,7 +35,7 @@ describe('customerContacts', () => {
       { Name: 'Ali', Phone: '0555 111 22 33' },
       { Name: 'Veli', Phone: '05551112233' },
     ]);
-    expect(error).toContain('telefon numaraları tekrar edemez');
+    expect(error).toContain('cep telefonu numaraları tekrar edemez');
   });
 
   it('bir müşteri için multiple primary engellenir', () => {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { CheckCircleIcon, MinusCircleIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
 import { Inventory } from '../../models';
 import ItemPickerPanel, { ItemDisplayMode, QuotePricingMode } from '../ItemPickerPanel';
@@ -111,10 +112,13 @@ export default function ProductPickerModal({
   useEffect(() => {
     if (!open) return;
     const handleEsc = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key !== 'Escape') return;
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      onClose();
     };
-    window.addEventListener('keydown', handleEsc);
-    return () => window.removeEventListener('keydown', handleEsc);
+    window.addEventListener('keydown', handleEsc, true);
+    return () => window.removeEventListener('keydown', handleEsc, true);
   }, [open, onClose]);
 
   const scheduleHighlightClear = (itemId: number) => {
@@ -159,7 +163,7 @@ export default function ProductPickerModal({
       ? 'Listede olan satıra tekrar tıklayarak kalemi çıkarın. Yeni ürün eklemek için satıra bir kez tıklayın; miktarı alttaki listedeki sütundan düzenleyin.'
       : 'Satıra tıklayarak ekleyin; miktarı alttaki listedeki miktar sütunundan düzenleyin.';
 
-  return (
+  const modalTree = (
     <div
       className={`fixed inset-0 ${zIndexClass} flex flex-col bg-black/60`}
       aria-modal="true"
@@ -227,4 +231,6 @@ export default function ProductPickerModal({
       </div>
     </div>
   );
+
+  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
 }
