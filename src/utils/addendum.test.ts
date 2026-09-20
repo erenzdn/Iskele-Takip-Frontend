@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { Addendum, ContractLineItem } from '../models';
 import {
   applyContractLocalAddendumNumbers,
+  applyWarehouseIdToLines,
   buildAddendumAddedLineSources,
   buildAddendumExtrasDisplayGroups,
   buildContractAddendumDisplayNoMap,
@@ -663,5 +664,23 @@ describe('getAddendumSourceForContractLine display no map', () => {
       addendumId: 40,
       addendumNo: 1,
     });
+  });
+});
+
+describe('applyWarehouseIdToLines', () => {
+  it('boş listede değişiklik yapmaz', () => {
+    const lines: Array<{ warehouseId: number | '' }> = [];
+    expect(applyWarehouseIdToLines(lines, 3)).toBe(lines);
+  });
+
+  it('varsayılan depo seçilince tüm satır depolarını günceller', () => {
+    const lines = [
+      { key: 'a', warehouseId: '' as const },
+      { key: 'b', warehouseId: 1 },
+    ];
+    expect(applyWarehouseIdToLines(lines, 7)).toEqual([
+      { key: 'a', warehouseId: 7 },
+      { key: 'b', warehouseId: 7 },
+    ]);
   });
 });

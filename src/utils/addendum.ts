@@ -596,3 +596,12 @@ export function formatAddendumRefLabel(opts: {
   if (opts.id != null) return `#${opts.id}`;
   return '—';
 }
+
+/** Ürün ekleme taslağında varsayılan depoyu tüm satırlara uygular. */
+export function applyWarehouseIdToLines<T extends { warehouseId: number | '' }>(
+  lines: T[],
+  warehouseId: number
+): T[] {
+  if (lines.length === 0) return lines;
+  return lines.map((line) => ({ ...line, warehouseId }));
+}

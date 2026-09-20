@@ -34,6 +34,7 @@ import PdfPreviewModal from './PdfPreviewModal';
 import AddendumLineItemModal from './AddendumLineItemModal';
 import AddendumAddProductsModal from './AddendumAddProductsModal';
 import AddendumReverseModal from './AddendumReverseModal';
+import ContractLinesReferenceDrawer from '../contracts/ContractLinesReferenceDrawer';
 
 function todayDateInputValue(): string {
   return new Date().toISOString().split('T')[0];
@@ -112,6 +113,7 @@ export default function AddendumDetailModal({
 
   const [showLineModal, setShowLineModal] = useState(false);
   const [showAddProductsModal, setShowAddProductsModal] = useState(false);
+  const [showContractPeek, setShowContractPeek] = useState(false);
   const [editingDetail, setEditingDetail] = useState<AddendumDetail | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -125,6 +127,13 @@ export default function AddendumDetailModal({
   const status = addendum?.Status ?? 'draft';
   const editable = Boolean(addendum && isAddendumEditable(status) && canUpdate);
   const details = addendum?.details ?? addendum?.Details ?? [];
+  const contractPeekHighlightedIds = useMemo(() => {
+    const ids = new Set<number>();
+    for (const d of details) {
+      if (d.ItemId != null && d.ItemId > 0) ids.add(d.ItemId);
+    }
+    return ids;
+  }, [details]);
   const showReverse =
     addendum != null &&
     canReverseAddendum({
@@ -164,6 +173,8 @@ export default function AddendumDetailModal({
     if (!open) {
       setAddendum(null);
       setShowLineModal(false);
+      setShowAddProductsModal(false);
+      setShowContractPeek(false);
       setEditingDetail(null);
       setConfirmApprove(false);
       setConfirmDelete(false);
@@ -614,29 +625,44 @@ export default function AddendumDetailModal({
             <section className="rounded-xl border border-background-border bg-background-panel p-4 space-y-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
                 <h3 className="text-sm font-semibold text-text-primary">Kalemler</h3>
-                {editable && (
-                  <div className="flex flex-wrap gap-2">
-                    <button
-                      type="button"
-                      className="btn-primary text-sm"
-                      disabled={isBusy}
-                      onClick={() => setShowAddProductsModal(true)}
-                    >
-                      Ürün Ekle
-                    </button>
-                    <button
-                      type="button"
-                      className="btn-secondary text-sm"
-                      disabled={isBusy}
-                      onClick={() => {
-                        setEditingDetail(null);
-                        setShowLineModal(true);
-                      }}
-                    >
-                      Mevcut Kalemi Değiştir
-                    </button>
-                  </div>
-                )}
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    className="btn-secondary text-sm"
+                    disabled={isBusy}
+                    onClick={() => setShowContractPeek(true)}
+                  >
+                    Sözleşme ürünleri
+                    {contractLines.length > 0 ? ` (${contractLines.length})` : ''}
+                  </button>
+                  {editable && (
+                    <>
+                      <button
+                        type="button"
+                        className="btn-primary text-sm"
+                        disabled={isBusy}
+                        onClick={() => {
+                          setShowContractPeek(false);
+                          setShowAddProductsModal(true);
+                        }}
+                      >
+                        Ürün Ekle
+                      </button>
+                      <button
+                        type="button"
+                        className="btn-secondary text-sm"
+                        disabled={isBusy}
+                        onClick={() => {
+                          setShowContractPeek(false);
+                          setEditingDetail(null);
+                          setShowLineModal(true);
+                        }}
+                      >
+                        Mevcut Kalemi Değiştir
+                      </button>
+                    </>
+                  )}
+                </div>
               </div>
 
               {details.length === 0 ? (
@@ -900,6 +926,17 @@ export default function AddendumDetailModal({
           }}
         />
       )}
+
+      <ContractLinesReferenceDrawer
+        open={showContractPeek}
+        onClose={() => setShowContractPeek(false)}
+        lines={contractLines}
+        contractType={contractType}
+        currency={currency}
+        highlightedItemIds={contractPeekHighlightedIds}
+        highlightLabel="Bu zeyilnamede"
+        zIndexClass="z-[80]"
+      />
 
       {addendum && (
         <AddendumLineItemModal
