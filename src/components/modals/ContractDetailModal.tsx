@@ -289,6 +289,9 @@ export default function ContractDetailModal({
     () => new Map()
   );
   const [approvedAddenda, setApprovedAddenda] = useState<Addendum[]>([]);
+  const [addendumDisplayNoById, setAddendumDisplayNoById] = useState<Map<number, number>>(
+    () => new Map()
+  );
   const [openHistoryDetailId, setOpenHistoryDetailId] = useState<number | null>(null);
   const [historyPopoverPos, setHistoryPopoverPos] = useState<{ top: number; left: number } | null>(
     null
@@ -442,20 +445,24 @@ export default function ContractDetailModal({
       setAddendumLineSources(new Map());
       setAddendumLineHistory(new Map());
       setApprovedAddenda([]);
+      setAddendumDisplayNoById(new Map());
       setOpenHistoryDetailId(null);
       setHistoryPopoverPos(null);
       return;
     }
     try {
-      const { sources, history, addenda } = await addendumService.loadContractAddendumLineMapsAsync(id);
+      const { sources, history, addenda, displayNoByAddendumId } =
+        await addendumService.loadContractAddendumLineMapsAsync(id);
       setAddendumLineSources(sources);
       setAddendumLineHistory(history);
       setApprovedAddenda(addenda);
+      setAddendumDisplayNoById(displayNoByAddendumId);
     } catch (error) {
       console.error('Load addendum line sources error:', error);
       setAddendumLineSources(new Map());
       setAddendumLineHistory(new Map());
       setApprovedAddenda([]);
+      setAddendumDisplayNoById(new Map());
     }
   };
 
@@ -538,6 +545,7 @@ export default function ContractDetailModal({
       setAddendumLineSources(new Map());
       setAddendumLineHistory(new Map());
       setApprovedAddenda([]);
+      setAddendumDisplayNoById(new Map());
       closeAddendumHistoryPopover();
     }
   }, [contract?.ContractId, isNew, isRentalContract, canViewContracts]);
@@ -634,11 +642,13 @@ export default function ContractDetailModal({
         [];
       if (details.length > 0) {
         const priceErrors: string[] = [];
+        const globalIsk = (source as { Iskonto?: number }).Iskonto ?? 0;
         const items: ContractLineItem[] = details.map((detail: any) => {
           const normalizedPrice = normalizeContractDetailPrice(detail);
           if (normalizedPrice.error) priceErrors.push(normalizedPrice.error);
           const unitPriceSnapshot = normalizedPrice.value ?? 0;
           const isManual = detail.IsManual === true || detail.is_manual === true || detail.IsManual === 1 || detail.is_manual === 1;
+          const lineIskonto = lineIskontoFromApi(detail, globalIsk);
           if (isManual) {
             return {
               kind: 'manual',
@@ -709,6 +719,7 @@ export default function ContractDetailModal({
               (detail.ItemNameOverride ??
                 detail.itemNameOverride ??
                 null) as string | null,
+            Iskonto: lineIskonto,
             OverrideUnitPrice: undefined,
             OverrideMonthlyPrice:
               (detail.MonthlyPriceOverride ?? detail.monthlyPriceOverride) != null &&
@@ -719,7 +730,6 @@ export default function ContractDetailModal({
         });
         setContractPriceError(priceErrors.length > 0 ? priceErrors.join(' ') : null);
         setContractItems(items);
-        const globalIsk = (source as { Iskonto?: number }).Iskonto ?? 0;
         setItemIskonto(() => {
           const next: Record<string, number> = {};
           items.forEach((i, idx) => {
@@ -1019,9 +1029,10 @@ export default function ContractDetailModal({
       buildContractItemDisplayEntries(
         contractItems,
         addendumLineSources,
-        false
+        false,
+        addendumDisplayNoById
       ),
-    [contractItems, addendumLineSources]
+    [contractItems, addendumLineSources, addendumDisplayNoById]
   );
 
   const openLineHistoryEvents = useMemo(() => {
@@ -1050,11 +1061,12 @@ export default function ContractDetailModal({
             contractItems,
             sources: addendumLineSources,
             formatNet: (item) => formatMoney(getLineNetTotal(item), currency),
+            displayNoByAddendumId: addendumDisplayNoById,
           })
         : [],
     // getLineNetTotal bağımlılıkları: contractItems, itemIskonto, iskonto, displayPricingDays, contractType, currency
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [approvedAddenda, contractItems, addendumLineSources, isNew, canViewContracts, currency, itemIskonto, iskonto]
+    [approvedAddenda, contractItems, addendumLineSources, addendumDisplayNoById, isNew, canViewContracts, currency, itemIskonto, iskonto]
   );
 
   const addendumItemCount = useMemo(
@@ -1376,7 +1388,7 @@ export default function ContractDetailModal({
     setItemIskonto((prev) => ({ ...prev, [key]: pct }));
   };
 
-  /** Yeşil Toplam (net) → iskonto % ters hesabı. Kiralama satırı 30 günlük brüt üzerinden. */
+  /** Yeşil Toplam (net) → iskonto % ters hesabı. Brütü aşarsa iskonto %0, fiyat değişmez. */
   const applyLineNetTarget = (item: ContractLineItem, targetNet: number) => {
     const result = discountPercentFromNet(getLineTotal(item, displayPricingDays), targetNet);
     updateContractItemIskonto(lineNetInputKey(item), result.discountPercent);
@@ -2759,6 +2771,7 @@ export default function ContractDetailModal({
             contractType={contractType}
             contractActive={active}
             contractLines={contractItems}
+            contractDiscountPercent={iskonto}
             items={availableItems}
             warehouses={warehouses}
             currency={currency}

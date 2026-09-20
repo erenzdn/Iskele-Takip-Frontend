@@ -19,6 +19,61 @@ export type LineAddendumEvent = {
   addendumDetailId: number;
 };
 
+/**
+ * Bir sözleşmenin zeyilnamelerini oluşum sırasına (AddendumId) göre 1'den numaralandırır.
+ * Global veritabanı kimliği yerine sözleşme içi sıra gösterilir.
+ */
+export function buildContractAddendumDisplayNoMap(
+  addenda: Array<Pick<Addendum, 'AddendumId'>>
+): Map<number, number> {
+  const ids = new Set<number>();
+  for (const row of addenda) {
+    if (row.AddendumId > 0) ids.add(row.AddendumId);
+  }
+  const sorted = [...ids].sort((a, b) => a - b);
+  const map = new Map<number, number>();
+  sorted.forEach((id, index) => {
+    map.set(id, index + 1);
+  });
+  return map;
+}
+
+export function lookupContractAddendumDisplayNo(
+  addendumId: number | null | undefined,
+  displayNoById: Map<number, number> | undefined,
+  fallback?: number | null
+): number | null {
+  if (addendumId == null || addendumId <= 0) return fallback ?? null;
+  const mapped = displayNoById?.get(addendumId);
+  return mapped ?? fallback ?? null;
+}
+
+export function applyAddendumDisplayNumbers<T extends Addendum>(
+  row: T,
+  displayNoById: Map<number, number>
+): T {
+  return {
+    ...row,
+    AddendumNo: lookupContractAddendumDisplayNo(row.AddendumId, displayNoById),
+    ReversesAddendumNumber: lookupContractAddendumDisplayNo(
+      row.ReversesAddendumId,
+      displayNoById,
+      row.ReversesAddendumNumber
+    ),
+    ReversedByAddendumNumber: lookupContractAddendumDisplayNo(
+      row.ReversedByAddendumId,
+      displayNoById,
+      row.ReversedByAddendumNumber
+    ),
+  };
+}
+
+/** Sözleşmedeki tüm zeyilnamelere 1..n yerel numara yazar. */
+export function applyContractLocalAddendumNumbers<T extends Addendum>(addenda: T[]): T[] {
+  const displayNoById = buildContractAddendumDisplayNoMap(addenda);
+  return addenda.map((row) => applyAddendumDisplayNumbers(row, displayNoById));
+}
+
 /** Onaylı zeyilnamelerdeki ADD kalemlerinden sözleşme satırı → zeyilname eşlemesi */
 export function buildAddendumAddedLineSources(addenda: Addendum[]): Map<number, AddendumLineSource> {
   const map = new Map<number, AddendumLineSource>();
@@ -128,18 +183,28 @@ export function getLineAddendumBadgeLabel(events: LineAddendumEvent[] | undefine
 
 export function getAddendumSourceForContractLine(
   item: ContractLineItem,
-  sources: Map<number, AddendumLineSource>
+  sources: Map<number, AddendumLineSource>,
+  displayNoByAddendumId?: Map<number, number>
 ): AddendumLineSource | null {
+  const resolveNo = (addendumId: number, fallback: number | null): number | null =>
+    displayNoByAddendumId
+      ? lookupContractAddendumDisplayNo(addendumId, displayNoByAddendumId, fallback)
+      : fallback;
+
   const directId = item.SourceAddendumId;
   if (directId != null && directId > 0) {
     return {
       addendumId: directId,
-      addendumNo: item.SourceAddendumNo ?? null,
+      addendumNo: resolveNo(directId, item.SourceAddendumNo ?? null),
     };
   }
   const detailId = item.DetailId;
   if (detailId != null && detailId > 0 && sources.has(detailId)) {
-    return sources.get(detailId)!;
+    const src = sources.get(detailId)!;
+    return {
+      ...src,
+      addendumNo: resolveNo(src.addendumId, src.addendumNo),
+    };
   }
   return null;
 }
@@ -177,11 +242,12 @@ export type AddendumExtrasDisplayGroup = {
 /** Zeyilname kaynaklı kalemleri zeyilname no'ya göre gruplar */
 export function groupAddendumLineItemsByAddendum(
   items: ContractLineItem[],
-  sources: Map<number, AddendumLineSource>
+  sources: Map<number, AddendumLineSource>,
+  displayNoByAddendumId?: Map<number, number>
 ): AddendumLineGroup[] {
   const map = new Map<number, AddendumLineGroup>();
   for (const item of items) {
-    const source = getAddendumSourceForContractLine(item, sources);
+    const source = getAddendumSourceForContractLine(item, sources, displayNoByAddendumId);
     if (!source) continue;
     let group = map.get(source.addendumId);
     if (!group) {
@@ -235,23 +301,36 @@ export function buildAddendumExtrasDisplayGroups(opts: {
   contractItems: ContractLineItem[];
   sources: Map<number, AddendumLineSource>;
   formatNet: (item: ContractLineItem) => string;
+  displayNoByAddendumId?: Map<number, number>;
 }): AddendumExtrasDisplayGroup[] {
-  const { addenda, contractItems, sources, formatNet } = opts;
+  const { addenda, contractItems, sources, formatNet, displayNoByAddendumId } = opts;
   const approved = addenda.filter((a) => a.Status === 'approved');
   const byId = new Map(approved.map((a) => [a.AddendumId, a]));
   const groups: AddendumExtrasDisplayGroup[] = [];
   const seenAddendumIds = new Set<number>();
 
-  const addGroups = groupAddendumLineItemsByAddendum(contractItems, sources);
+  const addGroups = groupAddendumLineItemsByAddendum(
+    contractItems,
+    sources,
+    displayNoByAddendumId
+  );
   for (const g of addGroups) {
     const meta = byId.get(g.addendumId);
     seenAddendumIds.add(g.addendumId);
     groups.push({
       addendumId: g.addendumId,
-      addendumNo: g.addendumNo ?? meta?.AddendumNo ?? null,
+      addendumNo: lookupContractAddendumDisplayNo(
+        g.addendumId,
+        displayNoByAddendumId,
+        g.addendumNo ?? meta?.AddendumNo
+      ),
       isReversal: Boolean(meta?.IsReversal),
       isReversed: Boolean(meta?.IsReversed),
-      reversesAddendumNo: meta?.ReversesAddendumNumber ?? null,
+      reversesAddendumNo: lookupContractAddendumDisplayNo(
+        meta?.ReversesAddendumId,
+        displayNoByAddendumId,
+        meta?.ReversesAddendumNumber
+      ),
       reversesAddendumId: meta?.ReversesAddendumId ?? null,
       rows: g.items.map((item, idx) => {
         const name =
@@ -280,10 +359,18 @@ export function buildAddendumExtrasDisplayGroups(opts: {
     seenAddendumIds.add(addendum.AddendumId);
     groups.push({
       addendumId: addendum.AddendumId,
-      addendumNo: addendum.AddendumNo ?? null,
+      addendumNo: lookupContractAddendumDisplayNo(
+        addendum.AddendumId,
+        displayNoByAddendumId,
+        addendum.AddendumNo
+      ),
       isReversal: true,
       isReversed: Boolean(addendum.IsReversed),
-      reversesAddendumNo: addendum.ReversesAddendumNumber ?? null,
+      reversesAddendumNo: lookupContractAddendumDisplayNo(
+        addendum.ReversesAddendumId,
+        displayNoByAddendumId,
+        addendum.ReversesAddendumNumber
+      ),
       reversesAddendumId: addendum.ReversesAddendumId ?? null,
       rows: details.map((detail, idx) => ({
         key: `rev-${addendum.AddendumId}-${detail.DetailId || idx}`,
@@ -309,13 +396,14 @@ export function buildAddendumExtrasDisplayGroups(opts: {
 export function buildContractItemDisplayEntries(
   items: ContractLineItem[],
   sources: Map<number, AddendumLineSource>,
-  splitAddendumRows: boolean
+  splitAddendumRows: boolean,
+  displayNoByAddendumId?: Map<number, number>
 ): ContractItemDisplayEntry[] {
   if (items.length === 0) return [];
 
   if (!splitAddendumRows) {
     return items.map((item) => {
-      const source = getAddendumSourceForContractLine(item, sources);
+      const source = getAddendumSourceForContractLine(item, sources, displayNoByAddendumId);
       return {
         kind: 'row' as const,
         item,
@@ -329,7 +417,7 @@ export function buildContractItemDisplayEntries(
   const addendum: Array<{ item: ContractLineItem; addendumNo: number | null; addendumId: number }> = [];
 
   for (const item of items) {
-    const source = getAddendumSourceForContractLine(item, sources);
+    const source = getAddendumSourceForContractLine(item, sources, displayNoByAddendumId);
     if (source) {
       addendum.push({
         item,

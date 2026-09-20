@@ -85,19 +85,27 @@ export function persistPriceOfLine(item: QuoteLineItem, quoteType: ContractQuote
   return item.OverrideMonthlyPrice ?? item.MonthlyPriceOverride ?? item.UnitPriceSnapshot * 30;
 }
 
+export function applyQuotedLinePrice(
+  item: QuoteLineItem,
+  quoteType: ContractQuoteType,
+  price: number
+): QuoteLineItem {
+  if (item.kind === 'manual') {
+    return { ...item, UnitPriceSnapshot: price };
+  }
+  if (quoteType === 'SALE') {
+    return { ...item, OverrideUnitPrice: price };
+  }
+  return { ...item, OverrideMonthlyPrice: price };
+}
+
 function applyEncodedLinePrice(
   item: QuoteLineItem,
   quoteType: ContractQuoteType,
   encoded: ReturnType<typeof encodeLinePricingForPersistence>
 ): QuoteLineItem {
   if (!encoded.priceChanged) return item;
-  if (item.kind === 'manual') {
-    return { ...item, UnitPriceSnapshot: encoded.price };
-  }
-  if (quoteType === 'SALE') {
-    return { ...item, OverrideUnitPrice: encoded.price };
-  }
-  return { ...item, OverrideMonthlyPrice: encoded.price };
+  return applyQuotedLinePrice(item, quoteType, encoded.price);
 }
 
 export function buildQuoteDetailRequest(

@@ -164,7 +164,6 @@ export default function AddendumReverseModal({
   const sourceLabel = formatAddendumRefLabel({
     number: sourceAddendum.AddendumNo,
     code: sourceAddendum.AddendumCode,
-    id: sourceAddendum.AddendumId,
   });
 
   const modalTree = (
@@ -206,10 +205,7 @@ export default function AddendumReverseModal({
             <div className="font-medium text-text-primary">Kaynak zeyilname</div>
             <div className="text-text-secondary flex flex-wrap gap-x-4 gap-y-1">
               <span>
-                No:{' '}
-                {preview?.sourceAddendumNumber != null
-                  ? `#${preview.sourceAddendumNumber}`
-                  : sourceLabel}
+                No: {sourceLabel}
               </span>
               <span>
                 Kod:{' '}

@@ -88,4 +88,12 @@ describe('teklif satırı senaryoları', () => {
     const net2 = lineNetFromGross(saleGross(100, 8), 10);
     expect(net2).toBe(720);
   });
+
+  it('yeşil tutar 3000→4000 olunca iskonto %0 olur, birim fiyat değişmez', () => {
+    const r = discountPercentFromNet(3000, 4000);
+    expect(r.discountPercent).toBe(0);
+    expect(r.normalizedNet).toBe(3000);
+    expect(r.reason).toBe('net_above_gross');
+    expect(lineNetFromGross(3000, r.discountPercent)).toBe(3000);
+  });
 });

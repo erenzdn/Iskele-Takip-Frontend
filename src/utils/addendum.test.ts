@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Addendum, ContractLineItem } from '../models';
 import {
+  applyContractLocalAddendumNumbers,
   buildAddendumAddedLineSources,
   buildAddendumExtrasDisplayGroups,
+  buildContractAddendumDisplayNoMap,
   buildContractItemDisplayEntries,
   buildLineAddendumHistory,
   canReverseAddendum,
@@ -601,5 +603,65 @@ describe('canReverseAddendum / hasActiveReverseForSource', () => {
     expect(getAddendumDisplayStatusLabel({ Status: 'approved', IsReversed: false })).toBe(
       'Onaylandı'
     );
+  });
+});
+
+describe('buildContractAddendumDisplayNoMap / applyContractLocalAddendumNumbers', () => {
+  it('sözleşme içinde oluşum sırasına göre 1’den numaralandırır', () => {
+    const map = buildContractAddendumDisplayNoMap([
+      { AddendumId: 40 },
+      { AddendumId: 12 },
+      { AddendumId: 40 },
+      { AddendumId: 25 },
+    ]);
+    expect([...map.entries()]).toEqual([
+      [12, 1],
+      [25, 2],
+      [40, 3],
+    ]);
+  });
+
+  it('global AddendumId yerine sözleşme içi no yazar', () => {
+    const [first, second] = applyContractLocalAddendumNumbers([
+      {
+        AddendumId: 40,
+        ContractId: 1,
+        AddendumNo: 40,
+        Status: 'draft',
+        EffectiveDate: '2026-01-02',
+        IsReversal: false,
+        IsReversed: false,
+      },
+      {
+        AddendumId: 15,
+        ContractId: 1,
+        AddendumNo: 15,
+        Status: 'approved',
+        EffectiveDate: '2026-01-01',
+        IsReversal: true,
+        IsReversed: false,
+        ReversesAddendumId: 40,
+        ReversesAddendumNumber: 40,
+      },
+    ]);
+
+    expect(first.AddendumNo).toBe(2);
+    expect(second.AddendumNo).toBe(1);
+    expect(second.ReversesAddendumNumber).toBe(2);
+  });
+});
+
+describe('getAddendumSourceForContractLine display no map', () => {
+  it('sözleşme içi map varsa SourceAddendumNo yerine onu kullanır', () => {
+    const item = inventoryLine({
+      DetailId: 50,
+      SourceAddendumId: 40,
+      SourceAddendumNo: 40,
+    });
+    const displayNoById = new Map([[40, 1]]);
+    expect(getAddendumSourceForContractLine(item, new Map(), displayNoById)).toEqual({
+      addendumId: 40,
+      addendumNo: 1,
+    });
   });
 });

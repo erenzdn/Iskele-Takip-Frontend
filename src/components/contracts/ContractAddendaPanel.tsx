@@ -27,6 +27,7 @@ interface ContractAddendaPanelProps {
   contractType: ContractQuoteType;
   contractActive: boolean;
   contractLines: ContractLineItem[];
+  contractDiscountPercent?: number;
   items: Inventory[];
   warehouses: Warehouse[];
   currency?: CurrencyCode;
@@ -47,6 +48,7 @@ export default function ContractAddendaPanel({
   contractType,
   contractActive,
   contractLines,
+  contractDiscountPercent = 0,
   items,
   warehouses,
   currency = 'TRY',
@@ -458,6 +460,7 @@ export default function ContractAddendaPanel({
         contractType={contractType}
         addendumId={editorAddendumId}
         contractLines={contractLines}
+        contractDiscountPercent={contractDiscountPercent}
         items={items}
         warehouses={warehouses}
         currency={currency}

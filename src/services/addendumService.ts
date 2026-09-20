@@ -10,7 +10,16 @@ import type {
   CreateAddendumReversalRequest,
   CreateAddendumReversalResult,
 } from '../models';
-import { buildAddendumAddedLineSources, buildLineAddendumHistory, normalizeAddendumStatus, type AddendumLineSource, type LineAddendumEvent } from '../utils/addendum';
+import {
+  applyAddendumDisplayNumbers,
+  applyContractLocalAddendumNumbers,
+  buildAddendumAddedLineSources,
+  buildContractAddendumDisplayNoMap,
+  buildLineAddendumHistory,
+  normalizeAddendumStatus,
+  type AddendumLineSource,
+  type LineAddendumEvent,
+} from '../utils/addendum';
 
 export interface CreateAddendumRequest {
   EffectiveDate: string;
@@ -22,6 +31,8 @@ export type ContractAddendumLineMaps = {
   sources: Map<number, AddendumLineSource>;
   history: Map<number, LineAddendumEvent[]>;
   addenda: Addendum[];
+  /** Sözleşme içi zeyilname sıra numarası (1..n) */
+  displayNoByAddendumId: Map<number, number>;
 };
 
 export interface UpdateAddendumRequest {
@@ -231,38 +242,44 @@ function asList(raw: unknown): unknown[] {
 export const addendumService = {
   async listByContractAsync(contractId: number): Promise<Addendum[]> {
     const raw = await apiClient.get<unknown>(`/contracts/${contractId}/addendums`);
-    return asList(raw).map(normalizeAddendum);
+    return applyContractLocalAddendumNumbers(asList(raw).map(normalizeAddendum));
   },
 
   /** Onaylı zeyilnameleri listeler; details boşsa getById ile zenginleştirir */
   async loadApprovedAddendaWithDetailsAsync(contractId: number): Promise<Addendum[]> {
-    const list = await this.listByContractAsync(contractId);
-    const approved = list.filter((a) => a.Status === 'approved');
-    if (approved.length === 0) return [];
-
-    return Promise.all(
-      approved.map(async (addendum) => {
-        const existingDetails = addendum.details ?? addendum.Details;
-        if (existingDetails && existingDetails.length > 0) return addendum;
-        try {
-          return await this.getByIdAsync(addendum.AddendumId);
-        } catch {
-          return addendum;
-        }
-      })
-    );
+    const { addenda } = await this.loadContractAddendumLineMapsAsync(contractId);
+    return addenda;
   },
 
   /** Tek turda ADD kaynak map + satır kırılım history + onaylı detaylı liste */
   async loadContractAddendumLineMapsAsync(contractId: number): Promise<ContractAddendumLineMaps> {
-    const enriched = await this.loadApprovedAddendaWithDetailsAsync(contractId);
-    if (enriched.length === 0) {
-      return { sources: new Map(), history: new Map(), addenda: [] };
+    const list = await this.listByContractAsync(contractId);
+    const displayNoByAddendumId = buildContractAddendumDisplayNoMap(list);
+    const approved = list.filter((a) => a.Status === 'approved');
+    if (approved.length === 0) {
+      return { sources: new Map(), history: new Map(), addenda: [], displayNoByAddendumId };
     }
+
+    const enriched = await Promise.all(
+      approved.map(async (addendum) => {
+        const existingDetails = addendum.details ?? addendum.Details;
+        if (existingDetails && existingDetails.length > 0) {
+          return applyAddendumDisplayNumbers(addendum, displayNoByAddendumId);
+        }
+        try {
+          const full = await this.getByIdAsync(addendum.AddendumId);
+          return applyAddendumDisplayNumbers(full, displayNoByAddendumId);
+        } catch {
+          return applyAddendumDisplayNumbers(addendum, displayNoByAddendumId);
+        }
+      })
+    );
+
     return {
       sources: buildAddendumAddedLineSources(enriched),
       history: buildLineAddendumHistory(enriched),
       addenda: enriched,
+      displayNoByAddendumId,
     };
   },
 

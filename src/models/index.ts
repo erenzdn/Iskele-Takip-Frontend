@@ -553,6 +553,8 @@ export interface InventoryContractLineItem {
   OverrideUnitPrice?: number;
   /** UI state: kiralama aylık fiyat override */
   OverrideMonthlyPrice?: number;
+  /** Satır iskontosu (%). Zeyilname ürün eklemede ilk değer için. */
+  Iskonto?: number;
 }
 
 export interface ManualContractLineItem {

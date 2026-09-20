@@ -365,19 +365,20 @@ describe('teklif kaydet: geçersiz / boş taslak ve sınırlar', () => {
     expect(saved.details[0].Iskonto).toBe(8);
   });
 
-  it('net brütten büyükse %0 (brüte çekilir) kaydeder', () => {
-    const item = inventoryLine({ Quantity: 1, UnitPriceSnapshot: 100, PriceUnit: 'EACH' });
+  it('net brütten büyükse iskonto %0 olur, birim fiyat değişmez (3000→4000)', () => {
+    const item = inventoryLine({ Quantity: 1, UnitPriceSnapshot: 3000, PriceUnit: 'EACH' });
     const saved = saveQuote({
       items: [item],
       quoteType: 'SALE',
       drafts: drafts({
-        itemIskonto: { '12': 10 },
-        lineNetInputs: { '12': '150,00' },
+        itemIskonto: { '12': 0 },
+        lineNetInputs: { '12': '4.000,00' },
       }),
     });
 
     expect(saved.details[0].Iskonto).toBe(0);
-    expect(reopenFromSaved(saved.details[0], item, 'SALE')).toBe(100);
+    expect(saved.details[0].OverrideUnitPrice).not.toBe(4000);
+    expect(reopenFromSaved(saved.details[0], item, 'SALE')).toBe(3000);
   });
 
   it('net 0 → %100 kaydeder', () => {

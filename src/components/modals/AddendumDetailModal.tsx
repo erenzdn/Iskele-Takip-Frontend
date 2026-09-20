@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { XIcon } from '@phosphor-icons/react';
 import type {
@@ -12,6 +12,8 @@ import type {
 } from '../../models';
 import { addendumService } from '../../services/addendumService';
 import {
+  applyAddendumDisplayNumbers,
+  buildContractAddendumDisplayNoMap,
   canApproveOrRejectAddendum,
   canDeleteAddendum,
   canReverseAddendum,
@@ -62,6 +64,8 @@ interface AddendumDetailModalProps {
   /** null = yeni oluştur */
   addendumId: number | null;
   contractLines: ContractLineItem[];
+  /** Sözleşme genel iskontosu (%); zeyilnameye ürün eklerken ilk değer */
+  contractDiscountPercent?: number;
   items: Inventory[];
   warehouses: Warehouse[];
   currency?: CurrencyCode;
@@ -84,6 +88,7 @@ export default function AddendumDetailModal({
   contractType,
   addendumId,
   contractLines,
+  contractDiscountPercent = 0,
   items,
   warehouses,
   currency = 'TRY',
@@ -217,6 +222,14 @@ export default function AddendumDetailModal({
       if (pdfPreviewUrl) URL.revokeObjectURL(pdfPreviewUrl);
     };
   }, [pdfPreviewUrl]);
+
+  const displayAddendum = useMemo(() => {
+    if (!addendum) return null;
+    const peers = siblingAddenda.some((row) => row.AddendumId === addendum.AddendumId)
+      ? siblingAddenda
+      : [...siblingAddenda, addendum];
+    return applyAddendumDisplayNumbers(addendum, buildContractAddendumDisplayNoMap(peers));
+  }, [addendum, siblingAddenda]);
 
   if (!open) return null;
 
@@ -419,11 +432,7 @@ export default function AddendumDetailModal({
   };
 
   const titleNo =
-    addendum?.AddendumNo != null
-      ? `#${addendum.AddendumNo}`
-      : addendum
-        ? `#${addendum.AddendumId}`
-        : '';
+    displayAddendum?.AddendumNo != null ? `#${displayAddendum.AddendumNo}` : '';
 
   const modalTree = (
     <div className={`fixed inset-0 flex flex-col bg-background-main ${zIndexClass}`}>
@@ -498,7 +507,7 @@ export default function AddendumDetailModal({
                       }
                     >
                       {formatAddendumRefLabel({
-                        number: addendum.ReversesAddendumNumber,
+                        number: displayAddendum?.ReversesAddendumNumber,
                         code: addendum.ReversesAddendumCode,
                         id: addendum.ReversesAddendumId,
                       })}
@@ -529,7 +538,7 @@ export default function AddendumDetailModal({
                       }
                     >
                       {formatAddendumRefLabel({
-                        number: addendum.ReversedByAddendumNumber,
+                        number: displayAddendum?.ReversedByAddendumNumber,
                         code: addendum.ReversedByAddendumCode,
                         id: addendum.ReversedByAddendumId,
                       })}
@@ -881,6 +890,8 @@ export default function AddendumDetailModal({
           items={items}
           warehouses={warehouses}
           currency={currency}
+          contractLines={contractLines}
+          contractDiscountPercent={contractDiscountPercent}
           zIndexClass="z-[75]"
           onClose={() => setShowAddProductsModal(false)}
           onSaved={async () => {
@@ -923,7 +934,7 @@ export default function AddendumDetailModal({
       {addendum && (
         <AddendumReverseModal
           open={showReverseModal}
-          sourceAddendum={addendum}
+          sourceAddendum={displayAddendum ?? addendum}
           zIndexClass="z-[85]"
           onClose={() => setShowReverseModal(false)}
           onCreated={async (newAddendumId) => {

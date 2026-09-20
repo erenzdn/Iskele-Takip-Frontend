@@ -126,7 +126,34 @@ describe('lineDiscount.discountPercentFromNet', () => {
     expect(r.clamped).toBe(true);
     expect(r.reason).toBe('net_above_gross');
   });
+});
 
+describe('lineDiscount.discountPercentFromNet brüt üstü', () => {
+  it('3000→4000 yeşil toplamda fiyat değişmez, iskonto %0 olur', () => {
+    const r = discountPercentFromNet(3000, 4000);
+    expect(r.reason).toBe('net_above_gross');
+    expect(r.discountPercent).toBe(0);
+    expect(r.normalizedNet).toBe(3000);
+    expect(r.clamped).toBe(true);
+    expect(lineNetFromGross(3000, r.discountPercent)).toBe(3000);
+  });
+
+  it('kiralama: 10 adet × 300 = 3000 iken 4000 yazınca iskonto %0, brüt 3000 kalır', () => {
+    const gross = 300 * 10;
+    const r = discountPercentFromNet(gross, 4000);
+    expect(r.reason).toBe('net_above_gross');
+    expect(r.discountPercent).toBe(0);
+    expect(r.normalizedNet).toBe(3000);
+  });
+
+  it('hedef brütün altındaysa iskonto hesaplanır', () => {
+    const r = discountPercentFromNet(3000, 2400);
+    expect(r.discountPercent).toBe(20);
+    expect(r.normalizedNet).toBe(2400);
+  });
+});
+
+describe('lineDiscount.discountPercentFromNet sınırlar', () => {
   it('negatif net → %100 / net 0', () => {
     const r = discountPercentFromNet(100, -1);
     expect(r.discountPercent).toBe(100);
@@ -254,6 +281,19 @@ describe('lineDiscount.resolveCommittedLineDiscount', () => {
     });
     expect(pct).toBe(20);
     expect(lineNetFromGross(1000, pct)).toBe(800);
+  });
+
+  it('yeşil toplam brütü aşarsa iskonto %0 olur, fiyat değişmez', () => {
+    const pct = resolveCommittedLineDiscount({
+      key: '12',
+      gross: 3000,
+      drafts: baseDrafts({
+        itemIskonto: { '12': 0 },
+        lineNetInputs: { '12': '4.000,00' },
+      }),
+    });
+    expect(pct).toBe(0);
+    expect(lineNetFromGross(3000, pct)).toBe(3000);
   });
 
   it('satır % taslağını kayıtlı iskontoya tercih eder', () => {

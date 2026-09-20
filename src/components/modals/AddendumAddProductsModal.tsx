@@ -1,9 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { PlusIcon, TrashIcon, XIcon } from '@phosphor-icons/react';
-import type { ContractQuoteType, CurrencyCode, Inventory, Warehouse } from '../../models';
+import type {
+  ContractLineItem,
+  ContractQuoteType,
+  CurrencyCode,
+  Inventory,
+  Warehouse,
+} from '../../models';
 import { addendumService } from '../../services/addendumService';
 import { inventoryService } from '../../services/inventoryService';
+import { resolveAddendumAddedItemPricing } from '../../utils/addendumAddPricing';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import {
   clampDiscountRange,
@@ -33,28 +40,13 @@ interface AddendumAddProductsModalProps {
   items: Inventory[];
   warehouses: Warehouse[];
   currency?: CurrencyCode;
+  /** Aynı ürün sözleşmede varsa ilk fiyat buradan gelir */
+  contractLines?: ContractLineItem[];
+  /** Sözleşme genel iskontosu; yeni üründe ve satır iskontosu yoksa kullanılır */
+  contractDiscountPercent?: number;
   onClose: () => void;
   onSaved: () => Promise<void> | void;
   zIndexClass?: string;
-}
-
-function unitPriceForInventory(
-  inv: Inventory,
-  cur: CurrencyCode,
-  cType: ContractQuoteType
-): number {
-  if (cType === 'SALE') {
-    return cur === 'EUR'
-      ? inv.UnitPriceEur ?? 0
-      : cur === 'USD'
-        ? inv.UnitPriceUsd ?? 0
-        : inv.UnitPrice ?? 0;
-  }
-  return cur === 'EUR'
-    ? (inv.MonthlyListPriceEur ?? 0) / 30
-    : cur === 'USD'
-      ? (inv.MonthlyListPriceUsd ?? 0) / 30
-      : (inv.MonthlyListPrice || 0) / 30;
 }
 
 function parseDecimalInput(raw: string): number | null {
@@ -71,6 +63,8 @@ export default function AddendumAddProductsModal({
   items,
   warehouses,
   currency = 'TRY',
+  contractLines = [],
+  contractDiscountPercent = 0,
   onClose,
   onSaved,
   zIndexClass = 'z-[75]',
@@ -91,7 +85,7 @@ export default function AddendumAddProductsModal({
     if (!open) return;
     setLines([]);
     setDefaultWarehouseId('');
-    setGlobalIskonto(0);
+    setGlobalIskonto(clampDiscountRange(contractDiscountPercent));
     setShowPicker(false);
     setIsBusy(false);
     setStockError(null);
@@ -137,7 +131,14 @@ export default function AddendumAddProductsModal({
       return 'removed' as const;
     }
     const key = `add-${item.ItemId}-${Date.now()}`;
-    const unitPrice = unitPriceForInventory(item, currency, contractType);
+    const pricing = resolveAddendumAddedItemPricing({
+      item,
+      contractType,
+      currency,
+      contractLines,
+      preferredWarehouseId: defaultWarehouseId,
+      fallbackDiscountPercent: globalIskonto,
+    });
     setLines((prev) => [
       ...prev,
       {
@@ -145,8 +146,8 @@ export default function AddendumAddProductsModal({
         item,
         quantity: Math.max(1, quantity),
         warehouseId: defaultWarehouseId,
-        unitPrice,
-        discountPercent: globalIskonto,
+        unitPrice: pricing.unitPrice,
+        discountPercent: pricing.discountPercent,
       },
     ]);
     return 'added' as const;

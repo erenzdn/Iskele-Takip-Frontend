@@ -231,6 +231,7 @@ export function resolveCommittedHeaderDiscount(
 /**
  * Kaydetmeden önce satır iskontosunu, henüz blur olmamış taslaklardan üretir.
  * Öncelik: yeşil toplam taslağı → satır % taslağı → üst iskonto taslağı → kayıtlı satır % → başlık.
+ * Yeşil toplam brütü aşarsa iskonto %0 olur; birim/aylık fiyat değişmez.
  */
 export function resolveCommittedLineDiscount(params: {
   key: string;

@@ -1297,7 +1297,7 @@ export default function QuoteDetailModal({
     setItemIskonto((prev) => ({ ...prev, [key]: pct }));
   };
 
-  /** Yeşil Toplam (net) değişince iskonto % ters hesaplanır; kiralama 30 günlük brüt üzerinden. */
+  /** Yeşil Toplam (net) değişince iskonto % ters hesaplanır. Brütü aşarsa iskonto %0, fiyat değişmez. */
   const applyLineNetTarget = (item: QuoteLineItem, targetNet: number) => {
     const gross = getLineTotal(item, displayPricingDays);
     const result = discountPercentFromNet(gross, targetNet);
@@ -1349,10 +1349,8 @@ export default function QuoteDetailModal({
       },
     });
 
-  const getCommittedLineIskontoMap = () => getCommittedPricing().lineIskonto;
-
   const buildQuoteDetailsPayload = (lineIskontoMap?: Record<string, number>) => {
-    const discounts = lineIskontoMap ?? getCommittedLineIskontoMap();
+    const discounts = lineIskontoMap ?? getCommittedPricing().lineIskonto;
     return quoteItems.map((item, index) => ({
       ...buildQuoteDetailRequest(
         item,
