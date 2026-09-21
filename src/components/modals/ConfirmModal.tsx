@@ -37,6 +37,7 @@ export default function ConfirmModal({
       role="dialog"
       aria-modal="true"
       aria-labelledby="confirm-modal-title"
+      onMouseDown={(event) => event.stopPropagation()}
     >
       <div className="bg-background-panel rounded-panel w-full max-w-md p-6 shadow-xl">
         <h3 id="confirm-modal-title" className="text-xl font-bold mb-3">

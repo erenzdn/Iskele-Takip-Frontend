@@ -32,6 +32,12 @@ interface InternalState {
   env: Partial<ContextMenuEnvironment> | null;
 }
 
+interface PendingConfirm {
+  action: ContextMenuActionConfig;
+  menuKey: ContextMenuKey;
+  target: ContextMenuTarget;
+}
+
 interface ContextMenuApi {
   isOpen: boolean;
   openContextMenu: (payload: OpenContextMenuPayload) => void;
@@ -55,7 +61,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
   const permissions = useAuthStore((state) => state.user?.permissions ?? []);
   const [state, setState] = useState<InternalState>(initialState);
   const [submenuPath, setSubmenuPath] = useState<string[]>([]);
-  const [confirmAction, setConfirmAction] = useState<ContextMenuActionConfig | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<PendingConfirm | null>(null);
   const [confirmBusy, setConfirmBusy] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const triggerRef = useRef<HTMLElement | null>(null);
@@ -65,7 +71,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
   const closeContextMenu = useCallback(() => {
     setState(initialState);
     setSubmenuPath([]);
-    setConfirmAction(null);
+    setPendingConfirm(null);
     setConfirmBusy(false);
     if (triggerRef.current) {
       triggerRef.current.focus();
@@ -77,7 +83,8 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
     const active = document.activeElement;
     triggerRef.current = active instanceof HTMLElement ? active : null;
     setSubmenuPath([]);
-    setConfirmAction(null);
+    setPendingConfirm(null);
+    setConfirmBusy(false);
     setState({
       isOpen: true,
       x: payload.x,
@@ -153,6 +160,15 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
     };
   }, [closeContextMenu, state.isOpen]);
 
+  useEffect(() => {
+    if (!pendingConfirm || confirmBusy) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeContextMenu();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => document.removeEventListener('keydown', onKeyDown);
+  }, [closeContextMenu, confirmBusy, pendingConfirm]);
+
   const executeAction = useCallback(
     async (action: ContextMenuActionConfig) => {
       if (!state.menuKey || !state.target || !action.handlerKey) return;
@@ -160,7 +176,14 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
       const fn = handlers?.[action.handlerKey as ContextMenuActionHandlerKey];
       if (!fn) return;
       if (action.confirm) {
-        setConfirmAction(action);
+        setPendingConfirm({
+          action,
+          menuKey: state.menuKey,
+          target: state.target,
+        });
+        // Menüyü kapat; onay tıklaması "dışarı tık" sayılmasın.
+        setState(initialState);
+        setSubmenuPath([]);
         return;
       }
       await Promise.resolve(fn(state.target));
@@ -170,18 +193,18 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
   );
 
   const executeConfirmedAction = useCallback(async () => {
-    if (!confirmAction || !state.menuKey || !state.target || !confirmAction.handlerKey) return;
-    const handlers = handlersRef.current.get(state.menuKey);
-    const fn = handlers?.[confirmAction.handlerKey];
+    if (!pendingConfirm?.action.handlerKey) return;
+    const handlers = handlersRef.current.get(pendingConfirm.menuKey);
+    const fn = handlers?.[pendingConfirm.action.handlerKey];
     if (!fn) return;
     try {
       setConfirmBusy(true);
-      await Promise.resolve(fn(state.target));
+      await Promise.resolve(fn(pendingConfirm.target));
       closeContextMenu();
     } finally {
       setConfirmBusy(false);
     }
-  }, [closeContextMenu, confirmAction, state.menuKey, state.target]);
+  }, [closeContextMenu, pendingConfirm]);
 
   const api = useMemo<ContextMenuApi>(
     () => ({
@@ -215,14 +238,18 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
           document.body
         )}
       <ConfirmModal
-        open={Boolean(confirmAction && state.target)}
-        title={confirmAction?.confirm?.title ?? 'Onay gerekiyor'}
-        message={state.target && confirmAction?.confirm ? confirmAction.confirm.message(state.target) : ''}
-        confirmLabel={confirmAction?.confirm?.confirmLabel ?? 'Onayla'}
-        variant={confirmAction?.intent === 'danger' ? 'danger' : 'default'}
+        open={Boolean(pendingConfirm)}
+        title={pendingConfirm?.action.confirm?.title ?? 'Onay gerekiyor'}
+        message={
+          pendingConfirm?.action.confirm
+            ? pendingConfirm.action.confirm.message(pendingConfirm.target)
+            : ''
+        }
+        confirmLabel={pendingConfirm?.action.confirm?.confirmLabel ?? 'Onayla'}
+        variant={pendingConfirm?.action.intent === 'danger' ? 'danger' : 'default'}
         loading={confirmBusy}
         zIndexClass="z-[220]"
-        onCancel={() => setConfirmAction(null)}
+        onCancel={closeContextMenu}
         onConfirm={() => {
           void executeConfirmedAction();
         }}

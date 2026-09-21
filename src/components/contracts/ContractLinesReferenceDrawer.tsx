@@ -1,12 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { MagnifyingGlassIcon, XIcon } from '@phosphor-icons/react';
-import type { ContractLineItem, ContractQuoteType, CurrencyCode } from '../../models';
+import { MagnifyingGlassIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
+import type { ContractLineItem, ContractQuoteType, CurrencyCode, Inventory } from '../../models';
 import {
+  contractLineRentedQuantity,
   filterContractLinesForPeek,
   remainingContractLineQuantity,
+  resolveInventoryForContractLine,
 } from '../../utils/contractLinePeek';
 import { formatInventoryBilingualLabel, formatMoney } from '../../utils/formatters';
+
+type InventoryContractLine = Extract<ContractLineItem, { kind: 'inventory' }>;
 
 interface ContractLinesReferenceDrawerProps {
   open: boolean;
@@ -18,6 +22,13 @@ interface ContractLinesReferenceDrawerProps {
   highlightedItemIds?: ReadonlySet<number>;
   highlightLabel?: string;
   zIndexClass?: string;
+  /** Stok kartı çözümü (tıklayınca ekleme için) */
+  items?: readonly Inventory[];
+  /**
+   * Verilirse stok satırına tıklayınca ürün eklenir.
+   * Verilmezse ekran yalnızca referans kalır.
+   */
+  onSelectInventory?: (item: Inventory, line: InventoryContractLine) => void;
 }
 
 function lineKey(line: ContractLineItem, index: number): string {
@@ -41,8 +52,11 @@ export default function ContractLinesReferenceDrawer({
   highlightedItemIds,
   highlightLabel = 'Bu zeyilnamede',
   zIndexClass = 'z-[80]',
+  items = [],
+  onSelectInventory,
 }: ContractLinesReferenceDrawerProps) {
   const isRental = contractType === 'RENTAL';
+  const selectable = typeof onSelectInventory === 'function';
   const [query, setQuery] = useState('');
 
   useEffect(() => {
@@ -62,6 +76,22 @@ export default function ContractLinesReferenceDrawer({
 
   const filtered = useMemo(() => filterContractLinesForPeek(lines, query), [lines, query]);
 
+  const usageByItemId = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const line of lines) {
+      if (line.kind !== 'inventory') continue;
+      map.set(line.ItemId, (map.get(line.ItemId) ?? 0) + contractLineRentedQuantity(line));
+    }
+    return map;
+  }, [lines]);
+
+  const handleSelectLine = (line: ContractLineItem) => {
+    if (!selectable || line.kind !== 'inventory') return;
+    const item = resolveInventoryForContractLine(line, items);
+    if (!item) return;
+    onSelectInventory(item, line);
+  };
+
   if (!open) return null;
 
   const drawer = (
@@ -73,7 +103,9 @@ export default function ContractLinesReferenceDrawer({
             <div className="min-w-0">
               <h2 className="text-sm font-semibold text-text-primary">Sözleşmedeki ürünler</h2>
               <p className="text-[11px] text-text-secondary mt-0.5">
-                Yalnızca referans. Zeyilname ve eklediğiniz taslak kapanmaz.
+                {selectable
+                  ? 'Stok satırına tıklayarak ekleyin. Zeyilname ve taslak kapanmaz.'
+                  : 'Yalnızca referans. Zeyilname ve eklediğiniz taslak kapanmaz.'}
               </p>
             </div>
             <button
@@ -117,26 +149,32 @@ export default function ContractLinesReferenceDrawer({
                 <tr>
                   <th className="text-left font-medium px-3 py-2">Ürün</th>
                   <th className="text-right font-medium px-3 py-2 whitespace-nowrap">
-                    {isRental ? 'Kirada' : 'Miktar'}
+                    Sözleşmede
                   </th>
                   <th className="text-left font-medium px-3 py-2">Depo</th>
+                  {selectable ? <th className="w-10 px-2 py-2" /> : null}
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((line, index) => {
                   const highlighted =
                     line.kind === 'inventory' && highlightedItemIds?.has(line.ItemId);
-                  const qty = remainingContractLineQuantity(line);
+                  const rented = contractLineRentedQuantity(line);
+                  const remaining = remainingContractLineQuantity(line);
                   const returned =
                     line.kind === 'inventory' && (line.ReturnedQuantity ?? 0) > 0
                       ? line.ReturnedQuantity
                       : 0;
+                  const totalForItem =
+                    line.kind === 'inventory' ? usageByItemId.get(line.ItemId) ?? rented : rented;
+                  const canSelect = selectable && line.kind === 'inventory';
                   return (
                     <tr
                       key={lineKey(line, index)}
                       className={`border-b border-background-border/60 ${
                         highlighted ? 'bg-amber-500/10' : ''
-                      }`}
+                      } ${canSelect ? 'cursor-pointer hover:bg-background-hover/80' : ''}`}
+                      onClick={() => handleSelectLine(line)}
                     >
                       <td className="px-3 py-2 align-top">
                         <div className="font-medium text-text-primary leading-snug">
@@ -158,7 +196,13 @@ export default function ContractLinesReferenceDrawer({
                         </div>
                       </td>
                       <td className="px-3 py-2 text-right align-top tabular-nums text-text-primary whitespace-nowrap">
-                        {qty}
+                        <div className="font-semibold">{rented} adet</div>
+                        {totalForItem !== rented ? (
+                          <div className="text-[10px] text-text-secondary">toplam {totalForItem}</div>
+                        ) : null}
+                        {isRental && remaining !== rented ? (
+                          <div className="text-[10px] text-text-secondary">kirada {remaining}</div>
+                        ) : null}
                         {returned ? (
                           <div className="text-[10px] text-text-secondary">iade {returned}</div>
                         ) : null}
@@ -166,6 +210,25 @@ export default function ContractLinesReferenceDrawer({
                       <td className="px-3 py-2 align-top text-text-secondary">
                         {line.kind === 'inventory' ? line.WarehouseName || '—' : '—'}
                       </td>
+                      {selectable ? (
+                        <td className="px-2 py-2 align-middle text-center">
+                          {canSelect ? (
+                            <button
+                              type="button"
+                              className="inline-flex items-center justify-center w-7 h-7 rounded-lg text-blue-400 bg-blue-500/15 hover:bg-blue-500/25"
+                              aria-label={`${lineTitle(line)} ekle`}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleSelectLine(line);
+                              }}
+                            >
+                              <PlusIcon size={14} weight="bold" />
+                            </button>
+                          ) : (
+                            <span className="text-[10px] text-text-secondary">—</span>
+                          )}
+                        </td>
+                      ) : null}
                     </tr>
                   );
                 })}
@@ -176,6 +239,7 @@ export default function ContractLinesReferenceDrawer({
 
         <footer className="shrink-0 px-4 py-2.5 border-t border-background-border text-[11px] text-text-secondary">
           {filtered.length} / {lines.length} kalem
+          {selectable ? ' · Stok ürününe tıklayınca eklenir' : ''}
         </footer>
       </aside>
     </div>

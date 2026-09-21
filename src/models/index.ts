@@ -619,6 +619,60 @@ export interface SettleNonReturnRequest {
   priceBasis: 'TRY' | 'USD' | 'EUR';
   warehouseId?: number;
   settlementChargeOverride?: number | string;
+  /** Aynı ItemId için birden fazla sözleşme satırı varsa zorunlu */
+  DetailId?: number | null;
+}
+
+export interface BillingVarianceReason {
+  AddendumId: number;
+  AddendumNumber: number;
+  Reason: string | null;
+  EffectiveDate: string;
+}
+
+export interface BillingPeriodLine {
+  DetailId: number;
+  ItemId: number;
+  gross: number;
+  net: number;
+}
+
+export interface BillingPeriod {
+  index: number;
+  periodStart: string;
+  periodEnd: string;
+  isPartial: boolean;
+  isClosed: boolean;
+  accrualSubtotal: number;
+  accrualNetTotal: number;
+  billedAmount: number | null;
+  variance: number | null;
+  varianceReasons: BillingVarianceReason[];
+  lines: BillingPeriodLine[];
+}
+
+export interface BillingCurrentPeriodProjection {
+  periodStart: string;
+  periodEnd: string;
+  projectedNetTotal: number;
+}
+
+export interface BillingSummary {
+  asOf: string;
+  dueNow: number;
+  currentPeriodProjection: BillingCurrentPeriodProjection | null;
+  warnings: string[];
+}
+
+export interface MarkBilledPeriodRequest {
+  periodStart: string;
+  periodEnd: string;
+  billedAmount: number;
+  notes?: string | null;
+}
+
+export interface MarkBilledPeriodResponse {
+  billedPeriodId: number;
 }
 
 // Sözleşme Fiyat Hesaplama

@@ -43,6 +43,10 @@ import { clampDiscountRange, discountPercentFromNet, lineDiscountAmount, lineIsk
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
+import {
+  AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE,
+  isAmbiguousContractDetailError,
+} from '../../utils/contractReturn';
 import StockErrorPanel from '../StockErrorPanel';
 import { useAuthStore } from '../../store/authStore';
 import ManualLineItemModal from './ManualLineItemModal';
@@ -51,6 +55,7 @@ import SiteSelectField from '../SiteSelectField';
 import SettleNonReturnModal from './SettleNonReturnModal';
 import InventoryDetailModal from './InventoryDetailModal';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
+import ContractBillingPlanPanel from '../contracts/ContractBillingPlanPanel';
 import { addendumService } from '../../services/addendumService';
 import { buildAddendumExtrasDisplayGroups, buildContractItemDisplayEntries, getChangeTypeLabel, getLineAddendumBadgeLabel, type AddendumLineSource, type LineAddendumEvent } from '../../utils/addendum';
 import {
@@ -108,7 +113,7 @@ function findInventoryLineByReturnKey(
   return undefined;
 }
 
-type ContractDetailTab = 'info' | 'return' | 'returns' | 'history' | 'addenda' | 'addendum-extras';
+type ContractDetailTab = 'info' | 'billing' | 'return' | 'returns' | 'history' | 'addenda' | 'addendum-extras';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -215,6 +220,8 @@ export default function ContractDetailModal({
     initialTab
   );
   const [pendingOpenAddendumCreate, setPendingOpenAddendumCreate] = useState(false);
+  const [pendingOpenAddendumId, setPendingOpenAddendumId] = useState<number | null>(null);
+  const [billingRefreshNonce, setBillingRefreshNonce] = useState(0);
   const [contractLogs, setContractLogs] = useState<AuditLog[]>([]);
   const [contractLogsLoading, setContractLogsLoading] = useState(false);
   const [fullContract, setFullContract] = useState<Contract | null>(null);
@@ -432,11 +439,14 @@ export default function ContractDetailModal({
     setShowUnarchiveConfirm(false);
   }, [contract?.ContractId, isNew]);
 
+  const bumpBillingRefresh = () => setBillingRefreshNonce((n) => n + 1);
+
   const refreshContract = async () => {
     if (!contract?.ContractId) return;
     const full = await contractService.getByIdAsync(contract.ContractId);
     setFullContract(full);
     await loadAddendumLineSources(contract.ContractId);
+    bumpBillingRefresh();
   };
 
   const loadAddendumLineSources = async (contractId?: number) => {
@@ -486,6 +496,7 @@ export default function ContractDetailModal({
 
   useEffect(() => {
     setActiveTab(initialTab);
+    setPendingOpenAddendumId(null);
   }, [initialTab, contract?.ContractId, isNew]);
 
   const loadContractLogs = async () => {
@@ -1917,9 +1928,10 @@ export default function ContractDetailModal({
 
     try {
       setIsReturning(true);
-      const options: { returnDate?: string; returnWarehouseId?: number } = {};
+      const options: { returnDate?: string; returnWarehouseId?: number; detailId?: number | null } = {};
       if (returnDate) options.returnDate = new Date(returnDate).toISOString();
       if (returnWarehouseId) options.returnWarehouseId = Number(returnWarehouseId);
+      if (item.DetailId != null && item.DetailId > 0) options.detailId = item.DetailId;
 
       const result: ReturnItemResponse = await contractService.returnItemAsync(
         contract.ContractId,
@@ -1929,13 +1941,17 @@ export default function ContractDetailModal({
         options
       );
 
-      // Başarılı iade sonrası contract items güncelle
+      // Başarılı iade sonrası contract items güncelle (DetailId varsa yalnızca o satır)
       setContractItems((prevItems) =>
-        prevItems.map((i) =>
-          i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
+        prevItems.map((i) => {
+          if (i.kind !== 'inventory') return i;
+          if (item.DetailId != null && item.DetailId > 0) {
+            return i.DetailId === item.DetailId ? { ...i, ReturnedQuantity: result.ReturnedQuantity } : i;
+          }
+          return i.ItemId === itemId && i.WarehouseId === warehouseId
             ? { ...i, ReturnedQuantity: result.ReturnedQuantity }
-            : i
-        )
+            : i;
+        })
       );
 
       // İade formunu kapat ve onay modal'ını kapat
@@ -1959,10 +1975,15 @@ export default function ContractDetailModal({
       }
 
       toast.success(message);
+      bumpBillingRefresh();
       if (result.ContractCompleted) onClose();
     } catch (error: unknown) {
       console.error('Return item error:', error);
-      toast.error(getApiErrorMessage(error) || 'İade işlemi başarısız');
+      toast.error(
+        isAmbiguousContractDetailError(error)
+          ? AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE
+          : getApiErrorMessage(error) || 'İade işlemi başarısız'
+      );
     } finally {
       setIsReturning(false);
     }
@@ -1989,7 +2010,10 @@ export default function ContractDetailModal({
     if (!isRentalContract && (activeTab === 'return' || activeTab === 'returns')) {
       setActiveTab('info');
     }
-  }, [isRentalContract, activeTab]);
+    if (!canViewContracts && (activeTab === 'billing' || activeTab === 'addenda' || activeTab === 'addendum-extras')) {
+      setActiveTab('info');
+    }
+  }, [isRentalContract, canViewContracts, activeTab]);
 
   /** Sadece rakam girişine izin ver (miktar / iade miktarı); tam genişlik Unicode rakamları NFKC ile normalize edilir */
   const handleNumericInput = (setter: (v: string) => void, e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2345,6 +2369,15 @@ export default function ContractDetailModal({
           >
             Bilgiler
           </button>
+          {canViewContracts && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('billing')}
+              className={tabBtn(activeTab === 'billing')}
+            >
+              Faturalama Planı
+            </button>
+          )}
           {isRentalContract && active && (fullContract ?? contract) && (
             <button
               type="button"
@@ -2404,6 +2437,26 @@ export default function ContractDetailModal({
               </span>
             </button>
           )}
+        </div>
+      )}
+
+      {activeTab === 'billing' && !isNew && contract?.ContractId && canViewContracts && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+          <ContractBillingPlanPanel
+            key={`${contract.ContractId}-${billingRefreshNonce}`}
+            contractId={contract.ContractId}
+            currency={currency}
+            contractItems={contractItems}
+            canUpdate={canUpdateContracts}
+            contractCancelled={cancelled}
+            contractArchived={archived}
+            refreshNonce={billingRefreshNonce}
+            onOpenAddendaTab={() => setActiveTab('addenda')}
+            onOpenAddendum={(addendumId) => {
+              setPendingOpenAddendumId(addendumId);
+              setActiveTab('addenda');
+            }}
+          />
         </div>
       )}
 
@@ -2781,6 +2834,8 @@ export default function ContractDetailModal({
             canDelete={canDeleteContracts}
             openCreateRequest={pendingOpenAddendumCreate}
             onOpenCreateConsumed={() => setPendingOpenAddendumCreate(false)}
+            openAddendumIdRequest={pendingOpenAddendumId}
+            onOpenAddendumConsumed={() => setPendingOpenAddendumId(null)}
             onContractRefresh={async () => {
               await refreshContract();
               await Promise.resolve(onDataChanged?.());
@@ -4435,6 +4490,7 @@ export default function ContractDetailModal({
             setSettleItem(null);
             refreshContract();
             loadContractReturns();
+            bumpBillingRefresh();
           }}
         />
       )}

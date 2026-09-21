@@ -41,6 +41,9 @@ interface ContractAddendaPanelProps {
   /** true iken panel açılınca Yeni Zeyilname editörünü başlatır */
   openCreateRequest?: boolean;
   onOpenCreateConsumed?: () => void;
+  /** Faturalama planından zeyilname detayına gitmek için */
+  openAddendumIdRequest?: number | null;
+  onOpenAddendumConsumed?: () => void;
 }
 
 export default function ContractAddendaPanel({
@@ -60,6 +63,8 @@ export default function ContractAddendaPanel({
   onClose,
   openCreateRequest = false,
   onOpenCreateConsumed,
+  openAddendumIdRequest = null,
+  onOpenAddendumConsumed,
 }: ContractAddendaPanelProps) {
   const [list, setList] = useState<Addendum[]>([]);
   const [loading, setLoading] = useState(true);
@@ -106,6 +111,14 @@ export default function ContractAddendaPanel({
       onOpenCreateConsumed?.();
     }
   }, [openCreateRequest, canUpdate, contractActive, onOpenCreateConsumed]);
+
+  useEffect(() => {
+    if (openAddendumIdRequest != null && openAddendumIdRequest > 0 && canView) {
+      setEditorAddendumId(openAddendumIdRequest);
+      setEditorOpen(true);
+      onOpenAddendumConsumed?.();
+    }
+  }, [openAddendumIdRequest, canView, onOpenAddendumConsumed]);
 
   useEffect(() => {
     return () => {
@@ -476,7 +489,7 @@ export default function ContractAddendaPanel({
             setEditorAddendumId(opts.openAddendumId);
             setEditorOpen(true);
           }
-          if (opts?.approved) {
+          if (opts?.approved || opts?.rejected) {
             await Promise.resolve(onContractRefresh());
           }
         }}

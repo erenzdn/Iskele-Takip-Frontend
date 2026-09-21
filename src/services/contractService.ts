@@ -1,14 +1,19 @@
 import { apiClient } from './apiClient';
 import {
   AuditLog,
+  BillingPeriod,
+  BillingSummary,
   Contract,
   ContractQuoteType,
   ContractReturn,
   ContractPriceCalculation,
   ContractStatusFilter,
+  MarkBilledPeriodRequest,
+  MarkBilledPeriodResponse,
   ReturnItemResponse,
   SettleNonReturnRequest,
 } from '../models';
+import { billedPeriodDeletePath, parseBillingPlan, parseBillingSummary } from '../utils/billingPlan';
 import { CreateSiteRequest } from './siteService';
 import {
   DEFAULT_PAGE_LIMIT,
@@ -343,7 +348,7 @@ export const contractService = {
     itemId: number,
     warehouseId: number,
     returnQuantity: number,
-    options?: { returnDate?: string; returnWarehouseId?: number }
+    options?: { returnDate?: string; returnWarehouseId?: number; detailId?: number | null }
   ): Promise<ReturnItemResponse> {
     const body: Record<string, unknown> = {
       ItemId: itemId,
@@ -356,6 +361,9 @@ export const contractService = {
     if (options?.returnWarehouseId) {
       body.ReturnWarehouseId = options.returnWarehouseId;
     }
+    if (options?.detailId != null && Number.isFinite(options.detailId) && options.detailId > 0) {
+      body.DetailId = options.detailId;
+    }
     return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/return`, body);
   },
 
@@ -363,11 +371,39 @@ export const contractService = {
     contractId: number,
     payload: SettleNonReturnRequest
   ): Promise<ReturnItemResponse> {
-    return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/settle-non-return`, payload);
+    const body: Record<string, unknown> = { ...payload };
+    if (payload.DetailId != null && Number.isFinite(payload.DetailId) && payload.DetailId > 0) {
+      body.DetailId = payload.DetailId;
+      body.detailId = payload.DetailId;
+    }
+    return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/settle-non-return`, body);
   },
 
   async getReturnsAsync(contractId: number): Promise<ContractReturn[]> {
     return apiClient.get<ContractReturn[]>(`/contracts/${contractId}/returns`);
+  },
+
+  async getBillingPlanAsync(contractId: number, asOf?: string): Promise<BillingPeriod[]> {
+    const trimmed = asOf?.trim();
+    const qs = trimmed ? `?asOf=${encodeURIComponent(trimmed)}` : '';
+    const raw = await apiClient.get<unknown>(`/contracts/${contractId}/billing-plan${qs}`);
+    return parseBillingPlan(raw);
+  },
+
+  async getBillingSummaryAsync(contractId: number): Promise<BillingSummary> {
+    const raw = await apiClient.get<unknown>(`/contracts/${contractId}/billing-summary`);
+    return parseBillingSummary(raw);
+  },
+
+  async markBilledPeriodAsync(
+    contractId: number,
+    data: MarkBilledPeriodRequest
+  ): Promise<MarkBilledPeriodResponse> {
+    return apiClient.post<MarkBilledPeriodResponse>(`/contracts/${contractId}/billed-periods`, data);
+  },
+
+  async unmarkBilledPeriodAsync(contractId: number, periodStart: string): Promise<void> {
+    await apiClient.delete<void>(billedPeriodDeletePath(contractId, periodStart));
   },
 
   async calculatePriceAsync(contractId: number): Promise<ContractPriceCalculation> {

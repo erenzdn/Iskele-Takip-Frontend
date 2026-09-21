@@ -79,7 +79,7 @@ interface AddendumDetailModalProps {
   canDelete: boolean;
   onClose: () => void;
   /** Liste + sözleşme yenileme; openAddendumId ile detayı yeni kayda taşı */
-  onChanged: (opts?: { approved?: boolean; openAddendumId?: number }) => Promise<void> | void;
+  onChanged: (opts?: { approved?: boolean; rejected?: boolean; openAddendumId?: number }) => Promise<void> | void;
   zIndexClass?: string;
 }
 
@@ -114,6 +114,9 @@ export default function AddendumDetailModal({
   const [showLineModal, setShowLineModal] = useState(false);
   const [showAddProductsModal, setShowAddProductsModal] = useState(false);
   const [showContractPeek, setShowContractPeek] = useState(false);
+  const [seedAddPicks, setSeedAddPicks] = useState<Array<{ item: Inventory; warehouseId?: number | '' }>>(
+    []
+  );
   const [editingDetail, setEditingDetail] = useState<AddendumDetail | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -175,6 +178,7 @@ export default function AddendumDetailModal({
       setShowLineModal(false);
       setShowAddProductsModal(false);
       setShowContractPeek(false);
+      setSeedAddPicks([]);
       setEditingDetail(null);
       setConfirmApprove(false);
       setConfirmDelete(false);
@@ -342,7 +346,7 @@ export default function AddendumDetailModal({
       setShowRejectModal(false);
       setRejectionReason('');
       toast.success('Zeyilname reddedildi');
-      await Promise.resolve(onChanged());
+      await Promise.resolve(onChanged({ rejected: true }));
     } catch (error) {
       console.error('Reject addendum error:', error);
       toast.error(getUserFacingApiErrorMessage(error, 'addendum'));
@@ -919,6 +923,8 @@ export default function AddendumDetailModal({
           contractLines={contractLines}
           contractDiscountPercent={contractDiscountPercent}
           zIndexClass="z-[75]"
+          seedPicks={seedAddPicks}
+          onSeedConsumed={() => setSeedAddPicks([])}
           onClose={() => setShowAddProductsModal(false)}
           onSaved={async () => {
             await refreshDetails();
@@ -936,6 +942,16 @@ export default function AddendumDetailModal({
         highlightedItemIds={contractPeekHighlightedIds}
         highlightLabel="Bu zeyilnamede"
         zIndexClass="z-[80]"
+        items={items}
+        onSelectInventory={
+          editable
+            ? (item, line) => {
+                setSeedAddPicks([{ item, warehouseId: line.WarehouseId }]);
+                setShowContractPeek(false);
+                setShowAddProductsModal(true);
+              }
+            : undefined
+        }
       />
 
       {addendum && (

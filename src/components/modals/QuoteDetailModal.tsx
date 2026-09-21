@@ -153,6 +153,8 @@ export default function QuoteDetailModal({
   const [plannedEndDate, setPlannedEndDate] = useState('');
   /** RENTAL: kiralama süresi (gün), min 1 */
   const [rentalDurationDays, setRentalDurationDays] = useState(30);
+  /** Süre (gün) taslak yazımı; boşaltınca 1'e zıplamasın ve metin rahat seçilsin diye. */
+  const [rentalDurationDaysInput, setRentalDurationDaysInput] = useState<string | null>(null);
   const [quoteItems, setQuoteItems] = useState<QuoteLineItem[]>([]);
   const [status, setStatus] = useState<QuoteStatus>(QuoteStatus.Pending);
   const [subject, setSubject] = useState('');
@@ -548,6 +550,7 @@ export default function QuoteDetailModal({
             setRentalDurationDays(30);
           }
         }
+        setRentalDurationDaysInput(null);
       }
       setStatus(source.Status);
       setRejectionReason(String((source as Quote).RejectionReason ?? '').trim());
@@ -2711,17 +2714,33 @@ export default function QuoteDetailModal({
                 <div className="min-w-[90px] w-[110px]">
                   <label className={fieldLabel}>Süre (gün) *</label>
                   <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={rentalDurationDays}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="off"
+                    value={rentalDurationDaysInput ?? String(rentalDurationDays)}
                     onChange={(e) => {
-                      const v = Math.floor(Number(e.target.value));
+                      const raw = e.target.value.replace(/\D/g, '').slice(0, 5);
+                      setRentalDurationDaysInput(raw);
+                      const v = Math.floor(Number(raw));
+                      if (Number.isFinite(v) && v >= 1) {
+                        setRentalDurationDays(v);
+                      }
+                    }}
+                    onFocus={(e) => {
+                      const el = e.currentTarget;
+                      el.select();
+                      el.addEventListener('mouseup', (ev) => ev.preventDefault(), { once: true });
+                    }}
+                    onBlur={(e) => {
+                      const v = Math.floor(Number(e.currentTarget.value.replace(/\D/g, '')));
                       setRentalDurationDays(Number.isFinite(v) && v >= 1 ? v : 1);
+                      setRentalDurationDaysInput(null);
                     }}
                     disabled={isReadOnly}
                     className={fieldInput}
                     title="Fiyatlandırma en az 30 gün üzerinden hesaplanır. PDF'de tarih yoksa 'Belirlenecek' görünebilir."
+                    aria-label="Kiralama süresi gün"
                   />
                 </div>
               )}

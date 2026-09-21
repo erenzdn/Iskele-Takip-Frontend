@@ -584,7 +584,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   };
 
   const getContractStatusBadge = (contract: Contract) => {
-    const c = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
+    const c = 'inline-block px-1.5 py-0 rounded text-[10px] leading-none font-medium';
     const uiStatus = getContractUiStatus(contract);
     if (uiStatus === 'archived') {
       return (
@@ -607,7 +607,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   };
 
   const getQuoteStatusBadge = (status: QuoteStatus) => {
-    const c = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
+    const c = 'inline-block px-1.5 py-0 rounded text-[10px] leading-none font-medium';
     switch (status) {
       case QuoteStatus.Draft:
         return <span className={`${c} bg-slate-700 text-slate-100`}>Taslak</span>;
@@ -625,7 +625,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const renderQuoteStatusCell = (quote: Quote) => {
     if (isQuoteConverted(quote)) {
       return (
-        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-indigo-900/50 text-indigo-100 border border-indigo-700/50">
+        <span className="inline-block px-1.5 py-0 rounded text-[10px] leading-none font-medium bg-indigo-900/50 text-indigo-100 border border-indigo-700/50">
           Sözleşmeye dönüştü
         </span>
       );
@@ -1023,16 +1023,16 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           <table className="w-full text-xs border-collapse text-text-primary">
             <thead className="sticky top-0 z-10 border-b border-background-border">
               <tr>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">ID</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kod</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Müşteri</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Şantiye</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Başlangıç</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Bitiş</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">ID</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Kod</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Müşteri</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Şantiye</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Başlangıç</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Bitiş</th>
                 {/* Dönüştürülme sütunu gizlendi (kullanıcı isteği) */}
-                <th className="text-right py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Tutar</th>
-                <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">Kayıt Bilgisi</th>
+                <th className="text-right py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Tutar</th>
+                <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Durum</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap bg-background-hover leading-none">Kayıt Bilgisi</th>
               </tr>
             </thead>
             <tbody>
@@ -1044,13 +1044,13 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                 return (
                 <tr
                   key={contract.ContractId}
-                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'} ${overdue ? 'border-l-2 border-l-amber-500' : ''} ${cancelled && !archivedRow ? 'opacity-70' : ''} ${archivedRow ? 'opacity-60 bg-background-secondary/50' : ''}`}
+                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer leading-none ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'} ${overdue ? 'border-l-2 border-l-amber-500' : ''} ${cancelled && !archivedRow ? 'opacity-70' : ''} ${archivedRow ? 'opacity-60 bg-background-secondary/50' : ''}`}
                   onClick={() => handleOpenContract(contract)}
                   onContextMenu={(event) => openContractContextMenu(event, contract)}
                 >
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">#{contract.ContractId}</td>
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{contract.ContractCode || <span className="text-text-secondary">-</span>}</td>
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0">#{contract.ContractId}</td>
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{contract.ContractCode || <span className="text-text-secondary">-</span>}</td>
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
                     {(() => {
                       const rowCust = customerMap.get(contract.CustomerId);
                       return (
@@ -1065,28 +1065,28 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                       );
                     })()}
                   </td>
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
                     {contract.Site ? <span>{contract.Site.SiteName}{contract.Site.ResponsiblePerson ? ` • ${contract.Site.ResponsiblePerson}` : ''}</span> : <span className="text-text-secondary">-</span>}
                   </td>
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(contract.StartDate)}</td>
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(contract.StartDate)}</td>
                   <td
-                    className={`py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 ${overdue ? 'text-amber-400 font-medium' : ''}`}
+                    className={`py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 ${overdue ? 'text-amber-400 font-medium' : ''}`}
                     title={isSaleScope ? salePlannedEndTooltip : undefined}
                   >
                     {isSaleScope ? '—' : formatDate(contract.PlannedEndDate)}
                   </td>
-                  <td className="py-0.5 px-2 text-right align-middle border-r border-background-border/60 last:border-r-0 text-green-500 font-medium">{formatCurrency(contract.InitialTotalPrice)}</td>
-                  <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">
-                    <div className="flex flex-wrap items-center justify-center gap-1">
+                  <td className="py-px px-1.5 text-right align-middle border-r border-background-border/60 last:border-r-0 text-green-500 font-medium">{formatCurrency(contract.InitialTotalPrice)}</td>
+                  <td className="py-px px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">
+                    <div className="flex flex-nowrap items-center justify-center gap-0.5">
                       {getContractStatusBadge(contract)}
                       {overdue && (
-                        <span className="inline-block px-2 py-0.5 rounded text-xs font-medium bg-amber-900/90 text-amber-100 border border-amber-600/40">
+                        <span className="inline-block px-1.5 py-0 rounded text-[10px] leading-none font-medium bg-amber-900/90 text-amber-100 border border-amber-600/40">
                           Gecikmiş
                         </span>
                       )}
                     </div>
                   </td>
-                  <td className="py-0.5 px-2 align-middle text-text-secondary">
+                  <td className="py-px px-1.5 align-middle text-text-secondary">
                     {contract.CreatedByUserFullName || contract.CreatedByUserName || '-'} • {formatShortDateTime(contract.CreatedAt)}
                   </td>
                 </tr>
@@ -1106,7 +1106,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               <span className="text-amber-400/90 ml-2">· Geciken: {overdueCount}</span>
             )}
           </span>
-          <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
+          <span className="text-text-secondary/80">Ekranda yaklaşık 35–55 satır görünür (pencere boyutuna göre)</span>
         </div>
       </div>
     );
@@ -1139,23 +1139,23 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           <table className="w-full text-xs border-collapse text-text-primary">
             <thead className="sticky top-0 z-10 border-b border-background-border">
               <tr>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">ID</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Kod</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Konu</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Müşteri</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Şantiye</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">ID</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Kod</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Konu</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Müşteri</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Şantiye</th>
                 {!isSaleScope && (
-                  <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
+                  <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">
                     Süre (gün)
                   </th>
                 )}
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Başlangıç</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Bitiş</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Başlangıç</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Bitiş</th>
                 {/* Tutar sütunu gizlendi (kullanıcı isteği) */}
-                <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Durum</th>
-                <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Oluşturma</th>
+                <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Durum</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Oluşturma</th>
                 {activeTab === 'quotesConverted' && (
-                  <th className="text-center py-1 px-2 font-medium text-text-secondary whitespace-nowrap bg-background-hover">İşlem</th>
+                  <th className="text-center py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap bg-background-hover leading-none">İşlem</th>
                 )}
               </tr>
             </thead>
@@ -1163,32 +1163,32 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               {quotes.map((quote, index) => (
                 <tr
                   key={quote.QuoteId}
-                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
+                  className={`border-b border-background-border hover:bg-background-hover cursor-pointer leading-none ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
                   onClick={() => handleOpenQuote(quote)}
                   onContextMenu={(event) => openQuoteContextMenu(event, quote)}
                 >
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">#{quote.QuoteId}</td>
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{quote.QuoteCode || <span className="text-text-secondary">-</span>}</td>
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0">#{quote.QuoteId}</td>
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{quote.QuoteCode || <span className="text-text-secondary">-</span>}</td>
                   <td
-                    className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary max-w-[220px] truncate"
+                    className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary max-w-[220px] truncate"
                     title={quote.Subject ?? undefined}
                   >
                     {quote.Subject ? quote.Subject : <span className="text-text-secondary">-</span>}
                   </td>
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 font-medium text-text-primary">
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 font-medium text-text-primary">
                     {quote.CustomerName ?? (quote.CustomerId != null ? customerMap.get(quote.CustomerId)?.Name : undefined) ?? '—'}
                   </td>
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{quote.Site ? quote.Site.SiteName : <span className="text-text-secondary">-</span>}</td>
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{quote.Site ? quote.Site.SiteName : <span className="text-text-secondary">-</span>}</td>
                   {!isSaleScope && (
-                    <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
+                    <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">
                       {quote.RentalDurationDays != null && Number(quote.RentalDurationDays) >= 1
                         ? String(quote.RentalDurationDays)
                         : '—'}
                     </td>
                   )}
-                  <td className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(quote.StartDate)}</td>
+                  <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0">{formatDate(quote.StartDate)}</td>
                   <td
-                    className="py-0.5 px-2 align-middle border-r border-background-border/60 last:border-r-0"
+                    className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0"
                     title={isSaleScope ? salePlannedEndTooltip : undefined}
                   >
                     {isSaleScope ? (
@@ -1201,13 +1201,13 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                       </span>
                     )}
                   </td>
-                  <td className="py-0.5 px-2 text-center align-middle border-r border-background-border/60 last:border-r-0">{renderQuoteStatusCell(quote)}</td>
-                  <td className="py-0.5 px-2 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">{formatDate(quote.CreatedAt)}</td>
+                  <td className="py-px px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0">{renderQuoteStatusCell(quote)}</td>
+                  <td className="py-px px-1.5 align-middle text-text-secondary border-r border-background-border/60 last:border-r-0">{formatDate(quote.CreatedAt)}</td>
                   {activeTab === 'quotesConverted' && (
-                    <td className="py-0.5 px-2 text-center align-middle">
+                    <td className="py-px px-1.5 text-center align-middle">
                       <button
                         type="button"
-                        className="btn-secondary py-1 px-2 text-[11px]"
+                        className="inline-block px-1.5 py-0 rounded text-[10px] leading-none font-medium border border-background-border bg-background-elevated text-text-primary hover:bg-background-hover"
                         onClick={(event) => void openConvertedContractFromQuote(quote, event)}
                       >
                         Sözleşmeye git
@@ -1221,7 +1221,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         </div>
         <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
           <span>Toplam: {quotes.length} teklif</span>
-          <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
+          <span className="text-text-secondary/80">Ekranda yaklaşık 35–55 satır görünür (pencere boyutuna göre)</span>
         </div>
       </div>
     );

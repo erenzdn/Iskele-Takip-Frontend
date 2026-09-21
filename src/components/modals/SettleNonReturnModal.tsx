@@ -6,6 +6,10 @@ import { contractService } from '../../services/contractService';
 import { inventoryService } from '../../services/inventoryService';
 import { toast } from '../../hooks/useToast';
 import { getApiErrorMessage } from '../../utils/apiError';
+import {
+  AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE,
+  isAmbiguousContractDetailError,
+} from '../../utils/contractReturn';
 import { formatMoney } from '../../utils/formatters';
 
 interface SettleNonReturnModalProps {
@@ -102,11 +106,16 @@ export default function SettleNonReturnModal({
         settlementReason: reason,
         priceBasis: priceBasis,
         settlementChargeOverride: overrideValue,
+        ...(item.DetailId != null && item.DetailId > 0 ? { DetailId: item.DetailId } : {}),
       });
       toast.success('Sanal iade işlemi başarıyla tamamlandı.');
       onSuccess();
     } catch (error) {
-      toast.error(getApiErrorMessage(error) || 'Sanal iade işlemi başarısız oldu.');
+      toast.error(
+        isAmbiguousContractDetailError(error)
+          ? AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE
+          : getApiErrorMessage(error) || 'Sanal iade işlemi başarısız oldu.'
+      );
     } finally {
       setIsSubmitting(false);
     }
