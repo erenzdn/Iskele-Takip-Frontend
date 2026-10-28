@@ -1492,7 +1492,8 @@ export default function ContractDetailModal({
       };
 
       if (isNew) {
-        const details = contractItems.map((item) => {
+        const details = contractItems.map((item, index) => {
+          const lineOrder = index + 1;
           if (item.kind === 'manual') {
             return {
               IsManual: true,
@@ -1500,6 +1501,7 @@ export default function ContractDetailModal({
               RentedQuantity: item.RentedQuantity,
               UnitPriceSnapshot: item.UnitPriceSnapshot,
               Iskonto: getRowDiscountPercent(item),
+              LineOrder: lineOrder,
             };
           }
           return {
@@ -1508,6 +1510,7 @@ export default function ContractDetailModal({
             RentedQuantity: item.RentedQuantity,
             ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
             Iskonto: getRowDiscountPercent(item),
+            LineOrder: lineOrder,
           };
         });
 
@@ -1631,10 +1634,12 @@ export default function ContractDetailModal({
         }
 
         const persistedLineIskontos = contractItems
-          .filter((item) => Number(item.DetailId) > 0)
-          .map((item) => ({
+          .map((item, index) => ({ item, lineOrder: index + 1 }))
+          .filter(({ item }) => Number(item.DetailId) > 0)
+          .map(({ item, lineOrder }) => ({
             DetailId: item.DetailId,
             Iskonto: getRowDiscountPercent(item),
+            LineOrder: lineOrder,
           }));
         if (persistedLineIskontos.length > 0) {
           updateBody.details = persistedLineIskontos;

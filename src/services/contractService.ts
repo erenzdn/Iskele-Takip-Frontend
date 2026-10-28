@@ -25,7 +25,7 @@ import {
   copyQuoteLineDiscounts,
   extractContractDetails,
   extractQuoteDetails,
-  sortByQuoteLineOrder,
+  resolveContractDisplayOrder,
   sortByStoredLineOrder,
   withContractDetails,
 } from '../utils/lineItemOrder';
@@ -38,6 +38,8 @@ export interface CreateContractDetailRequest {
   ItemCodeOverride?: string | null;
   /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
   Iskonto?: number;
+  /** 1 tabanlı görünen sıra. Son kayıt bir sonraki açılışta bu sırayı korur. */
+  LineOrder?: number;
 }
 
 export interface CreateContractManualDetailRequest {
@@ -47,6 +49,8 @@ export interface CreateContractManualDetailRequest {
   UnitPriceSnapshot: number;
   /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
   Iskonto?: number;
+  /** 1 tabanlı görünen sıra. Son kayıt bir sonraki açılışta bu sırayı korur. */
+  LineOrder?: number;
 }
 
 export type CreateContractDetailPayload = CreateContractDetailRequest | CreateContractManualDetailRequest;
@@ -85,8 +89,8 @@ export interface UpdateContractRequest {
   /** Kiralama sözleşmesi planlanan bitiş (ISO 8601) */
   PlannedEndDate?: string;
   Language?: 'TR' | 'EN';
-  /** Mevcut satırların iskontosunu güncellemek için */
-  details?: Array<{ DetailId: number; Iskonto: number }>;
+  /** Mevcut satırların iskontosunu ve görünen sırasını güncellemek için */
+  details?: Array<{ DetailId: number; Iskonto: number; LineOrder?: number }>;
 }
 
 export interface UpdateContractResponse {
@@ -250,7 +254,10 @@ async function alignContractDetailsWithSourceQuote(contract: Contract): Promise<
       const { quoteService } = await import('./quoteService');
       const quote = await quoteService.getByIdAsync(sourceQuoteId);
       const quoteDetails = extractQuoteDetails(quote);
-      ordered = copyQuoteLineDiscounts(sortByQuoteLineOrder(details, quoteDetails), quoteDetails);
+      ordered = copyQuoteLineDiscounts(
+        resolveContractDisplayOrder(details, quoteDetails),
+        quoteDetails
+      );
     } catch {
       ordered = details;
     }

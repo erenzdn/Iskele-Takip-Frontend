@@ -145,6 +145,20 @@ export function copyQuoteLineDiscounts<T>(contractLines: T[], quoteLines: unknow
   return changed ? next : contractLines;
 }
 
+export function hasStoredLineOrder(items: unknown[]): boolean {
+  return items.some((item) => readLineOrder(item) != null);
+}
+
+/**
+ * Sözleşmenin kendi sırası varsa o geçerlidir.
+ * Kayıtlı sıra yoksa (eski dönüşüm) kaynak teklif sırası başlangıç kabul edilir.
+ */
+export function resolveContractDisplayOrder<T>(contractLines: T[], quoteLines: unknown[]): T[] {
+  if (hasStoredLineOrder(contractLines)) return sortByStoredLineOrder(contractLines);
+  if (quoteLines.length === 0) return contractLines;
+  return sortByQuoteLineOrder(contractLines, quoteLines);
+}
+
 export function sortByQuoteLineOrder<T>(items: T[], quoteLines: unknown[]): T[] {
   if (items.length <= 1 || quoteLines.length === 0) return items;
   const order = new Map<string, number>();

@@ -3142,23 +3142,21 @@ export default function QuoteDetailModal({
                                   : 'bg-background-secondary/35'
                           } ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
                         >
-                          <td className="row-index-col">
+                          <td
+                            className={`row-index-col${isReadOnly ? '' : ' is-row-drag'}`}
+                            draggable={!isReadOnly}
+                            onDragStart={!isReadOnly ? (e) => handleQuoteItemDragStart(e, rowIndex) : undefined}
+                            onDragEnd={!isReadOnly ? handleQuoteItemDragEnd : undefined}
+                            title={isReadOnly ? `Satır ${rowIndex + 1}` : 'Sürükleyerek sırala'}
+                            aria-label={isReadOnly ? undefined : 'Sürükleyerek sırala'}
+                          >
                             <span className="row-index-cell">
                               <span className="row-index-num" title={`Satır ${rowIndex + 1}`}>
                                 {rowIndex + 1}
                               </span>
                               {!isReadOnly && (
-                                <span
-                                  draggable
-                                  onDragStart={(e) => handleQuoteItemDragStart(e, rowIndex)}
-                                  onDragEnd={handleQuoteItemDragEnd}
-                                  className="drag-handle"
-                                  title="Sürükleyerek sırala"
-                                  aria-label="Sürükleyerek sırala"
-                                  role="button"
-                                  tabIndex={0}
-                                >
-                                  <DotsSixVerticalIcon size={10} weight="bold" aria-hidden />
+                                <span className="drag-handle" aria-hidden>
+                                  <DotsSixVerticalIcon size={10} weight="bold" />
                                 </span>
                               )}
                             </span>
