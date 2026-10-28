@@ -8,6 +8,7 @@ import { firstValidationError, normalizeText, validateRequired } from '../utils/
 export default function LoginPage() {
   const navigate = useNavigate();
   const login = useAuthStore((state) => state.login);
+  const sessionEndMessage = useAuthStore((state) => state.sessionEndMessage);
   
   const [username, setUsername] = useState('admin');
   const [password, setPassword] = useState('');
@@ -45,7 +46,7 @@ export default function LoginPage() {
         throw new Error('Geçersiz yanıt: kullanıcı veya permissions alınamadı');
       }
 
-      login(response.accessToken, response.user);
+      login(response);
       navigate('/');
     } catch (error: any) {
       console.error('[LOGIN] Hata detayları:', error);
@@ -79,6 +80,12 @@ export default function LoginPage() {
           <h1 className="text-3xl font-bold mb-2">İskeleTakip</h1>
           <p className="text-text-secondary">Masaüstü Uygulaması</p>
         </div>
+
+        {sessionEndMessage && !errorMessage && (
+          <div className="mb-6 rounded-lg border border-background-border bg-background-panel px-4 py-3 text-sm text-text-secondary">
+            {sessionEndMessage}
+          </div>
+        )}
 
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>

@@ -437,7 +437,7 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
 
         <div className="p-3 border-t border-background-border">
           <button
-            onClick={logout}
+            onClick={() => void logout()}
             className={`w-full rounded-lg border border-background-border bg-background-panel hover:bg-background-hover text-text-primary transition-colors ${
               isSidebarCollapsed ? 'h-11 flex items-center justify-center' : 'py-3 px-4 flex items-center gap-2'
             }`}

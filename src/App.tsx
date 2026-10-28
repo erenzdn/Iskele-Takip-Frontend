@@ -5,6 +5,7 @@ import MainLayout from './layouts/MainLayout';
 import ProtectedRoute from './components/ProtectedRoute';
 import ToastContainer from './components/ToastContainer';
 import UpdateListener from './components/UpdateListener';
+import SessionManager from './components/SessionManager';
 import PageLoader from './components/PageLoader';
 import { ContextMenuProvider } from './context-menu';
 
@@ -74,6 +75,7 @@ function App() {
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
         <ToastContainer />
+        <SessionManager />
       </ContextMenuProvider>
     </HashRouter>
   );

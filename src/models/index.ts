@@ -401,6 +401,10 @@ export interface LoginUserDto {
 
 export interface LoginResponse {
   accessToken: string;
+  /** `tokenTransport: 'body'` ile istendiğinde döner (eski backend sürümleri döndürmez). */
+  refreshToken?: string;
+  /** Mutlak oturum sonu (ISO); eski backend sürümleri döndürmez. */
+  sessionExpiresAt?: string;
   user: LoginUserDto;
 }
 
