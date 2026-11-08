@@ -696,6 +696,100 @@ export interface ContractPriceCalculation {
   }[];
 }
 
+// Sözleşme Uzatma (Contract Extension) Modelleri
+export interface ContractExtension {
+  extensionId: number;
+  contractId: number;
+  previousPlannedEndDate: string;
+  newPlannedEndDate: string;
+  extensionDays: number;
+  reason?: string | null;
+  notes?: string | null;
+  status: 'active' | 'cancelled';
+  createdAt: string;
+  createdBy?: string | null;
+  createdByUserId?: number;
+  cancelledAt?: string | null;
+  cancelledByUserId?: number | null;
+  cancellationReason?: string | null;
+}
+
+export interface ContractExtensionHistory {
+  contractId: number;
+  originalPlannedEndDate: string;
+  currentPlannedEndDate: string;
+  totalExtensionDays: number;
+  extensions: ContractExtension[];
+}
+
+export interface CreateExtensionRequest {
+  newPlannedEndDate: string;
+  reason?: string;
+  notes?: string;
+}
+
+export interface CancelExtensionRequest {
+  reason: string;
+}
+
+// Sözleşme Fatura (Contract Invoice) Modelleri
+export interface ContractInvoice {
+  invoiceRecordId: number;
+  contractId: number;
+  invoiceNumber?: string | null;
+  invoiceDate: string;
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  currency: string;
+  notes?: string | null;
+  createdAt: string;
+  createdBy?: string | null;
+  createdByUserId?: number;
+  deletedAt?: string | null;
+  deletedByUserId?: number | null;
+}
+
+export interface ContractInvoicingSummary {
+  contractId: number;
+  contractCode?: string | null;
+  currency: string;
+  totalInvoiced: number;
+  invoiceCount: number;
+  lastInvoiceDate?: string | null;
+  monthlyBreakdown: Array<{
+    month: string;
+    count: number;
+    total: number;
+    invoices: Array<{
+      invoiceRecordId: number;
+      invoiceNumber?: string | null;
+      invoiceDate: string;
+      amount: number;
+    }>;
+  }>;
+}
+
+export interface CreateInvoiceRequest {
+  invoiceNumber?: string;
+  invoiceDate: string;
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  currency?: string;
+  notes?: string;
+}
+
+export interface UpdateInvoiceRequest {
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  amount?: number;
+  currency?: string;
+  notes?: string;
+}
+
 // Alış Faturası
 export interface PurchaseInvoice {
   InvoiceId: number;

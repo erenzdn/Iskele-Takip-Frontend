@@ -39,7 +39,7 @@ import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
-import { clampDiscountRange, discountPercentFromNet, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
+import { clampDiscountRange, discountPercentFromNet, formatDiscountPercent, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -56,6 +56,8 @@ import SettleNonReturnModal from './SettleNonReturnModal';
 import InventoryDetailModal from './InventoryDetailModal';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import ContractBillingPlanPanel from '../contracts/ContractBillingPlanPanel';
+import ContractExtensionsPanel from '../contracts/ContractExtensionsPanel';
+import ContractInvoicesPanel from '../contracts/ContractInvoicesPanel';
 import { addendumService } from '../../services/addendumService';
 import { buildAddendumExtrasDisplayGroups, buildContractItemDisplayEntries, getChangeTypeLabel, getLineAddendumBadgeLabel, type AddendumLineSource, type LineAddendumEvent } from '../../utils/addendum';
 import {
@@ -113,7 +115,7 @@ function findInventoryLineByReturnKey(
   return undefined;
 }
 
-type ContractDetailTab = 'info' | 'billing' | 'return' | 'returns' | 'history' | 'addenda' | 'addendum-extras';
+type ContractDetailTab = 'info' | 'billing' | 'return' | 'returns' | 'history' | 'addenda' | 'addendum-extras' | 'extensions' | 'invoices';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -255,7 +257,7 @@ export default function ContractDetailModal({
   const [language, setLanguage] = useState<'TR' | 'EN'>('TR');
   const isRentalContract = contractType === 'RENTAL';
 
-  const { extreTemplates } = useMemo(() => partitionContractTemplates(templates), [templates]);
+  const { extreTemplates: _extreTemplates } = useMemo(() => partitionContractTemplates(templates), [templates]);
 
   const visibleTemplates = useMemo(
     () => filterContractTemplatesByKind(templates, documentKind),
@@ -310,6 +312,8 @@ export default function ContractDetailModal({
   const canRevertToQuote = Boolean(currentUser?.permissions?.includes('contracts_delete'));
   const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
   const canDeleteContracts = Boolean(currentUser?.permissions?.includes('contracts_delete'));
+  const canExtendContract = Boolean(currentUser?.permissions?.includes('contracts_extend'));
+  const canManageInvoices = Boolean(currentUser?.permissions?.includes('contracts_invoice'));
   const canArchiveContract = Boolean(
     currentUser?.permissions?.includes('contracts_archive') ||
     currentUser?.permissions?.includes('contracts_delete')
@@ -967,13 +971,98 @@ export default function ContractDetailModal({
     return compact.replace('.', ',');
   };
 
+  /**
+   * onChange için canlı formatlama - kullanıcı yazarken binlik ayırıcıları otomatik ekler
+   * Kullanıcının yazmaya devam etmesini engellemez
+   */
+  const normalizeMaskedDecimalTR_OnChange = (
+    raw: string,
+    opts?: { maxIntDigits?: number; maxFracDigits?: number }
+  ): string => {
+    const maxIntDigits = opts?.maxIntDigits ?? 15;
+    const maxFracDigits = opts?.maxFracDigits ?? 2;
+    
+    // Para birimi sembolleri ve harfleri temizle
+    let cleaned = String(raw ?? '')
+      .replace(/[₺€$£¥]/g, '')
+      .replace(/[a-zA-ZğüşöçıİĞÜŞÖÇ]/g, '')
+      .replace(/\.{2,}/g, '.')
+      .replace(/,{2,}/g, ',');
+    
+    // Virgül sayısını kontrol et
+    const commaCount = (cleaned.match(/,/g) || []).length;
+    
+    // Sadece 1 tane ondalık ayırıcı olabilir (virgül)
+    if (commaCount > 1) {
+      // Son virgülü tut, diğerlerini kaldır
+      const lastCommaIdx = cleaned.lastIndexOf(',');
+      cleaned = cleaned.slice(0, lastCommaIdx).replace(/,/g, '') + cleaned.slice(lastCommaIdx);
+    }
+    
+    // Virgül varsa ondalık ayırıcı olarak kullan
+    const decimalSep = cleaned.includes(',') ? ',' : null;
+    
+    let intPart = '';
+    let fracPart = '';
+    
+    if (decimalSep) {
+      const idx = cleaned.lastIndexOf(decimalSep);
+      intPart = cleaned.slice(0, idx);
+      fracPart = cleaned.slice(idx + 1);
+      
+      // Ondalık kısmı limitini uygula
+      fracPart = fracPart.replace(/\D/g, '').slice(0, maxFracDigits);
+      
+      // Tam sayı kısmından sadece rakamları al
+      const intDigits = intPart.replace(/\D/g, '');
+      
+      if (intDigits.length > maxIntDigits) {
+        return cleaned; // Limit aşıldı, değişiklik yapma
+      }
+      
+      // Binlik ayırıcıları ekle
+      const formattedInt = formatThousandsTR(intDigits);
+      
+      return formattedInt + decimalSep + fracPart;
+    } else {
+      // Virgül yok, sadece rakamları al
+      const intDigits = cleaned.replace(/\D/g, '');
+      
+      if (intDigits.length > maxIntDigits) {
+        const limitedDigits = intDigits.slice(0, maxIntDigits);
+        return formatThousandsTR(limitedDigits);
+      }
+      
+      // Binlik ayırıcıları ekle
+      return formatThousandsTR(intDigits);
+    }
+  };
+
+  /**
+   * Türkçe ondalık formatı ile sayı maskesi oluşturur.
+   * - Nokta (.) binlik ayıracı olarak kullanılır: 1.000.000
+   * - Virgül (,) ondalık ayıracı olarak kullanılır: 1.000.000,50
+   * - Otomatik olarak binlik ayıracı ekler
+   * - Para birimi sembolleri (₺, €, $) ve harfler (TL, EUR, USD) otomatik temizlenir
+   * - maxIntDigits: tam sayı kısmı için maksimum basamak (varsayılan: 15)
+   * - maxFracDigits: ondalık kısmı için maksimum basamak (varsayılan: 2)
+   */
   const normalizeMaskedDecimalTR = (
     raw: string,
     opts?: { maxIntDigits?: number; maxFracDigits?: number }
   ): { masked: string; numeric: number | undefined | null } => {
-    const maxIntDigits = opts?.maxIntDigits ?? 9;
+    const maxIntDigits = opts?.maxIntDigits ?? 15;
     const maxFracDigits = opts?.maxFracDigits ?? 2;
-    const s = coerceDecimalDotToComma(String(raw ?? '').trim());
+    
+    // Para birimi sembolleri ve harfleri temizle, sadece rakam, nokta, virgül ve boşluk kalsın
+    let cleaned = String(raw ?? '').trim()
+      .replace(/[₺€$£¥]/g, '')           // Para birimi sembolleri
+      .replace(/[a-zA-ZğüşöçıİĞÜŞÖÇ]/g, '') // Harfler (Türkçe dahil)
+      .replace(/\.{2,}/g, '.')           // Ardışık noktalar
+      .replace(/,{2,}/g, ',')            // Ardışık virgüller
+      .trim();
+    
+    const s = coerceDecimalDotToComma(cleaned);
     if (!s) return { masked: '', numeric: undefined };
     const decimalSep = s.includes(',') ? ',' : null;
     const hasTrailingDecimalSep = /,$/.test(s.replace(/\s+/g, ''));
@@ -990,7 +1079,11 @@ export default function ContractDetailModal({
     const intDigits = intPart.replace(/\D/g, '').slice(0, maxIntDigits);
     const fracDigits = fracPart.replace(/\D/g, '').slice(0, maxFracDigits);
     const maskedInt = formatThousandsTR(intDigits);
-    const masked = fracDigits || hasTrailingDecimalSep ? `${maskedInt},${fracDigits}` : maskedInt;
+    
+    // Eğer sadece ondalık kısım varsa (örn: ",50") başına 0 ekle
+    const displayInt = maskedInt || (fracDigits || hasTrailingDecimalSep ? '0' : '');
+    
+    const masked = fracDigits || hasTrailingDecimalSep ? `${displayInt},${fracDigits}` : displayInt;
     if (!intDigits && !fracDigits && !hasTrailingDecimalSep) return { masked: '', numeric: undefined };
     const normalized = `${intDigits || '0'}.${fracDigits || '0'}`;
     const v = Number(normalized);
@@ -2442,6 +2535,24 @@ export default function ContractDetailModal({
               </span>
             </button>
           )}
+          {isRentalContract && !isNew && (canViewContracts || canExtendContract) && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('extensions')}
+              className={tabBtn(activeTab === 'extensions')}
+            >
+              Uzatmalar
+            </button>
+          )}
+          {!isNew && (canViewContracts || canManageInvoices) && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('invoices')}
+              className={tabBtn(activeTab === 'invoices')}
+            >
+              Faturalar
+            </button>
+          )}
         </div>
       )}
 
@@ -2954,6 +3065,40 @@ export default function ContractDetailModal({
         </div>
       )}
 
+      {activeTab === 'extensions' && !isNew && contract?.ContractId && isRentalContract && (canViewContracts || canExtendContract) && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <ContractExtensionsPanel
+            contractId={contract.ContractId}
+            contractCode={contract.ContractCode}
+            currentPlannedEndDate={contract.PlannedEndDate}
+            onExtensionCreated={async () => {
+              // Sözleşme detayını yenile (PlannedEndDate güncellenmiş olacak)
+              try {
+                const updated = await contractService.getByIdAsync(contract.ContractId);
+                setFullContract(updated);
+                toast.success('Sözleşme uzatıldı.');
+              } catch (error) {
+                console.error('Refresh contract after extension error:', error);
+              }
+            }}
+          />
+        </div>
+      )}
+
+      {activeTab === 'invoices' && !isNew && contract?.ContractId && (canViewContracts || canManageInvoices) && (
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <ContractInvoicesPanel
+            contractId={contract.ContractId}
+            contractCode={contract.ContractCode}
+            contractCurrency={currency}
+            contractTotalAmount={contract.InitialTotalPrice}
+            contractStartDate={contract.StartDate}
+            contractPlannedEndDate={contract.PlannedEndDate}
+            isRentalContract={isRentalContract}
+          />
+        </div>
+      )}
+
       {(activeTab === 'info' || isNew) && (
         <div className="flex-1 min-h-0 flex flex-col p-1.5 gap-1">
           {cancelled && effectiveContract && (
@@ -3150,7 +3295,7 @@ export default function ContractDetailModal({
                 <input
                   type="text"
                   inputMode="decimal"
-                  value={globalIskontoInput ?? String(Number(iskonto) || 0).replace('.', ',')}
+                  value={globalIskontoInput ?? formatDiscountPercent(Number(iskonto) || 0)}
                   onChange={(e) => setGlobalIskontoInput(e.target.value)}
                   onBlur={() => {
                     const parsed = parseDiscountInput(globalIskontoInput ?? '');
@@ -3838,28 +3983,14 @@ export default function ContractDetailModal({
                                   onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 4)}
                                   onChange={(e) => {
                                     const raw = e.target.value;
-                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
-                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
-                                    if (numeric === null) return;
-                                    setContractItems((prev) =>
-                                      prev.map((x) =>
-                                        x.kind === 'inventory' &&
-                                        x.ItemId === item.ItemId &&
-                                        x.WarehouseId === item.WarehouseId
-                                          ? { ...x, OverrideUnitPrice: numeric }
-                                          : x
-                                      )
-                                    );
-                                    setLineNetInputs((prev) => {
-                                      if (!(netKey in prev)) return prev;
-                                      const next = { ...prev };
-                                      delete next[netKey];
-                                      return next;
-                                    });
+                                    // onChange: Sadece basit temizleme
+                                    const cleaned = normalizeMaskedDecimalTR_OnChange(raw, { maxIntDigits: 12, maxFracDigits: 2 });
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: cleaned }));
                                   }}
                                   onBlur={() => {
                                     const raw = priceOverrideInputs[overrideKey] ?? '';
-                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                    // onBlur: Tam formatlama ve validasyon
+                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 12, maxFracDigits: 2 });
                                     if (numeric === null) {
                                       toast.warning('Birim fiyat negatif olamaz ve sayı olmalıdır.');
                                       setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: '' }));
@@ -3875,6 +4006,21 @@ export default function ContractDetailModal({
                                       return;
                                     }
                                     setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
+                                    setContractItems((prev) =>
+                                      prev.map((x) =>
+                                        x.kind === 'inventory' &&
+                                        x.ItemId === item.ItemId &&
+                                        x.WarehouseId === item.WarehouseId
+                                          ? { ...x, OverrideUnitPrice: numeric }
+                                          : x
+                                      )
+                                    );
+                                    setLineNetInputs((prev) => {
+                                      if (!(netKey in prev)) return prev;
+                                      const next = { ...prev };
+                                      delete next[netKey];
+                                      return next;
+                                    });
                                   }}
                                   className="input w-full text-right py-0.5 text-xs"
                                   placeholder={formatCurrency(item.UnitPriceSnapshot)}
@@ -3903,9 +4049,29 @@ export default function ContractDetailModal({
                                   onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 4)}
                                   onChange={(e) => {
                                     const raw = e.target.value;
-                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                    // onChange: Sadece basit temizleme
+                                    const cleaned = normalizeMaskedDecimalTR_OnChange(raw, { maxIntDigits: 12, maxFracDigits: 2 });
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: cleaned }));
+                                  }}
+                                  onBlur={() => {
+                                    const raw = priceOverrideInputs[overrideKey] ?? '';
+                                    // onBlur: Tam formatlama ve validasyon
+                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 12, maxFracDigits: 2 });
+                                    if (numeric === null) {
+                                      toast.warning('Aylık fiyat negatif olamaz ve sayı olmalıdır.');
+                                      setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: '' }));
+                                      setContractItems((prev) =>
+                                        prev.map((x) =>
+                                          x.kind === 'inventory' &&
+                                          x.ItemId === item.ItemId &&
+                                          x.WarehouseId === item.WarehouseId
+                                            ? { ...x, OverrideMonthlyPrice: undefined }
+                                            : x
+                                        )
+                                      );
+                                      return;
+                                    }
                                     setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
-                                    if (numeric === null) return;
                                     setContractItems((prev) =>
                                       prev.map((x) =>
                                         x.kind === 'inventory' &&
@@ -3922,25 +4088,6 @@ export default function ContractDetailModal({
                                       return next;
                                     });
                                   }}
-                                  onBlur={() => {
-                                    const raw = priceOverrideInputs[overrideKey] ?? '';
-                                    const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
-                                    if (numeric === null) {
-                                      toast.warning('Aylık fiyat negatif olamaz ve sayı olmalıdır.');
-                                      setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: '' }));
-                                      setContractItems((prev) =>
-                                        prev.map((x) =>
-                                          x.kind === 'inventory' &&
-                                          x.ItemId === item.ItemId &&
-                                          x.WarehouseId === item.WarehouseId
-                                            ? { ...x, OverrideMonthlyPrice: undefined }
-                                            : x
-                                        )
-                                      );
-                                      return;
-                                    }
-                                    setPriceOverrideInputs((prev) => ({ ...prev, [overrideKey]: masked }));
-                                  }}
                                   className="input w-full text-right py-0.5 text-xs"
                                   placeholder={formatCurrency(item.UnitPriceSnapshot * 30)}
                                   aria-label="Aylık Fiyat"
@@ -3949,14 +4096,14 @@ export default function ContractDetailModal({
                             </td>
                             <td className="text-right tabular-nums">
                               {isReadOnly ? (
-                                getRowDiscountPercent(item)
+                                formatDiscountPercent(getRowDiscountPercent(item))
                               ) : (
                                 <input
                                   type="text"
                                   inputMode="decimal"
                                   value={
                                     iskontoInputs[netKey] ??
-                                    String(getRowDiscountPercent(item)).replace('.', ',')
+                                    formatDiscountPercent(getRowDiscountPercent(item))
                                   }
                                   ref={(el) => {
                                     const key = `${rowIndex}-5`;
@@ -4014,11 +4161,12 @@ export default function ContractDetailModal({
                                   onKeyDown={(e) => handleItemsGridKeyDown(e, rowIndex, 6)}
                                   onChange={(e) => {
                                     const raw = e.target.value;
-                                    const { masked } = normalizeMaskedDecimalTR(raw, {
+                                    // onChange: Sadece basit temizleme
+                                    const cleaned = normalizeMaskedDecimalTR_OnChange(raw, {
                                       maxIntDigits: 12,
                                       maxFracDigits: 2,
                                     });
-                                    setLineNetInputs((prev) => ({ ...prev, [netKey]: masked }));
+                                    setLineNetInputs((prev) => ({ ...prev, [netKey]: cleaned }));
                                   }}
                                   onBlur={(e) => {
                                     const raw = e.currentTarget.value;

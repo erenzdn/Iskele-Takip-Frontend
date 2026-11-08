@@ -12,6 +12,14 @@ import {
   MarkBilledPeriodResponse,
   ReturnItemResponse,
   SettleNonReturnRequest,
+  ContractExtension,
+  ContractExtensionHistory,
+  CreateExtensionRequest,
+  CancelExtensionRequest,
+  ContractInvoice,
+  ContractInvoicingSummary,
+  CreateInvoiceRequest,
+  UpdateInvoiceRequest,
 } from '../models';
 import { billedPeriodDeletePath, parseBillingPlan, parseBillingSummary } from '../utils/billingPlan';
 import { CreateSiteRequest } from './siteService';
@@ -474,6 +482,74 @@ export const contractService = {
     }
 
     return Array.from(byItem.values());
+  },
+
+  // ==================== Sözleşme Uzatma (Contract Extensions) ====================
+
+  /** Sözleşme uzatma geçmişini getirir */
+  async getExtensionsAsync(contractId: number): Promise<ContractExtensionHistory> {
+    return apiClient.get<ContractExtensionHistory>(`/contracts/${contractId}/extensions`);
+  },
+
+  /** Yeni sözleşme uzatması oluşturur */
+  async createExtensionAsync(
+    contractId: number,
+    data: CreateExtensionRequest
+  ): Promise<ContractExtension> {
+    return apiClient.post<ContractExtension>(`/contracts/${contractId}/extensions`, data);
+  },
+
+  /** Son uzatmayı iptal eder */
+  async cancelExtensionAsync(
+    contractId: number,
+    extensionId: number,
+    data: CancelExtensionRequest
+  ): Promise<ContractExtension> {
+    return apiClient.delete<ContractExtension>(
+      `/contracts/${contractId}/extensions/${extensionId}`,
+      data as unknown as Record<string, unknown>
+    );
+  },
+
+  // ==================== Sözleşme Faturaları (Contract Invoices) ====================
+
+  /** Sözleşme faturalarını listeler */
+  async getInvoicesAsync(
+    contractId: number,
+    includeDeleted: boolean = false
+  ): Promise<ContractInvoice[]> {
+    const qs = includeDeleted ? '?includeDeleted=true' : '';
+    return apiClient.get<ContractInvoice[]>(`/contracts/${contractId}/invoices${qs}`);
+  },
+
+  /** Yeni fatura kaydı oluşturur */
+  async createInvoiceAsync(
+    contractId: number,
+    data: CreateInvoiceRequest
+  ): Promise<ContractInvoice> {
+    return apiClient.post<ContractInvoice>(`/contracts/${contractId}/invoices`, data);
+  },
+
+  /** Fatura kaydını günceller */
+  async updateInvoiceAsync(
+    contractId: number,
+    invoiceId: number,
+    data: UpdateInvoiceRequest
+  ): Promise<ContractInvoice> {
+    return apiClient.put<ContractInvoice>(
+      `/contracts/${contractId}/invoices/${invoiceId}`,
+      data as unknown as Record<string, unknown>
+    );
+  },
+
+  /** Fatura kaydını siler (soft delete) */
+  async deleteInvoiceAsync(contractId: number, invoiceId: number): Promise<void> {
+    return apiClient.delete<void>(`/contracts/${contractId}/invoices/${invoiceId}`);
+  },
+
+  /** Aylık fatura özetini getirir */
+  async getInvoicingSummaryAsync(contractId: number): Promise<ContractInvoicingSummary> {
+    return apiClient.get<ContractInvoicingSummary>(`/contracts/${contractId}/invoicing-summary`);
   },
 };
 

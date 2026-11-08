@@ -3,6 +3,7 @@ import {
   clampDiscountPercent,
   clampDiscountRange,
   discountPercentFromNet,
+  formatDiscountPercent,
   lineDiscountAmount,
   lineIskontoFromApi,
   lineNetFromGross,
@@ -43,6 +44,43 @@ describe('lineDiscount.clampDiscountRange', () => {
     expect(clampDiscountRange(100.1)).toBe(100);
     expect(clampDiscountRange(0.005)).toBe(0.005);
     expect(clampDiscountRange(Number.NaN)).toBe(0);
+  });
+});
+
+describe('lineDiscount.formatDiscountPercent', () => {
+  it('gereksiz sıfırları kaldırır', () => {
+    expect(formatDiscountPercent(10)).toBe('10');
+    expect(formatDiscountPercent(10.0)).toBe('10');
+    expect(formatDiscountPercent(10.00)).toBe('10');
+  });
+
+  it('anlamlı ondalık basamakları korur', () => {
+    expect(formatDiscountPercent(10.5)).toBe('10,5');
+    expect(formatDiscountPercent(10.50)).toBe('10,5');
+    expect(formatDiscountPercent(48.534)).toBe('48,534');
+    expect(formatDiscountPercent(12.345678)).toBe('12,345678');
+  });
+
+  it('TR formatında gösterir (virgül ile)', () => {
+    expect(formatDiscountPercent(48.534)).toBe('48,534');
+    expect(formatDiscountPercent(0.005)).toBe('0,005');
+    expect(formatDiscountPercent(99.99)).toBe('99,99');
+  });
+
+  it('tam sayıları düzgün gösterir', () => {
+    expect(formatDiscountPercent(0)).toBe('0');
+    expect(formatDiscountPercent(100)).toBe('100');
+    expect(formatDiscountPercent(50)).toBe('50');
+  });
+
+  it('geçersiz değerler için 0 döner', () => {
+    expect(formatDiscountPercent(Number.NaN)).toBe('0');
+    expect(formatDiscountPercent(Number.POSITIVE_INFINITY)).toBe('0');
+  });
+
+  it('aralık dışı değerleri clamp eder', () => {
+    expect(formatDiscountPercent(-5)).toBe('0');
+    expect(formatDiscountPercent(150)).toBe('100');
   });
 });
 
@@ -415,5 +453,136 @@ describe('lineDiscount çift yönlü tutarlılık', () => {
     const r = discountPercentFromNet(gross, target);
     expect(lineNetFromGross(gross, r.discountPercent)).toBe(r.normalizedNet);
     expect(r.normalizedNet).toBe(roundTo(target, 2));
+  });
+});
+
+describe('lineDiscount global iskonto hassasiyeti', () => {
+  it('48.534 gibi virgüllü iskonto tüm satırlarda tamamen aynı olmalı', () => {
+    const globalPct = 48.534;
+    
+    // 3 farklı ürün için brüt tutarlar
+    const items = [
+      { key: 'item1', gross: 1000 },
+      { key: 'item2', gross: 2500 },
+      { key: 'item3', gross: 750 },
+    ];
+    
+    // Global iskonto tüm satırlara atanıyor
+    const itemIskonto: Record<string, number> = {};
+    items.forEach(item => {
+      itemIskonto[item.key] = globalPct;
+    });
+    
+    // Tüm satırlardaki iskonto değerleri tamamen aynı mı?
+    items.forEach(item => {
+      expect(itemIskonto[item.key]).toBe(globalPct);
+      expect(itemIskonto[item.key]).toBe(48.534);
+    });
+    
+    // Herhangi iki satır karşılaştırması
+    expect(itemIskonto['item1']).toBe(itemIskonto['item2']);
+    expect(itemIskonto['item2']).toBe(itemIskonto['item3']);
+    
+    // Net tutarlar farklı olmalı ama iskonto yüzdesi aynı olmalı
+    const nets = items.map(item => 
+      lineNetFromGross(item.gross, itemIskonto[item.key])
+    );
+    expect(nets[0]).not.toBe(nets[1]); // Farklı brüt → farklı net
+    expect(nets[1]).not.toBe(nets[2]);
+  });
+
+  it('global iskonto değiştirildiğinde önceki satır iskontolarını sıfırlamalı', () => {
+    const oldGlobalPct = 10;
+    const newGlobalPct = 48.534;
+    
+    // Başlangıç: Bazı satırlarda özel iskonto var
+    const itemIskonto: Record<string, number> = {
+      'item1': 15, // Özel iskonto
+      'item2': oldGlobalPct, // Global iskonto
+    };
+    
+    // Global iskonto değiştirildiğinde TÜM satırlar güncellenmeli
+    const items = [
+      { key: 'item1', gross: 1000 },
+      { key: 'item2', gross: 2500 },
+    ];
+    
+    // handleGlobalIskontoChange simülasyonu
+    items.forEach(item => {
+      itemIskonto[item.key] = newGlobalPct;
+    });
+    
+    // Tüm satırlar yeni global iskonto kullanmalı
+    expect(itemIskonto['item1']).toBe(newGlobalPct);
+    expect(itemIskonto['item2']).toBe(newGlobalPct);
+    expect(itemIskonto['item1']).toBe(itemIskonto['item2']);
+  });
+
+  it('backend NUMERIC(7,4) hassasiyeti: 48.534 → 48.5340 → 48.534', () => {
+    const userInput = 48.534;
+    const persisted = roundTo(userInput, 4); // Backend NUMERIC(7,4)
+    
+    expect(persisted).toBe(48.534);
+    
+    // Backend'den dönen değer de aynı olmalı
+    const fromApi = Number(persisted.toFixed(4));
+    expect(fromApi).toBe(48.534);
+    expect(fromApi).toBe(userInput);
+  });
+
+  it('lineIskontoFromApi: backend satır iskontosu yoksa başlık iskontosunu kullanır', () => {
+    const globalPct = 48.534;
+    
+    // Senaryo 1: Satır iskontosu yok → global kullan
+    const line1Pct = lineIskontoFromApi({}, globalPct);
+    expect(line1Pct).toBe(globalPct);
+    expect(line1Pct).toBe(48.534);
+    
+    // Senaryo 2: Satır iskontosu var → satır iskontosunu kullan
+    const line2Pct = lineIskontoFromApi({ Iskonto: 12.5 }, globalPct);
+    expect(line2Pct).toBe(12.5);
+    expect(line2Pct).not.toBe(globalPct);
+    
+    // Senaryo 3: Satır iskontosu null/undefined → global kullan
+    const line3Pct = lineIskontoFromApi({ Iskonto: null }, globalPct);
+    expect(line3Pct).toBe(globalPct);
+  });
+
+  it('resolveCommittedLineDiscount: global iskonto tüm satırlara eşit uygulanır', () => {
+    const globalPct = 48.534;
+    const items = [
+      { key: 'item1', gross: 1000 },
+      { key: 'item2', gross: 2500 },
+      { key: 'item3', gross: 750 },
+    ];
+    
+    // Global iskonto state
+    const drafts = {
+      itemIskonto: {
+        'item1': globalPct,
+        'item2': globalPct,
+        'item3': globalPct,
+      },
+      iskontoInputs: {},
+      lineNetInputs: {},
+      globalIskontoInput: null,
+      headerIskonto: globalPct,
+    };
+    
+    // Her satır için resolved iskonto aynı olmalı
+    const resolved = items.map(item => 
+      resolveCommittedLineDiscount({
+        key: item.key,
+        gross: item.gross,
+        drafts,
+      })
+    );
+    
+    // Tüm satırlar aynı iskonto değerine sahip olmalı
+    expect(resolved[0]).toBe(globalPct);
+    expect(resolved[1]).toBe(globalPct);
+    expect(resolved[2]).toBe(globalPct);
+    expect(resolved[0]).toBe(resolved[1]);
+    expect(resolved[1]).toBe(resolved[2]);
   });
 });

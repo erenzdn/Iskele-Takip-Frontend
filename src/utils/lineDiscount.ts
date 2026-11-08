@@ -33,6 +33,25 @@ export function clampDiscountPercent(value: number): number {
 }
 
 /**
+ * İskonto yüzdesini TR formatında gösterir.
+ * Gereksiz sıfırları kaldırır, anlamlı ondalık basamakları korur.
+ * Örnek: 48.534 → "48,534", 10.00 → "10", 12.50 → "12,5"
+ */
+export function formatDiscountPercent(value: number): string {
+  if (!Number.isFinite(value)) return '0';
+  const clamped = clampDiscountRange(value);
+  
+  // Önce maksimum hassasiyetle string'e çevir
+  let str = clamped.toFixed(PERCENT_MAX_DECIMALS);
+  
+  // Sondaki gereksiz sıfırları ve noktayı kaldır
+  str = str.replace(/\.?0+$/, '');
+  
+  // Eğer hala ondalık kısım varsa, noktayı virgüle çevir
+  return str.replace('.', ',');
+}
+
+/**
  * İskonto yazımı (TR virgül / EN nokta).
  * Boş veya yarım giriş ("" / "," / ".") → null; çağıran eski değeri korumalı.
  */

@@ -86,7 +86,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
   const [isContractModalOpen, setIsContractModalOpen] = useState(false);
   const [isNewContract, setIsNewContract] = useState(false);
-  const [contractInitialTab, setContractInitialTab] = useState<'info' | 'return' | 'returns' | 'history'>('info');
+  const [contractInitialTab, setContractInitialTab] = useState<'info' | 'return' | 'returns' | 'history' | 'extensions' | 'invoices'>('info');
   const [contractInitiallyFullScreen, setContractInitiallyFullScreen] = useState(false);
 
   // Quote Modal State
@@ -160,7 +160,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
       setActiveTab('active');
     }
     const initialTab = st?.initialTab;
-    if (initialTab === 'info' || initialTab === 'return' || initialTab === 'returns' || initialTab === 'history') {
+    if (initialTab === 'info' || initialTab === 'return' || initialTab === 'returns' || initialTab === 'history' || initialTab === 'extensions' || initialTab === 'invoices') {
       setContractInitialTab(initialTab);
     } else {
       setContractInitialTab('info');
@@ -399,7 +399,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     }
   };
 
-  const handleOpenContract = (contract: Contract, options?: { initialTab?: 'info' | 'return' | 'returns' | 'history' }) => {
+  const handleOpenContract = (contract: Contract, options?: { initialTab?: 'info' | 'return' | 'returns' | 'history' | 'extensions' | 'invoices' }) => {
     setSelectedContract(contract);
     setIsNewContract(false);
     setContractInitialTab(options?.initialTab ?? 'info');
