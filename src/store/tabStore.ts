@@ -225,7 +225,7 @@ function uniqueById(tabs: Tab[]): Tab[] {
 
 function loadPersisted(userId: number): Pick<TabState, 'tabs' | 'activeTabId' | 'closedStack'> {
   try {
-    const raw = localStorage.getItem(storageKey(userId));
+    const raw = sessionStorage.getItem(storageKey(userId));
     if (!raw) return { tabs: defaultTabs(), activeTabId: DASHBOARD_TAB_ID, closedStack: [] };
     const parsed = JSON.parse(raw) as PersistedShape;
     const tabs = uniqueById(
@@ -509,7 +509,7 @@ export const useTabStore = create<TabState>((set, get) => {
 });
 
 // ---------------------------------------------------------------------------
-// Kalıcılık: her değişiklikte senkron localStorage yazımı yerine kısa gecikmeyle
+// Kalıcılık: her değişiklikte senkron sessionStorage yazımı yerine kısa gecikmeyle
 // tek yazım yapılır; pencere kapanırken bekleyen yazım hemen tamamlanır.
 // ---------------------------------------------------------------------------
 
@@ -529,9 +529,9 @@ function writePersisted() {
       activeTabId: state.activeTabId,
       closedStack: state.closedStack.map((tab) => ({ ...tab, dirty: false, refreshKey: 0 })),
     };
-    localStorage.setItem(storageKey(boundUserId), JSON.stringify(payload));
+    sessionStorage.setItem(storageKey(boundUserId), JSON.stringify(payload));
   } catch {
-    // localStorage doluysa sekmeler yalnızca bellekte kalır
+    // depolama doluysa sekmeler yalnızca bellekte kalır
   }
 }
 
@@ -551,11 +551,25 @@ useTabStore.subscribe((state, prev) => {
 });
 
 if (typeof window !== 'undefined') {
-  window.addEventListener('beforeunload', writePersisted);
+  window.addEventListener('beforeunload', (event) => {
+    writePersisted();
+    // Düzenleme modunda sekme varsa kapanış durdurulur; Electron ana süreci
+    // ('will-prevent-unload') kullanıcıya onay sorar. Düz sayfalar sorusuz kapanır.
+    if (useTabStore.getState().tabs.some((tab) => tab.dirty)) {
+      event.preventDefault();
+      event.returnValue = '';
+    }
+  });
 }
 
+// Sekmeler yalnızca oturum boyunca (sessionStorage) tutulur: uygulama kapatılıp
+// açıldığında geri gelmez. Eski sürümlerin kalıcı kayıtları temizlenir.
 try {
   sessionStorage.removeItem(LEGACY_SESSION_KEY);
+  for (let i = localStorage.length - 1; i >= 0; i--) {
+    const key = localStorage.key(i);
+    if (key && /^app_tabs_u\d+$/.test(key)) localStorage.removeItem(key);
+  }
 } catch {
   // yok say
 }
@@ -577,7 +591,7 @@ useAuthStore.subscribe((state, prev) => {
       persistTimer = null;
     }
     try {
-      localStorage.removeItem(storageKey(prevId));
+      sessionStorage.removeItem(storageKey(prevId));
     } catch {
       // yok say
     }

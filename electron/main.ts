@@ -18,6 +18,9 @@ const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+/** Güncelleme kurulurken kapanış onayı sorulmaz. */
+let isUpdating = false;
+
 type LiveExchangeRatesOk = {
   ok: true;
   usdSelling: number;
@@ -135,6 +138,28 @@ function createWindow() {
       preload: path.join(__dirname, 'preload.cjs'),
     },
     titleBarStyle: 'default',
+  });
+
+  // Renderer, düzenleme modunda sekme varken kapanışı (beforeunload) durdurur.
+  // Burada kullanıcıya sorulur; onaylarsa kapanışa izin verilir.
+  mainWindow.webContents.on('will-prevent-unload', (event) => {
+    if (isUpdating) {
+      event.preventDefault();
+      return;
+    }
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Kapat', 'Vazgeç'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Uygulamayı kapat',
+      message: 'Düzenleme modunda olan sayfalar var.',
+      detail: 'Kaydedilmemiş değişiklikler kaybolacak. Kapatmak istediğinize emin misiniz?',
+    });
+    if (choice === 0) {
+      event.preventDefault();
+    }
   });
 
   // Zero-Trust: Token artık localStorage'da tutulmuyor, RAM'de tutuluyor.
@@ -316,8 +341,6 @@ app.whenReady().then(() => {
     log.info('Renderer: İndirme başlatılıyor...');
     autoUpdater.downloadUpdate();
   });
-
-  let isUpdating = false;
 
   ipcMain.on('install-update', () => {
     log.info('Renderer: Güncelleme yükleniyor ve yeniden başlatılıyor...');
