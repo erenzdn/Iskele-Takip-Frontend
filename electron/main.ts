@@ -223,6 +223,17 @@ app.whenReady().then(() => {
 
   // --- Auto-updater Section ---
   autoUpdater.autoDownload = false; // Kullanıcı onayı olmadan indirme yapmasın
+  autoUpdater.autoInstallOnAppQuit = true;
+  
+  // GitHub API kullanımını zorla (atom feed yerine)
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'erenzdn',
+    repo: 'Iskele-Takip-Frontend',
+    private: false,
+    // GitHub releases API'yi kullan
+    useMultipleRangeRequest: false,
+  });
 
   // ÖNEMLİ: Dinleyicileri (on) kontrolü başlatmadan ÖNCE tanımla
   autoUpdater.on('checking-for-update', () => {
@@ -251,9 +262,23 @@ app.whenReady().then(() => {
 
   autoUpdater.on('error', (err: Error) => {
     log.error('Güncelleme sırasında hata oluştu:', err);
-    BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('update-error', err.message);
-    });
+    
+    // 503 gibi geçici hatalar için daha az agresif yaklaşım
+    const errorMsg = err.message || String(err);
+    const isTemporaryError = errorMsg.includes('503') || 
+                            errorMsg.includes('Service Unavailable') ||
+                            errorMsg.includes('ENOTFOUND') ||
+                            errorMsg.includes('ETIMEDOUT');
+    
+    if (isTemporaryError) {
+      log.warn('Geçici bir ağ hatası tespit edildi. Kullanıcı bilgilendirilmiyor.');
+      // Geçici hatalarda kullanıcıyı rahatsız etmeyelim
+      // Uygulama kapanıp açıldığında tekrar deneyecek
+    } else {
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('update-error', errorMsg);
+      });
+    }
   });
 
   autoUpdater.on('download-progress', (progressObj: any) => {
@@ -273,7 +298,13 @@ app.whenReady().then(() => {
   // Dinleyiciler hazır olduktan sonra kontrolü başlat
   if (!isDev) {
     log.info('Uygulama paketlenmiş modda, güncelleme kontrolü başlatılıyor...');
-    autoUpdater.checkForUpdates();
+    // Güncelleme kontrolünü güvenli şekilde başlat
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch((err: Error) => {
+        log.error('İlk güncelleme kontrolü başarısız:', err);
+        // Hata durumunda uygulamayı çökertme, sadece logla
+      });
+    }, 3000); // Uygulama tamamen yüklendikten 3 saniye sonra kontrol et
   } else {
     log.info('Uygulama geliştirme modunda, güncelleme kontrolü atlandı.');
   }

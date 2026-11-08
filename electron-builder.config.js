@@ -11,6 +11,10 @@ export default {
       owner: 'erenzdn',
       repo: 'Iskele-Takip-Frontend',
       releaseType: 'release',
+      // GitHub API kullan, atom feed değil
+      private: false,
+      // Güncelleme kontrolü için direkt API kullan
+      protocol: 'https',
     },
   ],
   files: ['dist-web/**/*', 'dist-electron/**/*', 'package.json', 'LICENSE.txt'],
