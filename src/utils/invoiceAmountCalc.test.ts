@@ -724,6 +724,30 @@ describe('invoiceAmountCalc', () => {
       expect(newState.loading).toBe(false);
     });
 
+    it('CALC_CLEAR eski hesabı temizler, tutar alanını korur', () => {
+      let state = createInitialInvoiceAmountState();
+      state = invoiceAmountReducer(state, {
+        type: 'CALC_RESULT',
+        calculation: {
+          amount: 5000,
+          requestedDays: 31,
+          coveredDays: 31,
+          uncoveredDays: 0,
+          hasProration: false,
+          hasProjection: false,
+          breakdown: [],
+        },
+      });
+
+      const newState = invoiceAmountReducer(state, { type: 'CALC_CLEAR' });
+
+      expect(newState.calculation).toBeNull();
+      expect(newState.calculatedAmount).toBeNull();
+      expect(newState.error).toBeNull();
+      expect(newState.amountInput).toBe('5.000,00');
+      expect(newState.mode).toBe('auto');
+    });
+
     it('yükleme durumunu ayarlar', () => {
       const state = createInitialInvoiceAmountState();
       const newState = invoiceAmountReducer(state, { type: 'CALC_LOADING' });

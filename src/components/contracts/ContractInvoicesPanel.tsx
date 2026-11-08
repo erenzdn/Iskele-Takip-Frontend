@@ -111,6 +111,8 @@ export default function ContractInvoicesPanel({
       dispatchAmount({ type: 'CALC_ERROR', error: suggestion.error });
     } else if (suggestion.calculation) {
       dispatchAmount({ type: 'CALC_RESULT', calculation: suggestion.calculation });
+    } else {
+      dispatchAmount({ type: 'CALC_CLEAR' });
     }
   }, [suggestion.loading, suggestion.error, suggestion.calculation]);
 
@@ -599,6 +601,30 @@ export default function ContractInvoicesPanel({
             </div>
           </div>
 
+          {isRentalContract && formData.currency !== contractCurrency && (
+            <div className="p-2 bg-amber-900/30 border border-amber-700/50 rounded text-xs text-amber-200">
+              ⚠️ Seçilen para birimi sözleşme para biriminden farklı. Otomatik hesaplama devre dışı.
+            </div>
+          )}
+
+          {(() => {
+            if (!isRentalContract || !formData.periodStart || !formData.periodEnd) return null;
+            if (formData.periodStart > formData.periodEnd) return null;
+            const overlapping = findOverlappingInvoices(
+              invoices,
+              formData.periodStart,
+              formData.periodEnd,
+              editingInvoice?.invoiceRecordId
+            );
+            if (overlapping.length === 0) return null;
+            return (
+              <div className="p-2 bg-red-900/30 border border-red-700/50 rounded text-xs text-red-200">
+                ⚠️ Bu dönemle çakışan fatura var:{' '}
+                {overlapping.map((inv) => inv.invoiceNumber || `#${inv.invoiceRecordId}`).join(', ')}
+              </div>
+            );
+          })()}
+
           {/* Uyarılar */}
           {isRentalContract && amountState.calculation && (
             <div className="space-y-2">
@@ -622,32 +648,6 @@ export default function ContractInvoicesPanel({
                   📊 Projeksiyon: iade veya zeyilname olursa tutar değişebilir
                 </div>
               )}
-              
-              {/* Para birimi farklı */}
-              {formData.currency !== contractCurrency && (
-                <div className="p-2 bg-amber-900/30 border border-amber-700/50 rounded text-xs text-amber-200">
-                  ⚠️ Seçilen para birimi sözleşme para biriminden farklı. Otomatik hesaplama devre dışı.
-                </div>
-              )}
-              
-              {/* Çakışan faturalar */}
-              {(() => {
-                const overlapping = findOverlappingInvoices(
-                  invoices,
-                  formData.periodStart,
-                  formData.periodEnd,
-                  editingInvoice?.invoiceRecordId
-                );
-                if (overlapping.length > 0) {
-                  return (
-                    <div className="p-2 bg-red-900/30 border border-red-700/50 rounded text-xs text-red-200">
-                      ⚠️ Bu dönemle çakışan fatura var:{' '}
-                      {overlapping.map((inv) => inv.invoiceNumber || `#${inv.invoiceRecordId}`).join(', ')}
-                    </div>
-                  );
-                }
-                return null;
-              })()}
             </div>
           )}
 

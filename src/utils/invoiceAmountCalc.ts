@@ -240,6 +240,7 @@ export type InvoiceAmountAction =
   | { type: 'CALC_RESULT'; calculation: InvoiceAmountCalculation }
   | { type: 'CALC_ERROR'; error: string }
   | { type: 'CALC_LOADING' }
+  | { type: 'CALC_CLEAR' }
   | { type: 'USER_INPUT'; value: string }
   | { type: 'RESET_TO_AUTO' }
   | { type: 'INIT_CREATE'; initialAmount?: number }
@@ -329,6 +330,16 @@ export function invoiceAmountReducer(
         error: action.error,
         calculatedAmount: null,
         calculation: null,
+        loading: false,
+      };
+
+    case 'CALC_CLEAR':
+      // Tarihler silindi veya hesap devre dışı: tutar alanı korunur, eski hesap temizlenir
+      return {
+        ...state,
+        calculatedAmount: null,
+        calculation: null,
+        error: null,
         loading: false,
       };
 

@@ -29,7 +29,7 @@ Oluşturulan saf fonksiyonlar:
 ### 2. **invoiceAmountCalc.test.ts** - Unit Testler
 **Dosya:** `src/utils/invoiceAmountCalc.test.ts`
 
-**43 test senaryosu** kapsamında:
+**44 test senaryosu** kapsamında:
 - ✅ Tam dönem kapsaması (birebir tutar)
 - ✅ Birden çok dönem toplama
 - ✅ Kısmi dönem orantılama (başta, sonda, ortada)
@@ -103,7 +103,7 @@ Tablo formatında:
 ```bash
 npm test invoiceAmountCalc.test.ts
 ```
-**Sonuç:** ✅ 43/43 test başarılı
+**Sonuç:** ✅ 44/44 test başarılı
 
 ### Tüm Testler
 ```bash
@@ -173,7 +173,7 @@ Tam kapsama durumunda: katkı = accrualNetTotal (orantı yok)
 
 ### Toplam
 - **~1320 satır** yeni kod yazıldı
-- **43** unit test eklendi
+- **44** unit test eklendi
 - **0** hata, **0** uyarı
 
 ## 🚀 Sonraki Adımlar
@@ -197,14 +197,14 @@ Tam kapsama durumunda: katkı = accrualNetTotal (orantı yok)
 
 - **Backend değişikliği yok:** Tüm hesaplama frontend'de yapılır
 - **Geriye uyumlu:** Mevcut faturalar ve satış sözleşmeleri etkilenmez
-- **Test kapsamı:** %100 kod coverage (tüm senaryolar test edildi)
+- **Test kapsamı:** Saf hesaplama fonksiyonları ve reducer unit testlerle kapsanır; `useInvoiceAmountSuggestion` hook'u ve panel arayüzü için otomatik test yoktur, coverage ölçülmemiştir
 - **Performans:** Önbellekleme ve debounce ile optimize edildi
 - **Kullanıcı dostu:** Açık uyarılar, mod rozetleri, görsel feedback
 
 ## ✨ Öne Çıkan Özellikler
 
 1. **Saf Fonksiyonlar:** Tüm hesaplama mantığı testedilebilir saf fonksiyonlarda
-2. **Kapsamlı Testler:** 43 unit test ile tüm senaryolar kapsanır
+2. **Kapsamlı Testler:** 44 unit test ile hesaplama ve durum geçişleri kapsanır
 3. **Performans:** Debounce, önbellekleme, stale yanıt koruması
 4. **Kullanıcı Kontrolü:** Otomatik/elle mod, geri dönüş, şeffaf hesaplama
 5. **Detaylı Bilgi:** Uyarılar, kırılım, fark gösterimi
