@@ -56,6 +56,8 @@ export default function ContractInvoicesPanel({
   });
   const [submitting, setSubmitting] = useState(false);
   const [showBreakdown, setShowBreakdown] = useState(false);
+  /** Fatura dönemi gün sayısı (bitiş dahil). Girilince bitiş otomatik hesaplanır. */
+  const [periodDaysInput, setPeriodDaysInput] = useState('');
 
   // Tutar yönetimi için reducer
   const [amountState, dispatchAmount] = useReducer(
@@ -179,13 +181,74 @@ export default function ContractInvoicesPanel({
     });
     setEditingInvoice(null);
     setShowBreakdown(false);
+    setPeriodDaysInput('');
     dispatchAmount({ type: 'INIT_CREATE' });
+  };
+
+  /** Dönem bitişi dahil: N gün → bitiş = başlangıç + N - 1. */
+  const endFromDays = (start: string, days: number) => addCalendarDays(start, days - 1);
+  const daysFromRange = (start: string, end: string) => {
+    const diff = calendarDaysBetween(start, end);
+    return Number.isFinite(diff) && diff >= 0 ? diff + 1 : null;
+  };
+
+  /**
+   * Yeni faturanın varsayılan dönemi: son faturanın ertesi gününden (yoksa sözleşme başlangıcından)
+   * başlar; uzatmalar dahil güncel planlanan bitişe kadar en fazla 30 gün.
+   */
+  const getDefaultPeriod = (): { start: string; days: number | null } => {
+    const lastEnd = invoices
+      .map((inv) => isoToLocalDateKey(inv.periodEnd))
+      .filter(Boolean)
+      .sort()
+      .pop();
+    const contractStartKey = contractStartDate ? isoToLocalDateKey(contractStartDate) : '';
+    const start = lastEnd ? addCalendarDays(lastEnd, 1) : contractStartKey;
+    if (!start) return { start: '', days: null };
+    const endKey = contractPlannedEndDate ? isoToLocalDateKey(contractPlannedEndDate) : '';
+    // Planlanan bitiş günü faturaya dahil değildir (son fatura günü = bitiş - 1).
+    const remaining = endKey ? calendarDaysBetween(start, endKey) : NaN;
+    if (Number.isFinite(remaining) && remaining >= 1) {
+      return { start, days: Math.min(30, remaining) };
+    }
+    return { start, days: endKey ? null : 30 };
   };
 
   const openCreateForm = () => {
     resetForm();
+    if (isRentalContract) {
+      const { start, days } = getDefaultPeriod();
+      setFormData((prev) => ({
+        ...prev,
+        periodStart: start,
+        periodEnd: start && days ? endFromDays(start, days) : '',
+      }));
+      setPeriodDaysInput(days ? String(days) : '');
+    }
     setShowCreateForm(true);
     dispatchAmount({ type: 'INIT_CREATE' });
+  };
+
+  const handlePeriodStartChange = (nextStart: string) => {
+    const days = Math.floor(Number(periodDaysInput));
+    setFormData((prev) => ({
+      ...prev,
+      periodStart: nextStart,
+      periodEnd: nextStart && days >= 1 ? endFromDays(nextStart, days) : prev.periodEnd,
+    }));
+  };
+
+  const handlePeriodDaysChange = (raw: string) => {
+    setPeriodDaysInput(raw);
+    const days = Math.floor(Number(raw));
+    if (!formData.periodStart || !Number.isFinite(days) || days < 1) return;
+    setFormData((prev) => ({ ...prev, periodEnd: endFromDays(prev.periodStart, days) }));
+  };
+
+  const handlePeriodEndChange = (nextEnd: string) => {
+    setFormData((prev) => ({ ...prev, periodEnd: nextEnd }));
+    const days = formData.periodStart && nextEnd ? daysFromRange(formData.periodStart, nextEnd) : null;
+    setPeriodDaysInput(days != null ? String(days) : '');
   };
 
   const openEditForm = (invoice: ContractInvoice) => {
@@ -201,6 +264,10 @@ export default function ContractInvoicesPanel({
     setEditingInvoice(invoice);
     setShowCreateForm(true);
     setShowBreakdown(false);
+    const editStart = isoToLocalDateKey(invoice.periodStart);
+    const editEnd = isoToLocalDateKey(invoice.periodEnd);
+    const editDays = editStart && editEnd ? daysFromRange(editStart, editEnd) : null;
+    setPeriodDaysInput(editDays != null ? String(editDays) : '');
     
     // Düzenleme modunda elle moddan başla, hesaplanan değeri referans olarak göster
     dispatchAmount({
@@ -534,32 +601,68 @@ export default function ContractInvoicesPanel({
               />
             </div>
 
-            <div>
-              <label className="block text-xs text-text-secondary mb-1">
-                Dönem Başlangıç <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={formData.periodStart}
-                onChange={(e) => setFormData({ ...formData, periodStart: e.target.value })}
-                className="input w-full"
-                required
-                disabled={submitting}
-              />
-            </div>
+            <div className="col-span-2 grid grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">
+                  Dönem Başlangıç <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={formData.periodStart}
+                  onChange={(e) => handlePeriodStartChange(e.target.value)}
+                  className="input w-full"
+                  required
+                  disabled={submitting}
+                  title="Varsayılan: son faturanın ertesi günü (fatura yoksa sözleşme başlangıcı). Değiştirebilirsiniz."
+                />
+              </div>
 
-            <div>
-              <label className="block text-xs text-text-secondary mb-1">
-                Dönem Bitiş <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="date"
-                value={formData.periodEnd}
-                onChange={(e) => setFormData({ ...formData, periodEnd: e.target.value })}
-                className="input w-full"
-                required
-                disabled={submitting}
-              />
+              <div>
+                <label
+                  className="block text-xs text-text-secondary mb-1"
+                  title="Faturalanacak gün sayısı (başlangıç ve bitiş günü dahil). Bitiş tarihi buna göre hesaplanır."
+                >
+                  Gün
+                </label>
+                <input
+                  type="number"
+                  min={1}
+                  max={36500}
+                  step={1}
+                  value={periodDaysInput}
+                  onChange={(e) => handlePeriodDaysChange(e.target.value)}
+                  className="input w-full"
+                  placeholder="30"
+                  disabled={submitting}
+                  title="Örn. 30 yazınca bitiş tarihi otomatik gelir."
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs text-text-secondary mb-1">
+                  Dönem Bitiş <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="date"
+                  value={formData.periodEnd}
+                  min={formData.periodStart || undefined}
+                  onChange={(e) => handlePeriodEndChange(e.target.value)}
+                  className="input w-full"
+                  required
+                  disabled={submitting}
+                  title="Elle bitiş tarihi de girebilirsiniz; gün sayısı buna göre güncellenir."
+                />
+              </div>
+
+              {isRentalContract && !editingInvoice && plannedEndKey && formData.periodStart && (
+                <p className="col-span-3 text-xs text-text-secondary">
+                  Planlanan bitiş (uzatmalar dahil): {formatDate(plannedEndKey)} — son fatura günü{' '}
+                  {formatDate(addCalendarDays(plannedEndKey, -1))}
+                  {formData.periodStart >= plannedEndKey && (
+                    <span className="text-amber-300"> · Başlangıç planlanan bitişten sonra; sözleşme uzatılmamış olabilir.</span>
+                  )}
+                </p>
+              )}
             </div>
 
             <div className="col-span-2">
