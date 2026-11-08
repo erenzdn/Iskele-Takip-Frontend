@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent } from 'react';
 import { ClipboardIcon, NotePencilIcon, MagnifyingGlassIcon } from '@phosphor-icons/react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { contractService } from '../services/contractService';
 import { quoteService } from '../services/quoteService';
 import { quoteTemplateService } from '../services/quoteTemplateService';
@@ -26,9 +26,9 @@ import { formatShortDateTime } from '../utils/formatters';
 import { getApiErrorMessage, getUserFacingApiErrorMessage, isConvertedQuoteApiError } from '../utils/apiError';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from '../components/EmptyState';
-import ContractDetailModal from '../components/modals/ContractDetailModal';
-import QuoteDetailModal from '../components/modals/QuoteDetailModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
+import { useInvalidation } from '../store/dataInvalidationStore';
+import { contractPath, newContractPath, newQuotePath, quotePath } from '../utils/entityNavigation';
 import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import { toast } from '../hooks/useToast';
 import { useHeaderActions } from '../layouts/HeaderActionsContext';
@@ -61,7 +61,6 @@ interface ContractsPageProps {
 }
 
 export default function ContractsPage({ contractScope }: ContractsPageProps) {
-  const location = useLocation();
   const navigate = useNavigate();
   const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
@@ -75,30 +74,8 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const [contractsRaw, setContractsRaw] = useState<Contract[]>([]);
   const [quotesRaw, setQuotesRaw] = useState<Quote[]>([]);
   const [loading, setLoading] = useState(true);
-  const consumedOpenContractIdRef = useRef<number | null>(null);
-  const consumedOpenQuoteIdRef = useRef<number | null>(null);
-  const returnOnCloseRef = useRef<boolean>(false);
-  const returnToRef = useRef<{ path: string; state?: any } | null>(null);
 
   const salePlannedEndTooltip = 'Satışlarda planlanan bitiş tarihi kullanılmaz.';
-
-  // Contract Modal State
-  const [selectedContract, setSelectedContract] = useState<Contract | null>(null);
-  const [isContractModalOpen, setIsContractModalOpen] = useState(false);
-  const [isNewContract, setIsNewContract] = useState(false);
-  const [contractInitialTab, setContractInitialTab] = useState<'info' | 'return' | 'returns' | 'history' | 'extensions' | 'invoices'>('info');
-  const [contractInitiallyFullScreen, setContractInitiallyFullScreen] = useState(false);
-
-  // Quote Modal State
-  const [selectedQuote, setSelectedQuote] = useState<Quote | null>(null);
-  const [isQuoteModalOpen, setIsQuoteModalOpen] = useState(false);
-  const [isNewQuote, setIsNewQuote] = useState(false);
-  /**
-   * Modal "kopyalanmış taslak" durumunda mı?
-   * - true: modal doğrudan düzenleme modunda açılır ve "Taslak (kopya)" rozeti gösterilir.
-   * - false: normal Detay görünümü.
-   */
-  const [isQuoteClonedDraft, setIsQuoteClonedDraft] = useState(false);
   /** Clone işlemi sırasında satır üzerinden tetiklendiğinde double-click'i engelle. */
   const [cloningQuoteId, setCloningQuoteId] = useState<number | null>(null);
   const { openContextMenu } = useContextMenu();
@@ -145,67 +122,6 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   useEffect(() => {
     setActiveTab('quotes');
   }, [contractScope]);
-
-  useEffect(() => {
-    const st = location.state as any;
-    const openContractId = st?.openContractId;
-    if (!openContractId) return;
-    const idNum = Number(openContractId);
-    if (!Number.isFinite(idNum) || idNum <= 0) return;
-    if (consumedOpenContractIdRef.current === idNum) return;
-    const preferTab = st?.preferTab;
-    if (preferTab === 'active' || preferTab === 'completed' || preferTab === 'cancelled' || preferTab === 'archived' || preferTab === 'quotes' || preferTab === 'quotesConverted') {
-      setActiveTab(preferTab);
-    } else {
-      setActiveTab('active');
-    }
-    const initialTab = st?.initialTab;
-    if (initialTab === 'info' || initialTab === 'return' || initialTab === 'returns' || initialTab === 'history' || initialTab === 'extensions' || initialTab === 'invoices') {
-      setContractInitialTab(initialTab);
-    } else {
-      setContractInitialTab('info');
-    }
-    const found = contractsRaw.find((c) => c.ContractId === idNum);
-    if (found) {
-      setSelectedContract(found);
-      setIsNewContract(false);
-      setContractInitiallyFullScreen(Boolean(st?.returnTo?.path?.includes('/warehouses')));
-      setIsContractModalOpen(true);
-      consumedOpenContractIdRef.current = idNum;
-      returnOnCloseRef.current = Boolean(st?.returnOnClose);
-      const rt = st?.returnTo;
-      returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
-      // URL state'i temizle: modal kapanınca loadData tetiklenince tekrar açılmasın.
-      navigate(location.pathname + location.search, { replace: true, state: null });
-    }
-  }, [contractsRaw, location.pathname, location.search, location.state, navigate]);
-
-  useEffect(() => {
-    const st = location.state as any;
-    const openQuoteId = st?.openQuoteId;
-    if (!openQuoteId) return;
-    const idNum = Number(openQuoteId);
-    if (!Number.isFinite(idNum) || idNum <= 0) return;
-    const openKey = st?.openQuoteNonce ?? idNum;
-    if (consumedOpenQuoteIdRef.current === openKey) return;
-    consumedOpenQuoteIdRef.current = openKey;
-
-    void (async () => {
-      try {
-        const quote = await quoteService.getByIdAsync(idNum);
-        setActiveTab(isQuoteConverted(quote) ? 'quotesConverted' : 'quotes');
-        setSelectedQuote(quote);
-        setIsNewQuote(false);
-        setIsQuoteClonedDraft(false);
-        setIsQuoteModalOpen(true);
-        navigate(location.pathname + location.search, { replace: true, state: null });
-      } catch (error) {
-        console.error('Open quote from navigation error:', error);
-        consumedOpenQuoteIdRef.current = null;
-        toast.error(getApiErrorMessage(error) || 'Teklif açılamadı.');
-      }
-    })();
-  }, [location.pathname, location.search, location.state, navigate]);
 
   /** Liste: müşteri adı API `CustomerName`; şantiye için önceden yüklenen site haritası. */
   const contracts = useMemo(
@@ -299,28 +215,6 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     debouncedQuoteSearch,
   ]);
 
-  const handleContractDataChanged = useCallback(
-    async (hint?: { quoteReleased?: boolean }) => {
-      if (hint?.quoteReleased && activeTab === 'quotesConverted') {
-        setActiveTab('quotes');
-        return;
-      }
-      await loadData();
-      if (hint?.quoteReleased && !isQuotesTab(activeTab)) {
-        try {
-          const quotesData = await quoteService.getAllAsync({
-            quoteType: scopeType,
-            search: debouncedQuoteSearch.trim() || undefined,
-          });
-          setQuotesRaw(quotesData || []);
-        } catch (error) {
-          console.error('Refresh quotes after contract cancel error:', error);
-        }
-      }
-    },
-    [activeTab, debouncedQuoteSearch, loadData, scopeType]
-  );
-
   useEffect(() => {
     void loadData();
   }, [loadData]);
@@ -385,42 +279,32 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     void hydrateAuxiliaryMaps();
   }, [hydrateAuxiliaryMaps]);
 
+  const recordKind = contractScope === 'sale' ? 'sale' : 'rental';
+
+  useInvalidation('contracts', () => {
+    void loadData();
+  });
+  useInvalidation('quotes', () => {
+    void loadData();
+  });
+
   const handleAddNew = () => {
-    if (isQuotesTab(activeTab)) {
-      setSelectedQuote(null);
-      setIsNewQuote(true);
-      setIsQuoteClonedDraft(false);
-      setIsQuoteModalOpen(true);
-    } else {
-      setSelectedContract(null);
-      setIsNewContract(true);
-      setContractInitiallyFullScreen(false);
-      setIsContractModalOpen(true);
-    }
+    if (isQuotesTab(activeTab)) navigate(newQuotePath(recordKind));
+    else navigate(newContractPath(recordKind));
   };
 
   const handleOpenContract = (contract: Contract, options?: { initialTab?: 'info' | 'return' | 'returns' | 'history' | 'extensions' | 'invoices' }) => {
-    setSelectedContract(contract);
-    setIsNewContract(false);
-    setContractInitialTab(options?.initialTab ?? 'info');
-    setContractInitiallyFullScreen(false);
-    setIsContractModalOpen(true);
+    navigate(contractPath(contract.ContractId), {
+      state: options?.initialTab ? { initialTab: options.initialTab } : null,
+    });
   };
 
   const handleOpenQuote = (quote: Quote, options?: { asClonedDraft?: boolean }) => {
-    setSelectedQuote(quote);
-    setIsNewQuote(false);
-    setIsQuoteClonedDraft(Boolean(options?.asClonedDraft));
-    setIsQuoteModalOpen(true);
+    navigate(quotePath(quote.QuoteId), {
+      state: options?.asClonedDraft ? { startInEditMode: true, isClonedDraft: true } : null,
+    });
   };
 
-  /**
-   * Backend tarafında /clone ile yeni teklif yaratıldıktan sonra modal bunu
-   * parent'a iletir. Burada listeyi yeniler ve modalı yeni teklifle düzenleme
-   * modunda yeniden açarız (mevcut update akışıyla kullanıcı serbestçe
-   * düzenleyebilir; satır içi değişiklikler sırasında satır kalemleri
-   * /quotes/:id endpoint'i ile zaten kopyalandığı için yeniden gönderilmez).
-   */
   const handleQuoteCloned = useCallback(
     async (newQuote: Quote) => {
       try {
@@ -428,12 +312,11 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
       } catch (error) {
         console.error('Reload after clone failed:', error);
       }
-      setSelectedQuote(newQuote);
-      setIsNewQuote(false);
-      setIsQuoteClonedDraft(true);
-      setIsQuoteModalOpen(true);
+      navigate(quotePath(newQuote.QuoteId), {
+        state: { startInEditMode: true, isClonedDraft: true },
+      });
     },
-    [loadData]
+    [loadData, navigate]
   );
 
   /**
@@ -522,50 +405,6 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     },
     [quotePreviewLoading, resolveDefaultQuoteTemplateId]
   );
-
-  const handleContractModalClose = () => {
-    setIsContractModalOpen(false);
-    setSelectedContract(null);
-    setContractInitialTab('info');
-    if (returnOnCloseRef.current) {
-      returnOnCloseRef.current = false;
-      const rt = returnToRef.current;
-      returnToRef.current = null;
-      if (rt?.path) {
-        navigate(rt.path, { replace: true, state: rt.state ?? null });
-      } else {
-        navigate(-1);
-      }
-      return;
-    }
-    loadData();
-  };
-
-  const handleQuoteModalClose = () => {
-    setIsQuoteModalOpen(false);
-    setSelectedQuote(null);
-    setIsQuoteClonedDraft(false);
-    consumedOpenQuoteIdRef.current = null;
-    loadData();
-  };
-
-  const handleOpenSourceQuoteFromContract = useCallback(async (quoteId: number) => {
-    consumedOpenQuoteIdRef.current = null;
-    setIsContractModalOpen(false);
-    setSelectedContract(null);
-    setContractInitialTab('info');
-    try {
-      const quote = await quoteService.getByIdAsync(quoteId);
-      setActiveTab(isQuoteConverted(quote) ? 'quotesConverted' : 'quotes');
-      setSelectedQuote(quote);
-      setIsNewQuote(false);
-      setIsQuoteClonedDraft(false);
-      setIsQuoteModalOpen(true);
-    } catch (error) {
-      console.error('Open source quote error:', error);
-      toast.error(getApiErrorMessage(error) || 'Teklif açılamadı.');
-    }
-  }, []);
 
   const formatCurrency = (amount: number | null | undefined) => {
     if (amount == null) return '₺0,00';
@@ -659,54 +498,16 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   }, [headerActions, setActions]);
 
   const openConvertedContractFromQuote = useCallback(
-    async (quote: Quote, event?: MouseEvent) => {
+    (quote: Quote, event?: MouseEvent) => {
       event?.stopPropagation();
       const contractId = quote.ConvertedContractId;
       if (!contractId) {
         toast.warning('Bu teklife bağlı sözleşme bulunamadı.');
         return;
       }
-      try {
-        const contract = await contractService.getByIdAsync(contractId);
-        setActiveTab('active');
-        setSelectedContract(contract);
-        setIsNewContract(false);
-        setContractInitialTab('info');
-        setContractInitiallyFullScreen(false);
-        setIsContractModalOpen(true);
-      } catch (error) {
-        console.error('Open converted contract from quote list error:', error);
-        toast.error(getApiErrorMessage(error) || 'Sözleşme açılamadı.');
-      }
+      navigate(contractPath(contractId));
     },
-    []
-  );
-
-  const handleQuoteConverted = useCallback(
-    async (contractId: number) => {
-      setIsQuoteModalOpen(false);
-      setSelectedQuote(null);
-      setIsQuoteClonedDraft(false);
-      try {
-        const contract = await contractService.getByIdAsync(contractId);
-        setActiveTab('active');
-        setSelectedContract(contract);
-        setIsNewContract(false);
-        setContractInitialTab('info');
-        setContractInitiallyFullScreen(false);
-        setIsContractModalOpen(true);
-      } catch (error) {
-        console.error('Open contract after convert error:', error);
-        toast.error(getApiErrorMessage(error) || 'Sözleşme açılamadı.');
-        setActiveTab('active');
-      }
-      try {
-        await loadData();
-      } catch (error) {
-        console.error('Reload after convert failed:', error);
-      }
-    },
-    [loadData]
+    [navigate]
   );
 
   const openArchiveModal = (contract: Contract) => {
@@ -1362,43 +1163,6 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
         renderQuotesTable()
       ) : (
         renderContractsTable()
-      )}
-
-      {/* Contract Modal */}
-      {isContractModalOpen && (
-        <ContractDetailModal
-          key={isNewContract ? `new-contract-${contractScope}` : `c-${selectedContract?.ContractId ?? 'x'}`}
-          contract={selectedContract}
-          isNew={isNewContract}
-          initialTab={contractInitialTab}
-          onClose={handleContractModalClose}
-          onOpenSourceQuote={handleOpenSourceQuoteFromContract}
-          onDataChanged={handleContractDataChanged}
-          defaultTypeForNew={scopeType}
-          initiallyFullScreen={contractInitiallyFullScreen}
-          lockNewContractType
-        />
-      )}
-
-      {/* Quote Modal */}
-      {isQuoteModalOpen && (
-        <QuoteDetailModal
-          key={
-            isNewQuote
-              ? `new-quote-${contractScope}`
-              : `q-${selectedQuote?.QuoteId ?? 'x'}${isQuoteClonedDraft ? '-clone' : ''}`
-          }
-          quote={selectedQuote}
-          isNew={isNewQuote}
-          onClose={handleQuoteModalClose}
-          onDataChanged={loadData}
-          onConverted={handleQuoteConverted}
-          defaultTypeForNew={scopeType}
-          lockNewQuoteType
-          onQuoteCloned={handleQuoteCloned}
-          startInEditMode={isQuoteClonedDraft || selectedQuote?.Status === QuoteStatus.Draft}
-          isClonedDraft={isQuoteClonedDraft}
-        />
       )}
 
       <PdfPreviewModal

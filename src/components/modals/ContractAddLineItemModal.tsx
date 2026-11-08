@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import type { ContractQuoteType, Inventory, Warehouse, WarehouseStock } from '../../models';
 import { contractService, type AddContractDetailsRequestBody } from '../../services/contractService';
@@ -40,6 +41,7 @@ export default function ContractAddLineItemModal({
   onClose,
   onAdded,
 }: ContractAddLineItemModalProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
   const isSale = contractType === 'SALE';
 
@@ -476,6 +478,6 @@ export default function ContractAddLineItemModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }
 

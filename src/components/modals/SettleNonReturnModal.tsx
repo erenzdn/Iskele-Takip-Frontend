@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import { InventoryContractLineItem, Inventory } from '../../models';
 import { contractService } from '../../services/contractService';
@@ -34,6 +35,7 @@ export default function SettleNonReturnModal({
   onClose,
   onSuccess,
 }: SettleNonReturnModalProps) {
+  const portalTarget = usePortalTarget();
   const [quantity, setQuantity] = useState<string>('1');
   const [reason, setReason] = useState<'SALE' | 'DEFECT'>('SALE');
   const [priceBasis, setPriceBasis] = useState<'TRY' | 'USD' | 'EUR'>(currency);
@@ -241,6 +243,6 @@ export default function SettleNonReturnModal({
         </div>
       </div>
     </div>,
-    document.body
+    portalTarget
   );
 }

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { MagnifyingGlassIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
 import type { ContractLineItem, ContractQuoteType, CurrencyCode, Inventory } from '../../models';
 import {
@@ -55,6 +56,7 @@ export default function ContractLinesReferenceDrawer({
   items = [],
   onSelectInventory,
 }: ContractLinesReferenceDrawerProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
   const selectable = typeof onSelectInventory === 'function';
   const [query, setQuery] = useState('');
@@ -245,5 +247,5 @@ export default function ContractLinesReferenceDrawer({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(drawer, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(drawer, portalTarget) : null;
 }

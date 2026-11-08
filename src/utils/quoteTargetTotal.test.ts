@@ -3,12 +3,10 @@ import type { QuoteLineItem } from '../models';
 import {
   commitQuotePricingDrafts,
   lineDiscountAmount,
-  lineIskontoFromApi,
   lineNetFromGross,
   roundTo,
   type LinePricingDraftState,
 } from './lineDiscount';
-import { buildQuoteDetailRequest } from './linePriceMetadata';
 import {
   computePriceBreakdown,
   solveUniformDiscountForTarget,
@@ -94,12 +92,13 @@ describe('İskontolu (KDV hariç) tutar girişi', () => {
     expect(r.exact).toBe(true);
   });
 
-  it('küsuratlı hedef: yüzde en fazla 4 hane, hedef birebir tutar', () => {
+  it('küsuratlı hedef: yazılan kuruş birebir kalır, yüzde yuvarlanarak tutar değişmez', () => {
     const grossList = [1234.56, 789.1, 45.67];
     const r = solveUniformDiscountForTarget({ grossList, vatRate: 20, target: 1777.77, kind: 'net' });
-    expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(4);
-    expect(r.achievedTotal).toBe(totalAt(grossList, 20, r.discountPercent, 'net'));
-    expect(Math.abs(r.achievedTotal - 1777.77)).toBeLessThanOrEqual(0.01 * grossList.length);
+    expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(10);
+    expect(r.exact).toBe(true);
+    expect(r.achievedTotal).toBe(1777.77);
+    expect(r.reason).toBe('ok');
   });
 
   it('hedef = iskontosuz tutar → %0, uyarı yok', () => {
@@ -172,12 +171,12 @@ describe('Genel Toplam (KDV dahil) girişi', () => {
     expect(grand.discountPercent).toBe(net.discountPercent);
   });
 
-  it('yuvarlak genel toplam (100.000 TL) KDV ile küsurat üretse bile hedefe birebir/en yakın', () => {
+  it('yuvarlak genel toplam (100.000 TL) KDV ile küsurat üretse bile yazılan tutar kalır', () => {
     const grossList = [45000, 37250.5, 12345.67, 9999.99];
     const r = solveUniformDiscountForTarget({ grossList, vatRate: 20, target: 100000, kind: 'grand' });
-    expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(4);
-    expect(r.achievedTotal).toBe(totalAt(grossList, 20, r.discountPercent, 'grand'));
-    expect(Math.abs(r.achievedTotal - 100000)).toBeLessThan(0.1);
+    expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(10);
+    expect(r.achievedTotal).toBe(100000);
+    expect(r.exact).toBe(true);
   });
 
   it('genel toplam KDV dahil brütü aşarsa → %0', () => {
@@ -196,28 +195,26 @@ describe('Kiralama (aylık 30 gün) küsuratlı fiyatlar', () => {
   it('aylık fiyat / 30 * miktar * 30 kayan nokta brütleri ile hedef tutar', () => {
     const grossList = [rentalGross(137.37, 7), rentalGross(55.55, 13), rentalGross(1000 / 3, 4)];
     const r = solveUniformDiscountForTarget({ grossList, vatRate: 20, target: 2500, kind: 'net' });
-    expect(r.achievedTotal).toBe(totalAt(grossList, 20, r.discountPercent, 'net'));
-    expect(Math.abs(r.achievedTotal - 2500)).toBeLessThanOrEqual(0.03);
+    expect(r.achievedTotal).toBe(2500);
+    expect(r.exact).toBe(true);
   });
 });
 
 describe('büyük tutarlar ve sınırlar', () => {
-  it('1 milyonluk teklifte sapma 1 TL altında', () => {
+  it('1 milyonluk teklifte yazılan tutar kuruşu kuruşuna kalır', () => {
     const grossList = [612_345.67, 487_654.33];
     const r = solveUniformDiscountForTarget({ grossList, vatRate: 20, target: 950_000, kind: 'net' });
-    expect(r.achievedTotal).toBe(totalAt(grossList, 20, r.discountPercent, 'net'));
-    expect(Math.abs(r.achievedTotal - 950_000)).toBeLessThan(1);
+    expect(r.achievedTotal).toBe(950_000);
+    expect(r.exact).toBe(true);
   });
 
-  it('çok büyük teklif: %0,0001 adımından küçük hedef → en yakın tutar + rounding bildirimi', () => {
+  it('çok büyük teklif: ince yüzde ile yazılan tutar korunur, en yakın kuruşa çekilmez', () => {
     const grossList = [12_345_678.9, 8_765_432.1];
-    const sumGross = grossList.reduce((a, b) => a + b, 0);
     const r = solveUniformDiscountForTarget({ grossList, vatRate: 20, target: 18_000_000, kind: 'net' });
-    expect(r.achievedTotal).toBe(totalAt(grossList, 20, r.discountPercent, 'net'));
-    expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(4);
-    // Yüzde adımı 0,0001 → tutar adımı brüt × 1e-6; en yakın seçildiği için sapma yarım adımı aşmaz.
-    expect(Math.abs(r.achievedTotal - 18_000_000)).toBeLessThanOrEqual(sumGross * 1e-6 / 2 + 0.02);
-    if (!r.exact) expect(r.reason).toBe('rounding');
+    expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(10);
+    expect(r.achievedTotal).toBe(18_000_000);
+    expect(r.exact).toBe(true);
+    expect(r.reason).toBe('ok');
   });
 
   it('tek satır, kuruşluk brüt (0,03 TL)', () => {
@@ -235,7 +232,7 @@ describe('büyük tutarlar ve sınırlar', () => {
 });
 
 describe('rastgele teklifler (fuzz): her durumda tutarlı sonuç', () => {
-  it('yüzde 0–100, ≤4 hane; tutar en yakın; hedef küçüldükçe iskonto artar', () => {
+  it('yüzde 0–100, ≤10 hane; yazılan tutar birebir; hedef küçüldükçe iskonto artar', () => {
     const rand = rng(2026);
     for (let t = 0; t < 400; t++) {
       const grossList = Array.from({ length: 1 + Math.floor(rand() * 10) }, () =>
@@ -248,19 +245,18 @@ describe('rastgele teklifler (fuzz): her durumda tutarlı sonuç', () => {
       const target = roundTo(max * (0.05 + rand() * 0.9), 2);
 
       const r = solveUniformDiscountForTarget({ grossList, vatRate: vat, target, kind });
+      const diff = Math.abs(roundTo(r.achievedTotal - target, 2));
+      if (kind === 'net') {
+        expect(r.exact, JSON.stringify({ grossList, target, achieved: r.achievedTotal, pct: r.discountPercent })).toBe(true);
+        expect(r.achievedTotal).toBe(target);
+      } else {
+        expect(diff).toBeLessThanOrEqual(0.01);
+        if (r.exact) expect(r.achievedTotal).toBe(target);
+      }
       expect(r.discountPercent).toBeGreaterThanOrEqual(0);
       expect(r.discountPercent).toBeLessThanOrEqual(100);
-      expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(4);
+      expect(decimalsOf(r.discountPercent)).toBeLessThanOrEqual(10);
       expect(r.achievedTotal).toBe(totalAt(grossList, vat, r.discountPercent, kind));
-
-      // Komşu 4 haneli yüzdeler hedefe daha yakın olmamalı.
-      const diff = Math.abs(r.achievedTotal - target);
-      for (const step of [-0.0001, 0.0001]) {
-        const p = roundTo(r.discountPercent + step, 4);
-        if (p < 0 || p > 100) continue;
-        expect(diff).toBeLessThanOrEqual(Math.abs(totalAt(grossList, vat, p, kind) - target) + 1e-9);
-      }
-      if (r.exact) expect(r.achievedTotal).toBe(target);
 
       const lower = solveUniformDiscountForTarget({
         grossList,
@@ -364,21 +360,25 @@ describe('kaydet / yeniden aç akışı', () => {
       const grossList = items.map(gross);
       const max = totalAt(grossList, 20, 0, kind);
       if (max <= 0) continue;
+      const typed = roundTo(max * (0.1 + rand() * 0.85), 2);
       const r = solveUniformDiscountForTarget({
         grossList,
         vatRate: 20,
-        target: roundTo(max * (0.1 + rand() * 0.85), 2),
+        target: typed,
         kind,
       });
 
-      const payload = items.map((item) => buildQuoteDetailRequest(item, 'SALE', r.discountPercent));
-      for (const d of payload) expect(d.Iskonto).toBe(r.discountPercent);
+      if (kind === 'net') {
+        expect(r.exact).toBe(true);
+        expect(r.achievedTotal).toBe(typed);
+      } else {
+        expect(Math.abs(roundTo(r.achievedTotal - typed, 2))).toBeLessThanOrEqual(0.01);
+      }
 
-      // Backend NUMERIC(7,4) ile saklayıp geri döndürür.
       const reopened = computePriceBreakdown(
-        items.map((item, idx) => ({
+        items.map((item) => ({
           gross: gross(item),
-          discountPercent: lineIskontoFromApi({ Iskonto: roundTo(payload[idx].Iskonto ?? 0, 4) }, 0),
+          discountPercent: r.discountPercent,
         })),
         20
       );

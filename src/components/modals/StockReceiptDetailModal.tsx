@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { XIcon, TrashIcon, PlusIcon } from '@phosphor-icons/react';
 import {
   StockReceipt,
@@ -204,18 +204,30 @@ export default function StockReceiptDetailModal({
     }
   }, [pdfPreviewUrl]);
 
-  const addItemFromPicker = (item: Inventory, quantity: number) => {
-    setLineRows((prev) => [
-      ...prev,
-      {
-        clientId: crypto.randomUUID(),
-        ItemId: item.ItemId,
-        Quantity: String(Math.max(1, quantity)),
-        Description: '',
-      },
-    ]);
-    setShowProductPicker(false);
-    return true;
+  const pickerPickedItemIds = useMemo(
+    () => new Set(lineRows.filter((r) => r.ItemId !== '').map((r) => Number(r.ItemId))),
+    [lineRows]
+  );
+
+  const toggleItemFromPicker = (item: Inventory, quantity: number) => {
+    let action: 'added' | 'removed' = 'added';
+    setLineRows((prev) => {
+      if (prev.some((r) => r.ItemId === item.ItemId)) {
+        action = 'removed';
+        return prev.filter((r) => r.ItemId !== item.ItemId);
+      }
+      action = 'added';
+      return [
+        ...prev,
+        {
+          clientId: crypto.randomUUID(),
+          ItemId: item.ItemId,
+          Quantity: String(Math.max(1, quantity)),
+          Description: '',
+        },
+      ];
+    });
+    return action;
   };
 
   const removeLineRow = (clientId: string) => {
@@ -636,7 +648,8 @@ export default function StockReceiptDetailModal({
                   open={showProductPicker}
                   onClose={() => setShowProductPicker(false)}
                   items={inventoryItems}
-                  onItemSelect={addItemFromPicker}
+                  onItemSelect={toggleItemFromPicker}
+                  pickedItemIds={pickerPickedItemIds}
                 />
 
                 {createError && (

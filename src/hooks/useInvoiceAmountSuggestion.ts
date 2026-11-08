@@ -4,7 +4,7 @@
  * Dönem tarihleri girilince debounce ile billing-plan çeker ve
  * gün bazlı orantılı tutar hesaplar. İki adımlı istek stratejisi:
  * 1. asOf=bitiş ile plan çek
- * 2. Eğer bitiş açık dönem içindeyse o dönemin sonu ile tekrar çek
+ * 2. Açık dönem ay ortasında kesilmişse ay sonu ile tekrar çek
  * 
  * Önbellekleme ve stale yanıt koruması ile performans optimize edilir.
  */
@@ -15,8 +15,7 @@ import { contractService } from '../services/contractService';
 import type { BillingPeriod } from '../models';
 import {
   computeInvoiceAmountForRange,
-  findOpenPeriodContaining,
-  isoToLocalDateKey,
+  nextBillingPlanAsOfKey,
   type InvoiceAmountCalculation,
 } from '../utils/invoiceAmountCalc';
 import { asOfDateInputToIso } from '../utils/billingPlan';
@@ -141,29 +140,23 @@ export function useInvoiceAmountSuggestion(
           return; // Stale yanıt, kullanma
         }
 
-        // 2. Eğer bitiş açık dönem içindeyse ikinci istek
-        const endKey = isoToLocalDateKey(endDateIso);
-        const openPeriod = findOpenPeriodContaining(plan, endKey);
+        // 2. Açık ay kesik döndüyse gerçek ay sonuna kadar planı yeniden çek
+        const refetchKey = nextBillingPlanAsOfKey(plan, debouncedEndDate);
+        const refetchIso = refetchKey ? asOfDateInputToIso(refetchKey) : undefined;
 
-        if (openPeriod) {
-          // Açık dönemin sonunda tekrar çek
-          const openPeriodEndKey = isoToLocalDateKey(openPeriod.periodEnd);
-          const openPeriodEndIso = asOfDateInputToIso(openPeriodEndKey);
-          
-          if (openPeriodEndIso) {
-            let extendedPlan = getCachedPlan(contractId, openPeriodEndIso);
-            
-            if (!extendedPlan) {
-              extendedPlan = await contractService.getBillingPlanAsync(contractId, openPeriodEndIso);
-              setCachedPlan(contractId, openPeriodEndIso, extendedPlan);
-            }
+        if (refetchIso && refetchIso !== endDateIso) {
+          let extendedPlan = getCachedPlan(contractId, refetchIso);
 
-            if (cancelled || currentRequestId !== requestIdRef.current) {
-              return; // Stale yanıt
-            }
-
-            plan = extendedPlan;
+          if (!extendedPlan) {
+            extendedPlan = await contractService.getBillingPlanAsync(contractId, refetchIso);
+            setCachedPlan(contractId, refetchIso, extendedPlan);
           }
+
+          if (cancelled || currentRequestId !== requestIdRef.current) {
+            return;
+          }
+
+          plan = extendedPlan;
         }
 
         // 3. Hesaplama yap

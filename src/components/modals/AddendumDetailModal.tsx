@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import type {
   Addendum,
@@ -102,6 +103,7 @@ export default function AddendumDetailModal({
   onChanged,
   zIndexClass = 'z-[60]',
 }: AddendumDetailModalProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
 
   const [addendum, setAddendum] = useState<Addendum | null>(null);
@@ -998,5 +1000,5 @@ export default function AddendumDetailModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }

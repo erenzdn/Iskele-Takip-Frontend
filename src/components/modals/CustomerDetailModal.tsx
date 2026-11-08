@@ -30,6 +30,9 @@ import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 import { toast } from '../../hooks/useToast';
 import type { CustomerModalInitialTab } from '../../context-menu';
+import { useTabDirty, useTabTitle } from '../tabs/TabContext';
+import { invalidateData } from '../../store/dataInvalidationStore';
+import { acknowledgeTabSaved } from '../../store/tabStore';
 
 interface CustomerDetailModalProps {
   customer: Customer | null;
@@ -40,6 +43,8 @@ interface CustomerDetailModalProps {
   /** Kayıt başarılı olunca çağrılır (teklif ekranından yeni müşteri seçmek için). */
   onSaved?: (result: { customerId: number; isNew: boolean }) => void;
   overlayClassName?: string;
+  /** page: sekme içeriği. modal: liste üstü katman. */
+  presentation?: 'modal' | 'page';
 }
 
 export default function CustomerDetailModal({
@@ -50,12 +55,16 @@ export default function CustomerDetailModal({
   onClose,
   onSaved,
   overlayClassName = 'z-50',
+  presentation = 'modal',
 }: CustomerDetailModalProps) {
   const [activeTab, setActiveTab] = useState<'info' | 'sites' | 'history'>(initialTab);
+  const isPage = presentation === 'page';
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
   const [customerLogs, setCustomerLogs] = useState<AuditLog[]>([]);
   const [customerLogsLoading, setCustomerLogsLoading] = useState(false);
   const [name, setName] = useState('');
+  useTabTitle(isPage ? (isNew ? name.trim() || 'Yeni Müşteri' : name.trim() || customer?.Name || 'Müşteri') : null);
+  useTabDirty(isPage && !isReadOnly);
   const [taxId, setTaxId] = useState('');
   const [taxOffice, setTaxOffice] = useState('');
   const [phoneNumber, setPhoneNumber] = useState('');
@@ -332,10 +341,18 @@ export default function CustomerDetailModal({
       };
       if (isNew) {
         const created = await customerService.createAsync(payload);
+        invalidateData('customers');
         onSaved?.({ customerId: created.CustomerId, isNew: true });
+        if (isPage) return;
       } else if (customer) {
         await customerService.updateAsync(customer.CustomerId, payload);
+        invalidateData('customers');
         onSaved?.({ customerId: customer.CustomerId, isNew: false });
+        if (isPage) {
+          acknowledgeTabSaved();
+          setIsReadOnly(true);
+          return;
+        }
       }
       onClose();
     } catch (error: any) {
@@ -387,6 +404,8 @@ export default function CustomerDetailModal({
       await customerService.deleteAsync(customer.CustomerId);
       setShowDeleteConfirm(false);
       toast.success('Müşteri arşivlendi (listeden kaldırıldı).');
+      invalidateData('customers');
+      if (isPage) acknowledgeTabSaved();
       onClose();
     } catch (error) {
       console.error('Delete customer error:', error);
@@ -482,8 +501,8 @@ export default function CustomerDetailModal({
   };
 
   return (
-    <div className={`fixed inset-0 ${overlayClassName} bg-black/60 p-3`}>
-      <div className="mx-auto flex h-[calc(100vh-1.5rem)] w-full max-w-[1600px] flex-col rounded-panel border border-background-border bg-background-panel p-4 shadow-2xl">
+    <div className={isPage ? 'flex h-full min-h-0 flex-col overflow-hidden bg-background-main p-3' : `fixed inset-0 ${overlayClassName} bg-black/60 p-3`}>
+      <div className={`mx-auto flex w-full max-w-[1600px] flex-col rounded-panel border border-background-border bg-background-panel p-4 shadow-2xl ${isPage ? 'h-full min-h-0' : 'h-[calc(100vh-1.5rem)]'}`}>
         <div className="mb-2 flex items-start justify-between rounded border border-background-border bg-background-surface px-3 py-2">
           <div>
             <div className="flex flex-wrap items-center gap-2">

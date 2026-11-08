@@ -1,5 +1,6 @@
 import { useCallback, useMemo, useRef, useState, memo } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from './tabs/TabContext';
 import { 
   ArrowClockwiseIcon, 
   DownloadSimpleIcon, 
@@ -562,6 +563,7 @@ export default function ExcelManager({
   className = '',
   modalZClass = 'z-[70]',
 }: ExcelManagerProps) {
+  const portalTarget = usePortalTarget();
   const user = useAuthStore((s) => s.user);
   const permissions = user?.permissions ?? [];
   const { view: viewPerm, create: createPerm } = PERMISSIONS[type];
@@ -1290,7 +1292,7 @@ export default function ExcelManager({
             </div>
           </div>
         </div>,
-        document.body
+        portalTarget
       )}
 
       {previewModal && (
@@ -1507,7 +1509,7 @@ export default function ExcelManager({
             </div>
           </div>
         </div>,
-        document.body
+        portalTarget
       )}
     </>
   );

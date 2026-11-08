@@ -1,30 +1,15 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Link, useLocation, Outlet } from 'react-router-dom';
-import {
-  CaretDownIcon,
-  ChartBarIcon,
-  ChartLineIcon,
-  ClipboardIcon,
-  CurrencyCircleDollarIcon,
-  GearIcon,
-  ListIcon,
-  MagnifyingGlassIcon,
-  PackageIcon,
-  ReceiptIcon,
-  SignOutIcon,
-  ScrollIcon,
-  ShieldCheckIcon,
-  ShoppingCartIcon,
-  UserIcon,
-  UsersIcon,
-  VaultIcon,
-  WarehouseIcon,
-} from '@phosphor-icons/react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link, useLocation } from 'react-router-dom';
+import { CaretDownIcon, ListIcon, MagnifyingGlassIcon, SignOutIcon } from '@phosphor-icons/react';
 import { useAuthStore } from '../store/authStore';
 import { isAdminUser } from '../utils/authHelpers';
 import { normalizeText } from '../utils/validation';
-import { HeaderActionsContext } from './HeaderActionsContext';
+import { useTabHeaderActions } from './HeaderActionsContext';
 import { useUpdateStore } from '../store/updateStore';
+import { tabDisplayTitle, useTabStore } from '../store/tabStore';
+import { appRoutes, type AppSection, type RouteIcon } from '../routes';
+import { TabHost } from '../components/TabHost';
+import { TabBar } from '../components/TabBar';
 
 interface MainLayoutProps {
   children?: React.ReactNode;
@@ -49,34 +34,29 @@ const defaultSectionState: SectionState = {
   admin: true,
 };
 
-const iconProps = { size: 20, weight: 'regular' as const, color: 'currentColor' };
+type MenuItem = {
+  path: string;
+  label: string;
+  icon: RouteIcon;
+  requiredPermission?: string;
+  adminOnly?: boolean;
+};
 
-type MenuItem = { path: string; label: string; icon: React.ReactNode; requiredPermission?: string };
+function menuItemsFor(section: AppSection): MenuItem[] {
+  return appRoutes
+    .filter((route) => route.meta?.menu && route.meta.section === section && route.meta.icon)
+    .map((route) => ({
+      path: route.path,
+      label: route.meta!.title,
+      icon: route.meta!.icon!,
+      requiredPermission: route.meta!.permission,
+      adminOnly: route.meta!.adminOnly,
+    }));
+}
 
-const mainMenuItems: MenuItem[] = [
-  { path: '/', label: 'Dashboard', icon: <ChartLineIcon {...iconProps} /> },
-  { path: '/customers', label: 'Müşteriler', icon: <UsersIcon {...iconProps} />, requiredPermission: 'customers_view' },
-  { path: '/inventory', label: 'Envanter', icon: <PackageIcon {...iconProps} />, requiredPermission: 'inventory_view' },
-  { path: '/warehouses', label: 'Depolar', icon: <WarehouseIcon {...iconProps} />, requiredPermission: 'warehouses_view' },
-  { path: '/contracts/rental', label: 'Kiralama teklifleri', icon: <ClipboardIcon {...iconProps} />, requiredPermission: 'contracts_view' },
-  { path: '/contracts/sale', label: 'Satış teklifleri', icon: <ShoppingCartIcon {...iconProps} />, requiredPermission: 'contracts_view' },
-  { path: '/purchase-invoices', label: 'Alış Faturaları', icon: <ReceiptIcon {...iconProps} />, requiredPermission: 'purchaseInvoices_view' },
-  { path: '/stock-receipts', label: 'Stok Fişleri', icon: <ReceiptIcon {...iconProps} /> },
-  { path: '/checks', label: 'Çekler', icon: <ReceiptIcon {...iconProps} />, requiredPermission: 'checks_view' },
-  { path: '/cash', label: 'Kasa & Banka', icon: <VaultIcon {...iconProps} />, requiredPermission: 'cash_view' },
-];
-
-const reportingMenuItems: MenuItem[] = [
-  { path: '/reports/rental-movement', label: 'Kiralama Hareket Raporu', icon: <ChartBarIcon {...iconProps} />, requiredPermission: 'reports_view' },
-];
-
-const administrationMenuItems: MenuItem[] = [
-  { path: '/price-tiers', label: 'Fiyat Tarifeleri', icon: <CurrencyCircleDollarIcon {...iconProps} />, requiredPermission: 'priceTiers_view' },
-  { path: '/pricing-rules', label: 'Fiyatlandırma Kuralları', icon: <GearIcon {...iconProps} />, requiredPermission: 'pricingRules_view' },
-  { path: '/users', label: 'Kullanıcılar', icon: <UserIcon {...iconProps} />, requiredPermission: 'users_view' },
-  { path: '/audit-logs', label: 'Audit Logları', icon: <ScrollIcon {...iconProps} />, requiredPermission: 'auditLogs_view' },
-  { path: '/system-settings', label: 'Sistem Ayarları', icon: <ShieldCheckIcon {...iconProps} /> },
-];
+const mainMenuItems = menuItemsFor('main');
+const reportingMenuItems = menuItemsFor('reports');
+const administrationMenuItems = menuItemsFor('admin');
 
 function filterByPermission(items: MenuItem[], permissions: string[]) {
   return items.filter(
@@ -160,7 +140,7 @@ function NavLink({
     >
       <span className={`flex h-11 items-center ${collapsed ? 'w-full justify-center' : 'w-11 justify-center'}`}>
         <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-background-elevated group-hover:bg-background-hover [&_svg]:size-5 relative">
-          {item.icon}
+          <item.icon size={20} weight="regular" color="currentColor" />
           {showUpdateBadge && (
             <span className="absolute -top-1 -right-1 flex h-3 w-3">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-error opacity-75"></span>
@@ -209,16 +189,17 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
       return defaultSectionState;
     }
   });
-  const [headerActions, setHeaderActions] = useState<ReactNode>(null);
+  const activeTab = useTabStore((state) => state.tabs.find((tab) => tab.id === state.activeTabId) ?? null);
+  // Aktif sekmenin header aksiyonları
+  const currentHeaderActions = useTabHeaderActions(activeTab?.id);
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const permissions = user?.permissions ?? [];
   const visibleMainBase = filterByPermission(mainMenuItems, permissions);
   const visibleReportingBase = filterByPermission(reportingMenuItems, permissions);
-  const visibleAdministrationBase = filterByPermission(administrationMenuItems, permissions).filter((item) => {
-    if (item.path === '/system-settings') return isAdminUser(user);
-    return true;
-  });
+  const visibleAdministrationBase = filterByPermission(administrationMenuItems, permissions).filter(
+    (item) => !item.adminOnly || isAdminUser(user)
+  );
   const normalizedQuery = menuQuery.trim().toLocaleLowerCase('tr-TR');
   const visibleMain = useMemo(() => {
     if (!normalizedQuery) return visibleMainBase;
@@ -233,57 +214,13 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
     return visibleAdministrationBase.filter((item) => item.label.toLocaleLowerCase('tr-TR').includes(normalizedQuery));
   }, [normalizedQuery, visibleAdministrationBase]);
 
-  const pageTitle = useMemo(() => {
-    if (location.pathname === '/document-templates' || location.pathname.startsWith('/document-templates/')) {
-      return 'Belge Şablonları';
-    }
-    if (location.pathname === '/contract-management' || location.pathname.startsWith('/contract-management/')) {
-      return 'Belge Şablonları';
-    }
-    const allItems = [...mainMenuItems, ...reportingMenuItems, ...administrationMenuItems];
-    return allItems.find((item) => isPathActive(location.pathname, item.path))?.label ?? 'Panel';
-  }, [location.pathname]);
-  const pageDescription = useMemo(() => {
-    const descriptionMap: Record<string, string> = {
-      '/': 'Genel durum ve hızlı özet metrikler',
-      '/customers': 'Müşteri kayıtları, iletişim ve ilişki yönetimi',
-      '/inventory': 'Ürün kartları, stok durumu ve fiyat bilgileri',
-      '/warehouses': 'Depo listesi, depo bazlı stok ve hareket yönetimi',
-      '/contracts/rental': 'Kiralama teklifleri, sözleşmeler ve kapalı kayıtlar',
-      '/contracts/sale': 'Satış teklifleri, sözleşmeler ve kapalı kayıtlar',
-      '/offer-management': 'Kategori ve teklif paketi ayarlarını yönetin',
-      '/document-templates': 'Teklif, sözleşme ve kullanım extresi şablonlarını yönetin',
-      '/contract-management': 'Teklif, sözleşme ve kullanım extresi şablonlarını yönetin',
-      '/purchase-invoices': 'Alış faturaları ve mali kayıt süreçleri',
-      '/stock-receipts': 'Stok giriş, çıkış ve transfer fişleri',
-      '/checks': 'Çek portföyü, tahsilat ve iade takibi',
-      '/cash': 'Kasa, banka hesapları ve nakit hareketleri',
-      '/price-tiers': 'Ürün bazlı fiyat katmanları yönetimi',
-      '/pricing-rules': 'Fiyatlama kuralları ve koşul tanımları',
-      '/users': 'Kullanıcı hesapları ve yetki yönetimi',
-      '/audit-logs': 'Sistem işlem geçmişi ve denetim kayıtları',
-      '/reports/rental-movement': 'Kiralama hareket raporları ve analiz ekranı',
-      '/system-settings': 'Genel sistem ayarları ve yönetim tercihleri',
-    };
-    const allPaths = Object.keys(descriptionMap);
-    const matchedPath = allPaths.find((path) => isPathActive(location.pathname, path));
-    return matchedPath ? descriptionMap[matchedPath] : 'İş akışınızı sade ve hızlı şekilde yönetin';
-  }, [location.pathname]);
-
-  const breadcrumb = useMemo(() => {
-    const root = { label: 'Panel', path: '/' };
-    const inMain = mainMenuItems.find((item) => isPathActive(location.pathname, item.path));
-    if (inMain) return [root, { label: 'Operasyon', path: inMain.path }, { label: inMain.label, path: inMain.path }];
-    const inReports = reportingMenuItems.find((item) => isPathActive(location.pathname, item.path));
-    if (inReports) return [root, { label: 'Raporlar', path: inReports.path }, { label: inReports.label, path: inReports.path }];
-    const inAdmin = administrationMenuItems.find((item) => isPathActive(location.pathname, item.path));
-    if (inAdmin) return [root, { label: 'Yönetim', path: inAdmin.path }, { label: inAdmin.label, path: inAdmin.path }];
-    return [root, { label: pageTitle, path: location.pathname }];
-  }, [location.pathname, pageTitle]);
+  const pageTitle = activeTab ? tabDisplayTitle(activeTab) : 'Panel';
   const displayName = user?.fullName?.trim() || user?.username || 'Kullanıcı';
-  const handleSetHeaderActions = useCallback((actions: ReactNode) => {
-    setHeaderActions(actions);
-  }, []);
+
+  // Ayrı başlık satırı yok; sayfa adı pencere başlığında görünür
+  useEffect(() => {
+    document.title = `${pageTitle} · İskeleTakip`;
+  }, [pageTitle]);
 
   useEffect(() => {
     // Mouse scroll ile number input degerinin degismesini engelle
@@ -459,33 +396,25 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-hidden bg-background-main">
-        <header className="h-14 border-b border-background-border bg-background-main/95 backdrop-blur px-4 flex items-center justify-between gap-3">
-          <div className="min-w-0" title={pageDescription}>
-            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-text-secondary leading-none mb-0.5">
-              {breadcrumb.map((item, index) => (
-                <span key={`${item.path}-${index}`} className="flex items-center gap-1.5 truncate">
-                  {index > 0 && <span className="opacity-50">/</span>}
-                  <span className={index === breadcrumb.length - 1 ? 'text-text-primary' : ''}>{item.label}</span>
-                </span>
-              ))}
-            </div>
-            <h2 className="text-base font-semibold leading-tight truncate">{pageTitle}</h2>
-          </div>
-          <div className="flex items-center gap-2 shrink-0">
+      <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-background-main">
+        {/* Üst çubuk: sekmeler + aktif sayfanın aksiyonları + kullanıcı (tek satır) */}
+        <header className="h-11 shrink-0 flex items-stretch border-b border-background-border bg-background-panel">
+          <TabBar />
+          <div className="flex shrink-0 items-center gap-2 border-l border-background-border px-3">
             <UpdateHeaderIndicator />
-            {headerActions ? <div className="flex items-center gap-2">{headerActions}</div> : null}
-            <div className="text-right hidden sm:block">
-              <div className="text-sm font-medium text-text-primary truncate max-w-[200px]">{displayName}</div>
-              <div className="text-xs text-text-secondary truncate max-w-[200px]">{user?.roleName || 'Kullanıcı'}</div>
+            {currentHeaderActions ? <div className="flex items-center gap-2">{currentHeaderActions}</div> : null}
+            <div
+              className="hidden text-right leading-tight lg:block"
+              title={`${displayName} · ${user?.roleName || 'Kullanıcı'}`}
+            >
+              <div className="max-w-[160px] truncate text-xs font-medium text-text-primary">{displayName}</div>
+              <div className="max-w-[160px] truncate text-[11px] text-text-secondary">{user?.roleName || 'Kullanıcı'}</div>
             </div>
           </div>
         </header>
 
-        <div className="h-[calc(100vh-3.5rem)] overflow-auto px-4 py-3">
-          <HeaderActionsContext.Provider value={{ setActions: handleSetHeaderActions }}>
-            {children || <Outlet />}
-          </HeaderActionsContext.Provider>
+        <div className="flex-1 min-h-0 px-4 py-3">
+          {children || <TabHost />}
         </div>
       </main>
     </div>

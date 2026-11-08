@@ -1,19 +1,77 @@
 /**
- * Kiralama sözleşmelerinde fatura tutarı otomatik hesaplama mantığı.
- * 
- * Dönem tarihleri girilince, billing-plan'daki dönemlerin net tahakkuklarından
- * gün bazlı orantılı tutar hesaplanır. Tüm mantık saf fonksiyonlarda toplanır.
+ * Kiralama sözleşmelerinde fatura tutarı otomatik hesaplama.
+ *
+ * Tam faturalama dönemi seçilirse o dönemin net tahakkuku aynen yazılır.
+ * Dönemin bir kısmı seçilirse, sözleşmedeki kiralama kuralı uygulanır:
+ * aylık net / 30 gün. Takvim ayının 28, 29 veya 31 çekmesi günlük bedeli değiştirmez.
  */
 
 import type { BillingPeriod, ContractInvoice } from '../models';
+import { addCalendarDays, formatDateInput, parseDateInput } from './dateInput';
+import { roundTo } from './lineDiscount';
 
-/** ISO zaman damgasını yerel takvim günü anahtarına çevirir (YYYY-MM-DD). */
+/** Sözleşme ve teklif ekranıyla aynı: 1 ay = 30 gün. */
+export const RENTAL_MONTH_DAYS = 30;
+
+/** Tutarı gün oranıyla kuruşa yuvarlar (yukarı yarım kuruş). */
+function prorateMoney(amount: number, numerator: number, denominator: number): number {
+  if (!Number.isFinite(amount) || denominator <= 0 || numerator <= 0) return 0;
+  const cents = Math.round((amount + Number.EPSILON) * 100);
+  return Math.round((cents * numerator) / denominator) / 100;
+}
+
+/**
+ * Billing tarihini takvim günü anahtarına çevirir (YYYY-MM-DD).
+ * Tarih alanları saat dilimine kaydırılmaz: `2026-01-31T23:59:59.999Z` 31 Ocak'tır.
+ * Türkiye gece yarısının UTC karşılığı (`T21:00:00.000Z`) bir sonraki takvim günüdür.
+ */
 export function isoToLocalDateKey(iso: string): string {
-  const date = new Date(iso);
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
+  const trimmed = String(iso ?? '').trim();
+  if (!trimmed) return '';
+
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (dateOnly) {
+    return parseDateInput(trimmed) ? trimmed : '';
+  }
+
+  const match =
+    /^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(Z|[+-]\d{2}:?\d{2})?$/i.exec(trimmed);
+  if (!match) {
+    const date = new Date(trimmed);
+    if (isNaN(date.getTime())) return '';
+    return formatDateInput(date);
+  }
+
+  const datePart = match[1];
+  const hours = Number(match[2]);
+  const minutes = Number(match[3]);
+  const seconds = Number(match[4]);
+  const zone = (match[5] ?? '').toUpperCase().replace(':', '');
+  const isUtc = zone === 'Z' || zone === '+0000';
+
+  // Yerel gece yarısı toISOString() ile önceki günün 21:00Z kaydı olarak gelir.
+  if (isUtc && hours === 21 && minutes === 0 && seconds === 0) {
+    return addCalendarDays(datePart, 1);
+  }
+
+  return parseDateInput(datePart) ? datePart : '';
+}
+
+/** Başlangıç gününün ayının son takvim günü. */
+export function calendarMonthEndKey(startKey: string): string | null {
+  const start = parseDateInput(startKey);
+  if (!start) return null;
+  return formatDateInput(new Date(start.getFullYear(), start.getMonth() + 1, 0));
+}
+
+/** Dönem, ayın 1'inden son gününe kadar olan tam takvim ayı mı? */
+export function isFullCalendarMonth(startKey: string, endKey: string): boolean {
+  const start = parseDateInput(startKey);
+  const end = parseDateInput(endKey);
+  if (!start || !end) return false;
+  if (start.getDate() !== 1) return false;
+  if (start.getFullYear() !== end.getFullYear() || start.getMonth() !== end.getMonth()) return false;
+  return end.getDate() === new Date(start.getFullYear(), start.getMonth() + 1, 0).getDate();
 }
 
 /** İki tarih arasındaki gün sayısı (iki uç dahil). */
@@ -58,6 +116,8 @@ export interface InvoiceAmountCalculation {
   uncoveredDays: number;
   /** Orantılama yapıldı mı (kısmi dönem var) */
   hasProration: boolean;
+  /** Tam ayın bir kısmı 30 güne bölünerek mi hesaplandı */
+  hasCommercialProration: boolean;
   /** Açık/gelecek dönem var mı (projeksiyon) */
   hasProjection: boolean;
   /** Dönem bazlı kırılım */
@@ -84,6 +144,7 @@ export function computeInvoiceAmountForRange(
       coveredDays: 0,
       uncoveredDays: requestedDays,
       hasProration: false,
+      hasCommercialProration: false,
       hasProjection: false,
       breakdown: [],
     };
@@ -93,38 +154,72 @@ export function computeInvoiceAmountForRange(
   let totalContribution = 0;
   let coveredDays = 0;
   let hasProration = false;
+  let hasCommercialProration = false;
   let hasProjection = false;
+  let claimedThrough = '';
 
-  for (const period of plan) {
+  const ordered = [...plan].sort((a, b) => {
+    const startCmp = isoToLocalDateKey(a.periodStart).localeCompare(isoToLocalDateKey(b.periodStart));
+    if (startCmp !== 0) return startCmp;
+    return isoToLocalDateKey(a.periodEnd).localeCompare(isoToLocalDateKey(b.periodEnd));
+  });
+
+  for (const period of ordered) {
     const periodStartKey = isoToLocalDateKey(period.periodStart);
-    const periodEndKey = isoToLocalDateKey(period.periodEnd);
+    const rawEndKey = isoToLocalDateKey(period.periodEnd);
+    if (!periodStartKey || !rawEndKey) continue;
+
+    // Açık ay, asOf tarihinde kesilmişse günlük bedel ayın tamamına yayılır.
+    // Aksi halde 8 günlük aralık, tam ay tahakkukuyla birebir eşleşir.
+    let periodEndKey = rawEndKey;
+    const monthEnd = calendarMonthEndKey(periodStartKey);
+    const clippedOpenMonth =
+      !period.isClosed &&
+      !period.isPartial &&
+      periodStartKey.endsWith('-01') &&
+      monthEnd != null &&
+      rawEndKey < monthEnd;
+    if (clippedOpenMonth && monthEnd) {
+      periodEndKey = monthEnd;
+    }
+
     const periodDays = inclusiveDayCount(periodStartKey, periodEndKey);
+    if (periodDays <= 0) continue;
 
-    // Çakışma kontrolü
-    const overlapStart = startKey > periodStartKey ? startKey : periodStartKey;
+    let overlapStart = startKey > periodStartKey ? startKey : periodStartKey;
     const overlapEnd = endKey < periodEndKey ? endKey : periodEndKey;
+    if (claimedThrough && overlapStart <= claimedThrough) {
+      overlapStart = addCalendarDays(claimedThrough, 1);
+    }
     const overlappingDays = overlapStart <= overlapEnd ? inclusiveDayCount(overlapStart, overlapEnd) : 0;
-
     if (overlappingDays <= 0) continue;
 
     coveredDays += overlappingDays;
+    claimedThrough = !claimedThrough || overlapEnd > claimedThrough ? overlapEnd : claimedThrough;
+
+    const coversWholePeriod = overlapStart === periodStartKey && overlapEnd === periodEndKey;
+    // Tam takvim ayının tahakkuku bir aylık bedeldir (dönem içi zeyilname dahil).
+    // Ay 31 çekse bile kısmi günler 30'a bölünür. Kısa dönem kendi gün sayısına bölünür.
+    const commercialMonth = isFullCalendarMonth(periodStartKey, periodEndKey);
 
     let contribution: number;
+    let divisor = periodDays;
 
-    // Dönem tam kapsanıyorsa birebir tutar kullan (orantı yok)
-    if (overlapStart === periodStartKey && overlapEnd === periodEndKey) {
-      contribution = period.accrualNetTotal;
-    } else {
-      // Kısmi dönem - orantılı hesaplama
-      contribution = periodDays > 0 
-        ? (period.accrualNetTotal * overlappingDays) / periodDays 
-        : 0;
+    if (coversWholePeriod) {
+      contribution = roundTo(period.accrualNetTotal, 2);
+    } else if (commercialMonth) {
+      divisor = RENTAL_MONTH_DAYS;
+      contribution = prorateMoney(period.accrualNetTotal, overlappingDays, RENTAL_MONTH_DAYS);
       hasProration = true;
+      hasCommercialProration = true;
+    } else if (periodDays > 0) {
+      contribution = prorateMoney(period.accrualNetTotal, overlappingDays, periodDays);
+      hasProration = true;
+    } else {
+      contribution = 0;
     }
-
     totalContribution += contribution;
 
-    // Açık dönem kontrolü
     if (!period.isClosed) {
       hasProjection = true;
     }
@@ -134,7 +229,7 @@ export function computeInvoiceAmountForRange(
       periodEnd: periodEndKey,
       accrualNetTotal: period.accrualNetTotal,
       overlappingDays,
-      periodDays,
+      periodDays: divisor,
       contribution,
       isClosed: period.isClosed,
       isPartial: period.isPartial,
@@ -142,7 +237,7 @@ export function computeInvoiceAmountForRange(
   }
 
   const uncoveredDays = Math.max(0, requestedDays - coveredDays);
-  const amount = Math.round(totalContribution * 100) / 100; // 2 haneye yuvarla
+  const amount = roundTo(totalContribution, 2);
 
   return {
     amount,
@@ -150,9 +245,31 @@ export function computeInvoiceAmountForRange(
     coveredDays,
     uncoveredDays,
     hasProration,
+    hasCommercialProration,
     hasProjection,
     breakdown,
   };
+}
+
+/**
+ * Açık dönemin gerçek ay sonuna kadar plan çekmek için ikinci asOf günü.
+ * İlk plandaki bitiş fatura bitişiyle aynıysa null döner.
+ */
+export function nextBillingPlanAsOfKey(plan: BillingPeriod[], invoiceEndKey: string): string | null {
+  const open = findOpenPeriodContaining(plan, invoiceEndKey);
+  if (!open) return null;
+
+  const start = isoToLocalDateKey(open.periodStart);
+  const end = isoToLocalDateKey(open.periodEnd);
+  if (!start || !end) return null;
+
+  if (!open.isPartial && start.endsWith('-01')) {
+    const monthEnd = calendarMonthEndKey(start);
+    if (monthEnd && monthEnd > end && monthEnd !== invoiceEndKey) return monthEnd;
+  }
+
+  if (end > invoiceEndKey) return end;
+  return null;
 }
 
 /**

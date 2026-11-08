@@ -12,6 +12,7 @@ import {
   createInitialInvoiceAmountState,
   parseAmountInput,
   findOverlappingInvoices,
+  isoToLocalDateKey,
 } from '../../utils/invoiceAmountCalc';
 
 interface ContractInvoicesPanelProps {
@@ -140,9 +141,9 @@ export default function ContractInvoicesPanel({
   const openEditForm = (invoice: ContractInvoice) => {
     setFormData({
       invoiceNumber: invoice.invoiceNumber || '',
-      invoiceDate: invoice.invoiceDate.split('T')[0],
-      periodStart: invoice.periodStart.split('T')[0],
-      periodEnd: invoice.periodEnd.split('T')[0],
+      invoiceDate: isoToLocalDateKey(invoice.invoiceDate),
+      periodStart: isoToLocalDateKey(invoice.periodStart),
+      periodEnd: isoToLocalDateKey(invoice.periodEnd),
       amount: invoice.amount,
       currency: invoice.currency,
       notes: invoice.notes || '',
@@ -230,13 +231,10 @@ export default function ContractInvoicesPanel({
 
   const formatDate = (dateString: string | null | undefined) => {
     if (!dateString) return '-';
-    try {
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) return '-';
-      return date.toLocaleDateString('tr-TR');
-    } catch {
-      return '-';
-    }
+    const key = isoToLocalDateKey(dateString);
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(key);
+    if (!match) return '-';
+    return `${match[3]}.${match[2]}.${match[1]}`;
   };
 
   const getCurrencySymbol = (curr?: string) => {
@@ -636,7 +634,12 @@ export default function ContractInvoicesPanel({
               )}
               
               {/* Orantılama */}
-              {amountState.calculation.hasProration && (
+              {amountState.calculation.hasCommercialProration && (
+                <div className="p-2 bg-sky-900/30 border border-sky-700/50 rounded text-xs text-sky-200">
+                  ℹ️ Kısmi günler aylık tahakkuk / 30 gün olarak hesaplandı. Dönemin tamamı seçilirse tahakkuk aynen yazılır.
+                </div>
+              )}
+              {amountState.calculation.hasProration && !amountState.calculation.hasCommercialProration && (
                 <div className="p-2 bg-sky-900/30 border border-sky-700/50 rounded text-xs text-sky-200">
                   ℹ️ Dönem ortasında kalan günler orantılandı; iade/zeyilname tarihleri tam yansımayabilir
                 </div>

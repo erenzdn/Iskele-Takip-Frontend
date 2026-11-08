@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { PlusIcon, TrashIcon, XIcon } from '@phosphor-icons/react';
 import type {
   ContractLineItem,
@@ -109,6 +110,7 @@ export default function AddendumAddProductsModal({
   seedPicks,
   onSeedConsumed,
 }: AddendumAddProductsModalProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
   const [lines, setLines] = useState<StagingLine[]>([]);
   const [defaultWarehouseId, setDefaultWarehouseId] = useState<number | ''>('');
@@ -727,5 +729,5 @@ export default function AddendumAddProductsModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }

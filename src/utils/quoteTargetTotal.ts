@@ -1,16 +1,16 @@
 /**
- * Teklif toplamından (İskontolu / Genel Toplam) tüm satırlara uygulanacak
+ * Teklif / sözleşme toplamından (İskontolu / Genel Toplam) tüm satırlara uygulanacak
  * tek bir ana iskonto yüzdesi türetir.
  *
- * Toplam hesabı ekrandaki özetle birebir aynıdır (satır bazlı kuruş yuvarlaması dahil);
- * bu yüzden bulunan yüzde uygulandığında ekranda yazılan hedef görünür.
- * Yüzde en fazla PERSISTED_PERCENT_DECIMALS haneye sahiptir: kayıt / yeniden açılışta tutar kaymaz.
+ * Toplam hesabı ekrandaki özetle birebir aynıdır (satır bazlı kuruş yuvarlaması dahil).
+ * Yüzde, yazılan kuruşu birebir üretecek en kaba hassasiyette seçilir (2 → 10 hane).
+ * Tutar en yakın kuruşa çekilmez; girdiğiniz tutar hedef olarak kalır.
  */
 
 import {
   MONEY_DECIMALS,
   PERCENT_DECIMALS,
-  PERSISTED_PERCENT_DECIMALS,
+  PERCENT_MAX_DECIMALS,
   lineDiscountAmount,
   roundTo,
 } from './lineDiscount';
@@ -49,7 +49,7 @@ export type TargetTotalKind = 'net' | 'grand';
 
 export type UniformDiscountReason =
   | 'ok'
-  /** Yüzde hassasiyeti (4 hane) ve kuruş yuvarlaması hedefi birebir üretemedi; en yakın tutar seçildi. */
+  /** Satır kuruş yuvarlaması hedefi hiçbir yüzdeyle birebir üretemedi; en yakın tutar seçildi. */
   | 'rounding'
   | 'no_lines'
   | 'gross_zero'
@@ -80,7 +80,8 @@ function floorTo(value: number, decimals: number): number {
 /**
  * Tüm satırlara aynı iskonto uygulanınca hedef toplamı veren yüzdeyi bulur.
  * Toplam, iskonto arttıkça azalan (monoton) olduğundan ikili arama yapılır;
- * ardından hedefi birebir veren en az ondalıklı yüzde seçilir (2 → 4 hane).
+ * ardından hedefi birebir veren en az ondalıklı yüzde seçilir (2 → 10 hane).
+ * Yazılan kuruş korunur; tutar yuvarlanarak değiştirilmez.
  */
 export function solveUniformDiscountForTarget(params: {
   grossList: number[];
@@ -135,16 +136,43 @@ export function solveUniformDiscountForTarget(params: {
     else hi = mid;
   }
 
-  for (let decimals = PERCENT_DECIMALS; decimals <= PERSISTED_PERCENT_DECIMALS; decimals++) {
-    const candidate = Math.min(100, ceilTo(hi, decimals));
-    if (totalAt(candidate) === target) {
-      return { discountPercent: candidate, achievedTotal: target, exact: true, reason: 'ok' };
+  const grossSum = grossList.reduce((sum, gross) => sum + gross, 0);
+  const vatFactor = 1 + sanitizeVatRate(params.vatRate) / 100;
+  const netTarget = params.kind === 'net' ? target : target / vatFactor;
+  const rawPercent = grossSum > 0 ? ((grossSum - netTarget) / grossSum) * 100 : 0;
+
+  const hitAt = (pct: number, decimals: number): number | null => {
+    if (!Number.isFinite(pct)) return null;
+    const stored = Math.min(100, Math.max(0, roundTo(pct, decimals)));
+    return totalAt(stored) === target ? stored : null;
+  };
+
+  for (let decimals = PERCENT_DECIMALS; decimals <= PERCENT_MAX_DECIMALS; decimals++) {
+    const step = 10 ** -decimals;
+    const base = floorTo(hi, decimals);
+    const anchors = [
+      ceilTo(hi, decimals),
+      roundTo(rawPercent, decimals),
+      ceilTo(rawPercent, decimals),
+      floorTo(rawPercent, decimals),
+      base,
+      base + step,
+      base + 2 * step,
+      base + 3 * step,
+      base + 4 * step,
+    ];
+    for (const anchor of anchors) {
+      const stored = hitAt(anchor, decimals);
+      if (stored != null) {
+        return { discountPercent: stored, achievedTotal: target, exact: true, reason: 'ok' };
+      }
     }
   }
 
   const candidates = [
-    Math.min(100, ceilTo(hi, PERSISTED_PERCENT_DECIMALS)),
-    Math.max(0, floorTo(lo, PERSISTED_PERCENT_DECIMALS)),
+    Math.min(100, ceilTo(hi, PERCENT_MAX_DECIMALS)),
+    Math.max(0, floorTo(lo, PERCENT_MAX_DECIMALS)),
+    Math.min(100, Math.max(0, roundTo(rawPercent, PERCENT_MAX_DECIMALS))),
   ];
   let best = candidates[0];
   let bestDiff = Math.abs(totalAt(best) - target);

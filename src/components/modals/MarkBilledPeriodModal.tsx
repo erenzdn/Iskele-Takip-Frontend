@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import type { BillingPeriod, CurrencyCode } from '../../models';
 import { contractService } from '../../services/contractService';
@@ -28,6 +29,7 @@ export default function MarkBilledPeriodModal({
   onClose,
   onSuccess,
 }: MarkBilledPeriodModalProps) {
+  const portalTarget = usePortalTarget();
   const [billedAmountStr, setBilledAmountStr] = useState(() =>
     formatBilledAmountInputDefault(period.accrualNetTotal)
   );
@@ -162,6 +164,6 @@ export default function MarkBilledPeriodModal({
         </div>
       </div>
     </div>,
-    document.body
+    portalTarget
   );
 }

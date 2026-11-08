@@ -1,10 +1,13 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
+import { acknowledgeTabSaved } from '../../store/tabStore';
+import { invalidateData } from '../../store/dataInvalidationStore';
+import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
 import { ClipboardIcon, CopySimpleIcon, DotsSixVerticalIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
-  Contract,
   resolveContractQuoteType,
   Quote,
   QuoteTemplate,
@@ -19,7 +22,6 @@ import {
   isQuoteConverted,
 } from '../../models';
 import { quoteService, WarehouseAssignment } from '../../services/quoteService';
-import { contractService } from '../../services/contractService';
 import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
@@ -44,8 +46,6 @@ import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
 import CustomerDetailModal from './CustomerDetailModal';
 import SiteCreateModal from './SiteCreateModal';
-import ContractDetailModal from './ContractDetailModal';
-import InventoryDetailModal from './InventoryDetailModal';
 import {
   applyCreatedSiteId,
   buildSiteRequestFields,
@@ -62,13 +62,7 @@ import {
   hydrateQuotePriceMetadata,
 } from '../../utils/linePriceMetadata';
 import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
-import {
-  copyQuoteLineDiscounts,
-  extractContractDetails,
-  sortByQuoteLineOrder,
-  sortByStoredLineOrder,
-  withContractDetails,
-} from '../../utils/lineItemOrder';
+import { sortByStoredLineOrder } from '../../utils/lineItemOrder';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -99,6 +93,8 @@ interface QuoteDetailModalProps {
    * iş mantığını etkilemez.
    */
   isClonedDraft?: boolean;
+  presentation?: 'modal' | 'page';
+  onCreated?: (quoteId: number) => void;
 }
 
 function unitPriceForQuoteInventory(
@@ -131,15 +127,18 @@ export default function QuoteDetailModal({
   onQuoteCloned,
   startInEditMode = false,
   isClonedDraft = false,
+  presentation = 'modal',
+  onCreated,
 }: QuoteDetailModalProps) {
+  const navigate = useNavigate();
+  const isPage = presentation === 'page';
+  const portalTarget = usePortalTarget();
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
   const [showCloneConfirm, setShowCloneConfirm] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
-  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
-  const [selectedInventoryForDetail, setSelectedInventoryForDetail] = useState<Inventory | null>(null);
-  const [showInventoryCreateModal, setShowInventoryCreateModal] = useState(false);
+  const [, setInventoryCategories] = useState<MaterialCategory[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [selectedAuthorizedContactId, setSelectedAuthorizedContactId] = useState<number | ''>('');
   const [authorizedContacts, setAuthorizedContacts] = useState<NonNullable<Customer['AuthorizedContacts']>>([]);
@@ -163,6 +162,7 @@ export default function QuoteDetailModal({
   const [isBusy, setIsBusy] = useState(false);
   const [persistedQuoteId, setPersistedQuoteId] = useState<number | null>(quote?.QuoteId ?? null);
   const [isDirty, setIsDirty] = useState(false);
+  useTabDirty(isPage && isDirty);
   const skipDirtyRef = useRef(true);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
@@ -256,30 +256,24 @@ export default function QuoteDetailModal({
   const [isCreatingPackage, setIsCreatingPackage] = useState(false);
   const [packagesLoadError, setPackagesLoadError] = useState<string | null>(null);
   const [fullQuote, setFullQuote] = useState<Quote | null>(null);
-  const [isContractModalOpen, setIsContractModalOpen] = useState(false);
-  const [convertedContract, setConvertedContract] = useState<Contract | null>(null);
-  const [isOpeningConvertedContract, setIsOpeningConvertedContract] = useState(false);
   const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 5 | 6 } | null>(null);
   const quoteGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [dragItemIndex, setDragItemIndex] = useState<number | null>(null);
   const [dragOverItemIndex, setDragOverItemIndex] = useState<number | null>(null);
   const dragItemIndexRef = useRef<number | null>(null);
   const activeQuote = fullQuote ?? quote;
+  useTabTitle(
+    isPage
+      ? isNew
+        ? quoteCode.trim() || 'Yeni Teklif'
+        : quoteCode.trim() || activeQuote?.QuoteCode || activeQuote?.CustomerName || 'Teklif'
+      : null
+  );
   const converted = Boolean(activeQuote && isQuoteConverted(activeQuote));
 
-  const openConvertedContract = async () => {
+  const openConvertedContract = () => {
     if (!activeQuote?.ConvertedContractId) return;
-    try {
-      setIsOpeningConvertedContract(true);
-      const c = await contractService.getByIdAsync(activeQuote.ConvertedContractId);
-      setConvertedContract(c);
-      setIsContractModalOpen(true);
-    } catch (error) {
-      console.error('Open converted contract error:', error);
-      toast.error(getApiErrorMessage(error) || 'Sözleşme açılamadı');
-    } finally {
-      setIsOpeningConvertedContract(false);
-    }
+    navigate(`/contracts/${activeQuote.ConvertedContractId}`);
   };
 
   const formatAuthorizedContactLabel = (contact: NonNullable<Customer['AuthorizedContacts']>[number]) => {
@@ -483,17 +477,6 @@ export default function QuoteDetailModal({
       cancelled = true;
     };
   }, [quote?.QuoteId, isNew]);
-
-  const refreshQuoteDetail = useCallback(async () => {
-    if (!quote?.QuoteId || isNew) return;
-    try {
-      const detail = await quoteService.getByIdAsync(quote.QuoteId);
-      setFullQuote(detail);
-    } catch (error) {
-      console.error('Refresh quote error:', error);
-    }
-    await onDataChanged?.();
-  }, [quote?.QuoteId, isNew, onDataChanged]);
 
   useEffect(() => {
     if (converted) {
@@ -1609,6 +1592,11 @@ export default function QuoteDetailModal({
             resetNewSiteMode,
           });
         }
+        if (isPage && onCreated) {
+          invalidateData('quotes');
+          onCreated(quoteId);
+          return quoteId;
+        }
       } else {
         const updateResult = await quoteService.updateAsync(quoteId, body as any);
         if (updateResult.CreatedSiteId && selectedCustomerId) {
@@ -1639,7 +1627,7 @@ export default function QuoteDetailModal({
 
   const requestClose = () => {
     if (isBusy) return;
-    if (isReadOnly || converted) {
+    if (isPage || isReadOnly || converted) {
       onClose();
       return;
     }
@@ -1661,7 +1649,11 @@ export default function QuoteDetailModal({
       return;
     }
     const savedId = await persistDraft();
-    if (savedId) onClose();
+    if (savedId && !isPage) onClose();
+    if (savedId && isPage) {
+      acknowledgeTabSaved();
+      setIsDirty(false);
+    }
   };
 
   const openProductPicker = async () => {
@@ -1677,7 +1669,11 @@ export default function QuoteDetailModal({
   const handleSave = async (forceStatus?: QuoteStatus) => {
     if (!forceStatus && !isNew && isQuoteDraftStatus(status)) {
       const savedId = await persistDraft();
-      if (savedId) onClose();
+      if (savedId && !isPage) onClose();
+      if (savedId && isPage) {
+        acknowledgeTabSaved();
+        setIsDirty(false);
+      }
       return;
     }
 
@@ -1792,7 +1788,12 @@ export default function QuoteDetailModal({
           });
         }
         toast.success(`Teklif başarıyla oluşturuldu! (ID: ${result.QuoteId})`);
+        invalidateData('quotes');
         await onDataChanged?.();
+        if (isPage && onCreated) {
+          onCreated(result.QuoteId);
+          return;
+        }
         onClose();
         return;
         }
@@ -2282,28 +2283,13 @@ export default function QuoteDetailModal({
         toast.warning(result.warnings.join('\n'));
       }
       toast.success('Teklif sözleşmeye dönüştürüldü.');
+      invalidateData('quotes');
+      invalidateData('contracts');
       if (onConverted) {
         await onConverted(result.ContractId);
         return;
       }
-      const updatedQuote = await quoteService.getByIdAsync(activeQuote.QuoteId);
-      setFullQuote(updatedQuote);
-      await onDataChanged?.();
-      try {
-        const c = await contractService.getByIdAsync(result.ContractId);
-        const quoteLinesWithDiscount = quoteItems.map((item) => ({
-          ...item,
-          Iskonto: committedLines[lineNetInputKey(item)] ?? getRowDiscountPercent(item),
-        }));
-        const ordered = copyQuoteLineDiscounts(
-          sortByQuoteLineOrder(extractContractDetails(c), quoteLinesWithDiscount),
-          quoteLinesWithDiscount
-        );
-        setConvertedContract(withContractDetails(c, ordered));
-        setIsContractModalOpen(true);
-      } catch (openError) {
-        console.error('Open contract after convert error:', openError);
-      }
+      navigate(`/contracts/${result.ContractId}`);
     } catch (error: unknown) {
       console.error('Convert quote error:', error);
       const msg = getApiErrorMessage(error);
@@ -2706,7 +2692,7 @@ export default function QuoteDetailModal({
   const fieldInput = 'input w-full text-xs py-1';
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden">
+    <div className={isPage ? 'flex h-full min-h-0 flex-col overflow-hidden bg-background-main' : 'fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden'}>
       <header className="shrink-0 flex items-center justify-between px-3 py-1 bg-background-panel border-b border-background-border gap-2">
         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
           <h1 className="text-sm font-semibold text-text-primary tracking-tight truncate">
@@ -2767,10 +2753,10 @@ export default function QuoteDetailModal({
           <button
             type="button"
             onClick={openConvertedContract}
-            disabled={isBusy || isOpeningConvertedContract}
+            disabled={isBusy}
             className={`btn-primary ml-auto ${compactBtn}`}
           >
-            {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+            Sözleşmeye git
           </button>
         </div>
       )}
@@ -3449,7 +3435,9 @@ export default function QuoteDetailModal({
                                   type="button"
                                   className="text-left hover:text-primary hover:underline transition-colors cursor-pointer"
                                   title="Ürün detayını görüntüle"
-                                  onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                  onClick={() => {
+                                  if (invItem?.ItemId) navigate(`/inventory/${invItem.ItemId}`);
+                                }}
                                 >
                                   {language === 'EN' ? (
                                     itemEnName ? (
@@ -3514,7 +3502,9 @@ export default function QuoteDetailModal({
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                    onClick={() => {
+                                  if (invItem?.ItemId) navigate(`/inventory/${invItem.ItemId}`);
+                                }}
                                     className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
                                     title="Ürün detayını görüntüle"
                                   >
@@ -3924,10 +3914,10 @@ export default function QuoteDetailModal({
                     <button
                       type="button"
                       onClick={openConvertedContract}
-                      disabled={isBusy || isOpeningConvertedContract}
+                      disabled={isBusy}
                       className={`btn-primary ${compactBtn}`}
                     >
-                      {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+                      Sözleşmeye git
                     </button>
                   )}
                   {!converted && canUpdateQuote && (
@@ -4537,7 +4527,7 @@ export default function QuoteDetailModal({
         currency={currency}
         pickedItemIds={pickerPickedItemIds}
         onAddNewItem={() => {
-          setShowInventoryCreateModal(true);
+          navigate('/inventory/new');
         }}
       />
       <ManualLineItemModal
@@ -4640,7 +4630,7 @@ export default function QuoteDetailModal({
               </div>
             </div>
           </div>,
-          document.body
+          portalTarget
         )}
       {showCreateCustomerModal &&
         createPortal(
@@ -4651,7 +4641,7 @@ export default function QuoteDetailModal({
             onSaved={handleCustomerSaved}
             onClose={() => setShowCreateCustomerModal(false)}
           />,
-          document.body
+          portalTarget
         )}
       {showCreateSiteModal && selectedCustomerId && (
         <SiteCreateModal
@@ -4678,7 +4668,7 @@ export default function QuoteDetailModal({
               loadTemplates();
             }}
           />,
-          document.body
+          portalTarget
         )}
       <PdfPreviewModal
         open={showPdfPreview}
@@ -4687,56 +4677,6 @@ export default function QuoteDetailModal({
         downloadFileName={`teklif_${activeQuote?.QuoteId ?? ''}.pdf`}
         onClose={closePdfPreview}
       />
-      {isContractModalOpen && (
-        <ContractDetailModal
-          key={`converted-contract-${convertedContract?.ContractId ?? 'x'}`}
-          contract={convertedContract}
-          isNew={false}
-          stackAboveParent
-          onDataChanged={refreshQuoteDetail}
-          onClose={async () => {
-            setIsContractModalOpen(false);
-            setConvertedContract(null);
-            await refreshQuoteDetail();
-          }}
-          onOpenSourceQuote={async () => {
-            setIsContractModalOpen(false);
-            setConvertedContract(null);
-          }}
-        />
-      )}
-      {selectedInventoryForDetail && (
-        <InventoryDetailModal
-          item={selectedInventoryForDetail}
-          categories={inventoryCategories}
-          isNew={false}
-          stackAboveParent
-          onCategoriesChanged={() => {
-            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
-          }}
-          onClose={() => setSelectedInventoryForDetail(null)}
-        />
-      )}
-      {showInventoryCreateModal && (
-        <InventoryDetailModal
-          item={null}
-          categories={inventoryCategories}
-          isNew={true}
-          stackAboveParent
-          onCategoriesChanged={() => {
-            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
-          }}
-          onClose={async () => {
-            setShowInventoryCreateModal(false);
-            try {
-              const invData = await inventoryService.getAllAsync(undefined, { forceRefresh: true });
-              setAvailableItems(invData);
-            } catch {
-              // sessizce devam et
-            }
-          }}
-        />
-      )}
       {showCreatePackageModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70]">
           <div className="bg-background-panel rounded-panel w-full max-w-lg p-6">

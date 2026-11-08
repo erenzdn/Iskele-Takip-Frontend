@@ -10,15 +10,20 @@ import {
   createInitialInvoiceAmountState,
   formatAmountInput,
   parseAmountInput,
+  nextBillingPlanAsOfKey,
 } from './invoiceAmountCalc';
 
 describe('invoiceAmountCalc', () => {
   describe('isoToLocalDateKey', () => {
     it('ISO tarihini yerel takvim gününe çevirir', () => {
-      // 20:59:59.999Z İstanbul saatiyle 23:59:59.999 olur (UTC+3)
+      // 20:59:59.999Z İstanbul saatiyle 23:59:59.999 olur (UTC+3) — gün kaymaz
       expect(isoToLocalDateKey('2026-02-14T20:59:59.999Z')).toBe('2026-02-14');
       expect(isoToLocalDateKey('2026-01-01T00:00:00.000Z')).toBe('2026-01-01');
-      expect(isoToLocalDateKey('2026-12-31T21:00:00.000Z')).toBe('2027-01-01'); // UTC+3 ile bir sonraki gün
+      // UTC gün sonu, Türkiye'de ertesi güne taşınmaz
+      expect(isoToLocalDateKey('2026-01-31T23:59:59.999Z')).toBe('2026-01-31');
+      // Yerel gece yarısının UTC karşılığı bir sonraki takvim günüdür
+      expect(isoToLocalDateKey('2026-12-31T21:00:00.000Z')).toBe('2027-01-01');
+      expect(isoToLocalDateKey('2026-03-15')).toBe('2026-03-15');
     });
   });
 
@@ -118,14 +123,16 @@ describe('invoiceAmountCalc', () => {
         },
       ];
 
-      // 15-31 Ocak = 17 gün
+      // 15-31 Ocak = 17 gün. Tam ay seçilmediği için 30 günlük ay bedeli kullanılır.
       const result = computeInvoiceAmountForRange(plan, '2026-01-15', '2026-01-31');
 
       expect(result.requestedDays).toBe(17);
       expect(result.coveredDays).toBe(17);
       expect(result.hasProration).toBe(true);
-      // 3100 * 17/31 = 1700
-      expect(result.amount).toBe(1700);
+      expect(result.hasCommercialProration).toBe(true);
+      // 3100 * 17/30 = 1756,67
+      expect(result.amount).toBe(1756.67);
+      expect(result.breakdown[0].periodDays).toBe(30);
     });
 
     it('sonda kısmi dönem orantılar', () => {
@@ -145,14 +152,14 @@ describe('invoiceAmountCalc', () => {
         },
       ];
 
-      // 1-15 Ocak = 15 gün
+      // 1-15 Ocak = 15 gün → tam ayın yarısı (15/30)
       const result = computeInvoiceAmountForRange(plan, '2026-01-01', '2026-01-15');
 
       expect(result.requestedDays).toBe(15);
       expect(result.coveredDays).toBe(15);
       expect(result.hasProration).toBe(true);
-      // 3100 * 15/31 = 1500
-      expect(result.amount).toBe(1500);
+      // 3100 * 15/30 = 1550
+      expect(result.amount).toBe(1550);
     });
 
     it('tek gün hesaplar', () => {
@@ -177,8 +184,8 @@ describe('invoiceAmountCalc', () => {
       expect(result.requestedDays).toBe(1);
       expect(result.coveredDays).toBe(1);
       expect(result.hasProration).toBe(true);
-      // 3100 * 1/31 = 100
-      expect(result.amount).toBe(100);
+      // 3100 * 1/30 = 103,33
+      expect(result.amount).toBe(103.33);
     });
 
     it('dönem ortası aralık orantılar', () => {
@@ -204,8 +211,8 @@ describe('invoiceAmountCalc', () => {
       expect(result.requestedDays).toBe(11);
       expect(result.coveredDays).toBe(11);
       expect(result.hasProration).toBe(true);
-      // 3100 * 11/31 = 1100
-      expect(result.amount).toBe(1100);
+      // 3100 * 11/30 = 1136,67
+      expect(result.amount).toBe(1136.67);
     });
 
     it('28 günlük Şubat ayını doğru hesaplar', () => {
@@ -434,6 +441,125 @@ describe('invoiceAmountCalc', () => {
       expect(result.breakdown[0].isClosed).toBe(false);
     });
 
+    it('30 gün tam ay bedelini verir', () => {
+      const plan: BillingPeriod[] = [
+        {
+          index: 0,
+          periodStart: '2026-01-01T00:00:00.000Z',
+          periodEnd: '2026-01-31T20:59:59.999Z',
+          isPartial: false,
+          isClosed: true,
+          accrualSubtotal: 3100,
+          accrualNetTotal: 3100,
+          billedAmount: null,
+          variance: null,
+          varianceReasons: [],
+          lines: [],
+        },
+      ];
+
+      // 1-30 Ocak = 30 gün. Ay 31 çekse de 30 gün bir aylık bedeldir.
+      const result = computeInvoiceAmountForRange(plan, '2026-01-01', '2026-01-30');
+
+      expect(result.requestedDays).toBe(30);
+      expect(result.amount).toBe(3100);
+      expect(result.hasCommercialProration).toBe(true);
+    });
+
+    it('UTC gün sonu bir sonraki aya taşmaz ve çifte saymaz', () => {
+      const plan: BillingPeriod[] = [
+        {
+          index: 0,
+          periodStart: '2026-01-01T00:00:00.000Z',
+          periodEnd: '2026-01-31T23:59:59.999Z',
+          isPartial: false,
+          isClosed: true,
+          accrualSubtotal: 10000,
+          accrualNetTotal: 10000,
+          billedAmount: null,
+          variance: null,
+          varianceReasons: [],
+          lines: [],
+        },
+        {
+          index: 1,
+          periodStart: '2026-02-01T00:00:00.000Z',
+          periodEnd: '2026-02-28T23:59:59.999Z',
+          isPartial: false,
+          isClosed: true,
+          accrualSubtotal: 10000,
+          accrualNetTotal: 10000,
+          billedAmount: null,
+          variance: null,
+          varianceReasons: [],
+          lines: [],
+        },
+      ];
+
+      const january = computeInvoiceAmountForRange(plan, '2026-01-01', '2026-01-31');
+      expect(january.amount).toBe(10000);
+      expect(january.coveredDays).toBe(31);
+      expect(january.hasProration).toBe(false);
+      expect(january.breakdown).toHaveLength(1);
+
+      const both = computeInvoiceAmountForRange(plan, '2026-01-01', '2026-02-28');
+      expect(both.amount).toBe(20000);
+      expect(both.coveredDays).toBe(59);
+    });
+
+    it('kesilmiş açık ayda kısmi aralık tam ay tahakkukunu yazmaz', () => {
+      const plan: BillingPeriod[] = [
+        {
+          index: 0,
+          periodStart: '2026-01-01T00:00:00.000Z',
+          periodEnd: '2026-01-08T20:59:59.999Z',
+          isPartial: false,
+          isClosed: false,
+          accrualSubtotal: 3000,
+          accrualNetTotal: 3000,
+          billedAmount: null,
+          variance: null,
+          varianceReasons: [],
+          lines: [],
+        },
+      ];
+
+      const result = computeInvoiceAmountForRange(plan, '2026-01-01', '2026-01-08');
+
+      expect(result.amount).toBe(800);
+      expect(result.hasCommercialProration).toBe(true);
+      expect(result.hasProjection).toBe(true);
+      expect(result.breakdown[0].periodEnd).toBe('2026-01-31');
+      expect(result.breakdown[0].periodDays).toBe(30);
+    });
+
+    it('dönem içi fiyat değişiminde de günlük bedel 30 güne bölünür', () => {
+      const plan: BillingPeriod[] = [
+        {
+          index: 0,
+          periodStart: '2026-03-01T00:00:00.000Z',
+          periodEnd: '2026-03-31T20:59:59.999Z',
+          isPartial: true,
+          isClosed: true,
+          accrualSubtotal: 13548.39,
+          accrualNetTotal: 13548.39,
+          billedAmount: null,
+          variance: null,
+          varianceReasons: [],
+          lines: [],
+        },
+      ];
+
+      const full = computeInvoiceAmountForRange(plan, '2026-03-01', '2026-03-31');
+      expect(full.amount).toBe(13548.39);
+      expect(full.hasProration).toBe(false);
+
+      // 1-15 Mart = 15 gün → 13548,39 * 15/30
+      const half = computeInvoiceAmountForRange(plan, '2026-03-01', '2026-03-15');
+      expect(half.amount).toBe(6774.2);
+      expect(half.hasCommercialProration).toBe(true);
+    });
+
     it('kısmi dönem isPartial bayrağını korur', () => {
       const plan: BillingPeriod[] = [
         {
@@ -512,6 +638,27 @@ describe('invoiceAmountCalc', () => {
     it('boş plan için null döner', () => {
       const found = findOpenPeriodContaining([], '2026-02-15');
       expect(found).toBeNull();
+    });
+
+    it('kesilmiş açık ay için ikinci istek ay sonunu ister', () => {
+      const plan: BillingPeriod[] = [
+        {
+          index: 0,
+          periodStart: '2026-03-01T00:00:00.000Z',
+          periodEnd: '2026-03-15T20:59:59.999Z',
+          isPartial: false,
+          isClosed: false,
+          accrualSubtotal: 10000,
+          accrualNetTotal: 10000,
+          billedAmount: null,
+          variance: null,
+          varianceReasons: [],
+          lines: [],
+        },
+      ];
+
+      expect(nextBillingPlanAsOfKey(plan, '2026-03-15')).toBe('2026-03-31');
+      expect(nextBillingPlanAsOfKey(plan, '2026-03-31')).toBeNull();
     });
   });
 
@@ -630,6 +777,7 @@ describe('invoiceAmountCalc', () => {
         coveredDays: 31,
         uncoveredDays: 0,
         hasProration: false,
+        hasCommercialProration: false,
         hasProjection: false,
         breakdown: [],
       };
@@ -660,6 +808,7 @@ describe('invoiceAmountCalc', () => {
         coveredDays: 31,
         uncoveredDays: 0,
         hasProration: false,
+        hasCommercialProration: false,
         hasProjection: false,
         breakdown: [],
       };
@@ -683,6 +832,7 @@ describe('invoiceAmountCalc', () => {
           coveredDays: 31,
           uncoveredDays: 0,
           hasProration: false,
+          hasCommercialProration: false,
           hasProjection: false,
           breakdown: [],
         },
@@ -734,6 +884,7 @@ describe('invoiceAmountCalc', () => {
           coveredDays: 31,
           uncoveredDays: 0,
           hasProration: false,
+          hasCommercialProration: false,
           hasProjection: false,
           breakdown: [],
         },

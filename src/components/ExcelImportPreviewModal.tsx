@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from './tabs/TabContext';
 import {
   ArrowClockwiseIcon,
   CheckCircleIcon,
@@ -104,6 +105,7 @@ export default function ExcelImportPreviewModal({
   resolvingCategories = false,
   onResolveCategories,
 }: ExcelImportPreviewModalProps) {
+  const portalTarget = usePortalTarget();
   const problemCount = errorsByRow.length;
   const hasProblems = problemCount > 0;
   const hasUnmatchedCategories = unmatchedCategories.length > 0;
@@ -484,6 +486,6 @@ export default function ExcelImportPreviewModal({
         </div>
       </div>
     </div>,
-    document.body
+    portalTarget
   );
 }

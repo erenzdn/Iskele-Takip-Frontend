@@ -5,7 +5,14 @@ import { ContractExtensionHistory, CreateExtensionRequest } from '../../models';
 import { toast } from '../../hooks/useToast';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { formatShortDateTime } from '../../utils/formatters';
+import { addCalendarDays, calendarDaysBetween, parseDateInput, todayDateInput } from '../../utils/dateInput';
 import { useAuthStore } from '../../store/authStore';
+
+function toDateKey(value: string | null | undefined): string {
+  if (!value) return '';
+  const day = value.split('T')[0];
+  return parseDateInput(day) ? day : '';
+}
 
 interface ContractExtensionsPanelProps {
   contractId: number;
@@ -17,12 +24,14 @@ interface ContractExtensionsPanelProps {
 export default function ContractExtensionsPanel({
   contractId,
   contractCode: _contractCode,
-  currentPlannedEndDate: _currentPlannedEndDate,
+  currentPlannedEndDate,
   onExtensionCreated,
 }: ContractExtensionsPanelProps) {
   const [loading, setLoading] = useState(true);
   const [history, setHistory] = useState<ContractExtensionHistory | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [startDate, setStartDate] = useState(todayDateInput);
+  const [endDate, setEndDate] = useState('');
   const [formData, setFormData] = useState<CreateExtensionRequest>({
     newPlannedEndDate: '',
     reason: '',
@@ -52,19 +61,53 @@ export default function ContractExtensionsPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
 
+  const currentEndKey = toDateKey(history?.currentPlannedEndDate) || toDateKey(currentPlannedEndDate);
+  const dayCount = calendarDaysBetween(startDate, endDate);
+
+  const resetCreateForm = () => {
+    setShowCreateForm(false);
+    setStartDate(todayDateInput());
+    setEndDate('');
+    setFormData({ newPlannedEndDate: '', reason: '', notes: '' });
+  };
+
+  const handleStartDateChange = (nextStart: string) => {
+    const currentDays = Number.isFinite(dayCount) && dayCount >= 1 ? dayCount : 0;
+    setStartDate(nextStart);
+    if (nextStart && currentDays >= 1) {
+      setEndDate(addCalendarDays(nextStart, currentDays));
+    }
+  };
+
+  const handleDurationDaysChange = (raw: string) => {
+    const days = Math.floor(Number(raw));
+    if (!startDate || !Number.isFinite(days) || days < 1) return;
+    setEndDate(addCalendarDays(startDate, days));
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!formData.newPlannedEndDate) {
-      toast.error('Yeni bitiş tarihi gereklidir.');
+    if (!endDate) {
+      toast.error('Bitiş tarihi veya gün sayısı girin.');
+      return;
+    }
+    if (startDate && calendarDaysBetween(startDate, endDate) < 1) {
+      toast.error('Bitiş tarihi başlangıç tarihinden sonra olmalıdır.');
+      return;
+    }
+    if (currentEndKey && calendarDaysBetween(currentEndKey, endDate) < 1) {
+      toast.error(`Yeni bitiş, güncel bitişten (${formatDate(currentEndKey)}) sonra olmalıdır.`);
       return;
     }
 
     try {
       setSubmitting(true);
-      const result = await contractService.createExtensionAsync(contractId, formData);
+      const result = await contractService.createExtensionAsync(contractId, {
+        ...formData,
+        newPlannedEndDate: endDate,
+      });
       toast.success(`Sözleşme ${result.extensionDays} gün uzatıldı!`);
-      setShowCreateForm(false);
-      setFormData({ newPlannedEndDate: '', reason: '', notes: '' });
+      resetCreateForm();
       await loadHistory();
       onExtensionCreated?.();
     } catch (error) {
@@ -98,13 +141,10 @@ export default function ContractExtensionsPanel({
 
   const formatDate = (dateString: string | null | undefined) => {
     if (!dateString) return '-';
-    try {
-      const date = new Date(dateString);
-      if (isNaN(date.getTime())) return '-';
-      return date.toLocaleDateString('tr-TR');
-    } catch {
-      return '-';
-    }
+    const key = toDateKey(dateString);
+    const date = key ? parseDateInput(key) : new Date(dateString);
+    if (!date || isNaN(date.getTime())) return '-';
+    return date.toLocaleDateString('tr-TR');
   };
 
   if (loading) {
@@ -149,7 +189,12 @@ export default function ContractExtensionsPanel({
       {/* Yeni Uzatma Butonu */}
       {!showCreateForm && canExtendContract && (
         <button
-          onClick={() => setShowCreateForm(true)}
+          onClick={() => {
+            setStartDate(todayDateInput());
+            setEndDate('');
+            setFormData({ newPlannedEndDate: '', reason: '', notes: '' });
+            setShowCreateForm(true);
+          }}
           className="btn-primary w-full py-2"
         >
           + Yeni Uzatma Ekle
@@ -166,20 +211,66 @@ export default function ContractExtensionsPanel({
       {showCreateForm && (
         <form onSubmit={handleSubmit} className="p-4 bg-background-elevated rounded-lg border border-background-border space-y-3">
           <h4 className="text-sm font-semibold mb-3">Yeni Uzatma</h4>
-          
-          <div>
-            <label className="block text-xs text-text-secondary mb-1">
-              Yeni Bitiş Tarihi <span className="text-red-500">*</span>
-            </label>
-            <input
-              type="date"
-              value={formData.newPlannedEndDate}
-              onChange={(e) => setFormData({ ...formData, newPlannedEndDate: e.target.value })}
-              className="input w-full"
-              required
-              disabled={submitting}
-            />
+
+          <div className="grid grid-cols-3 gap-2">
+            <div>
+              <label className="block text-xs text-text-secondary mb-1">Başlangıç</label>
+              <input
+                type="date"
+                value={startDate}
+                onChange={(e) => handleStartDateChange(e.target.value)}
+                className="input w-full"
+                disabled={submitting}
+                title="Varsayılan bugünün tarihi. İsterseniz değiştirebilirsiniz."
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-text-secondary mb-1" title="Başlangıç tarihine eklenen gün. Bitiş tarihi buna göre hesaplanır.">
+                Gün
+              </label>
+              <input
+                type="number"
+                min={1}
+                max={36500}
+                step={1}
+                value={Number.isFinite(dayCount) && dayCount >= 1 ? dayCount : ''}
+                onChange={(e) => handleDurationDaysChange(e.target.value)}
+                className="input w-full"
+                placeholder="30"
+                disabled={submitting}
+                title="Örn. 30 yazınca bitiş tarihi otomatik gelir."
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-text-secondary mb-1">
+                Bitiş <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="date"
+                value={endDate}
+                min={currentEndKey ? addCalendarDays(currentEndKey, 1) : undefined}
+                onChange={(e) => setEndDate(e.target.value)}
+                className="input w-full"
+                disabled={submitting}
+                title="Elle bitiş tarihi de girebilirsiniz; gün sayısı buna göre güncellenir."
+              />
+            </div>
           </div>
+
+          <p className="text-xs text-text-secondary">
+            Gün yazınca bitiş tarihi hesaplanır. Bitiş tarihini elle girerseniz gün sayısı güncellenir.
+            {currentEndKey ? ` Güncel bitiş: ${formatDate(currentEndKey)}.` : ''}
+          </p>
+          {endDate && Number.isFinite(dayCount) && dayCount >= 1 && (
+            <p className="text-xs text-text-primary">
+              Yeni bitiş: {formatDate(endDate)} ({dayCount} gün)
+            </p>
+          )}
+          {endDate && currentEndKey && calendarDaysBetween(currentEndKey, endDate) < 1 && (
+            <p className="text-xs text-red-400">
+              Yeni bitiş, güncel bitişten ({formatDate(currentEndKey)}) sonra olmalıdır.
+            </p>
+          )}
 
           <div>
             <label className="block text-xs text-text-secondary mb-1">Uzatma Sebebi</label>
@@ -206,10 +297,7 @@ export default function ContractExtensionsPanel({
           <div className="flex gap-2">
             <button
               type="button"
-              onClick={() => {
-                setShowCreateForm(false);
-                setFormData({ newPlannedEndDate: '', reason: '', notes: '' });
-              }}
+              onClick={resetCreateForm}
               className="btn-secondary flex-1"
               disabled={submitting}
             >

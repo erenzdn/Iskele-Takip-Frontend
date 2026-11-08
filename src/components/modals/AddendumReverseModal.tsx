@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import type { Addendum, AddendumReversalPreview, ChangeType } from '../../models';
 import { addendumService } from '../../services/addendumService';
@@ -55,6 +56,7 @@ export default function AddendumReverseModal({
   onCreated,
   zIndexClass = 'z-[80]',
 }: AddendumReverseModalProps) {
+  const portalTarget = usePortalTarget();
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [preview, setPreview] = useState<AddendumReversalPreview | null>(null);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -386,5 +388,5 @@ export default function AddendumReverseModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }

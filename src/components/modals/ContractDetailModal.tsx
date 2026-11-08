@@ -40,6 +40,7 @@ import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
 import { clampDiscountRange, discountPercentFromNet, formatDiscountPercent, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
+import { solveUniformDiscountForTarget, type TargetTotalKind } from '../../utils/quoteTargetTotal';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -49,11 +50,13 @@ import {
 } from '../../utils/contractReturn';
 import StockErrorPanel from '../StockErrorPanel';
 import { useAuthStore } from '../../store/authStore';
+import { acknowledgeTabSaved } from '../../store/tabStore';
+import { invalidateData } from '../../store/dataInvalidationStore';
+import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
 import SettleNonReturnModal from './SettleNonReturnModal';
-import InventoryDetailModal from './InventoryDetailModal';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import ContractBillingPlanPanel from '../contracts/ContractBillingPlanPanel';
 import ContractExtensionsPanel from '../contracts/ContractExtensionsPanel';
@@ -132,6 +135,8 @@ interface ContractDetailModalProps {
   stackAboveParent?: boolean;
   /** Kaynak teklife git — parent doğrudan teklif modalını açar */
   onOpenSourceQuote?: (quoteId: number) => void | Promise<void>;
+  presentation?: 'modal' | 'page';
+  onCreated?: (contractId: number) => void;
 }
 
 function unitPriceForContractInventory(
@@ -164,15 +169,18 @@ export default function ContractDetailModal({
   onDataChanged,
   stackAboveParent = false,
   onOpenSourceQuote,
+  presentation = 'modal',
+  onCreated,
 }: ContractDetailModalProps) {
   const navigate = useNavigate();
+  const isPage = presentation === 'page';
+  const portalTarget = usePortalTarget();
   const [isFullScreen] = useState(Boolean(initiallyFullScreen));
   void isFullScreen; // tam ekran düğmesi kaldırıldı; prop uyumluluğu için state korunuyor
   const [isReadOnly, setIsReadOnly] = useState(!isNew);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
-  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
-  const [selectedInventoryForDetail, setSelectedInventoryForDetail] = useState<Inventory | null>(null);
+  const [, setInventoryCategories] = useState<MaterialCategory[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [selectedAuthorizedContactId, setSelectedAuthorizedContactId] = useState<number | ''>('');
   const [authorizedContacts, setAuthorizedContacts] = useState<NonNullable<Customer['AuthorizedContacts']>>([]);
@@ -246,12 +254,26 @@ export default function ContractDetailModal({
   const [itemIskonto, setItemIskonto] = useState<Record<string, number>>({});
   const [iskontoInputs, setIskontoInputs] = useState<Record<string, string>>({});
   const [globalIskontoInput, setGlobalIskontoInput] = useState<string | null>(null);
+  /** Özetteki İskontolu / Genel Toplam hedef tutar taslağı; uygulanınca ana iskonto tüm satırlara yazılır. */
+  const [targetTotalInputs, setTargetTotalInputs] = useState<Record<TargetTotalKind, string | null>>({
+    net: null,
+    grand: null,
+  });
+  const cancelTargetTotalRef = useRef(false);
   /** İskontolu satır tutarı taslağı. key: "ItemId-WarehouseId" | `man-${ClientId}` */
   const [lineNetInputs, setLineNetInputs] = useState<Record<string, string>>({});
   const [vatRate, setVatRate] = useState<number>(20);
   /** Kiralama alt toplamları varsayılan 30 gün; true olunca planlanan sürenin tam tutarı açılır. */
   const [showFullContractPrice, setShowFullContractPrice] = useState(false);
   const [contractCode, setContractCode] = useState<string>('');
+  useTabTitle(
+    isPage
+      ? isNew
+        ? 'Yeni Sözleşme'
+        : `Sözleşme ${contractCode.trim() || (contract?.ContractId ? `#${contract.ContractId}` : '')}`.trim()
+      : null
+  );
+  useTabDirty(isPage && !isReadOnly);
   const [currency, setCurrency] = useState<'TRY' | 'EUR' | 'USD'>('TRY');
   const [contractType, setContractType] = useState<ContractQuoteType>(() => defaultTypeForNew ?? 'RENTAL');
   const [language, setLanguage] = useState<'TR' | 'EN'>('TR');
@@ -1513,6 +1535,90 @@ export default function ContractDetailModal({
     setLineNetInputs({});
     setIskontoInputs({});
     setGlobalIskontoInput(null);
+    setTargetTotalInputs({ net: null, grand: null });
+  };
+
+  const parseTargetTotalInput = (raw: string | null): number | null => {
+    if (raw == null) return null;
+    const { numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 15, maxFracDigits: 2 });
+    return numeric == null || !Number.isFinite(numeric) ? null : numeric;
+  };
+
+  /**
+   * Hedef toplam taslağını çözer. Tutar boş/geçersizse veya ekrandaki toplamla aynıysa null döner;
+   * böylece alana girip çıkmak satır bazlı özel iskontoları ezmez.
+   */
+  const resolveTargetTotalDraft = (kind: TargetTotalKind, raw: string | null) => {
+    const target = parseTargetTotalInput(raw);
+    if (target == null || contractItems.length === 0) return null;
+    const current =
+      kind === 'net' ? displayedPriceBreakdown.discountedTotal : displayedPriceBreakdown.grandTotal;
+    if (roundTo(target, 2) === roundTo(current, 2)) return null;
+    return solveUniformDiscountForTarget({
+      grossList: contractItems.map((item) => getLineTotal(item, displayPricingDays)),
+      vatRate,
+      target,
+      kind,
+    });
+  };
+
+  const pendingUniformDiscount = () => {
+    const pending =
+      resolveTargetTotalDraft('grand', targetTotalInputs.grand) ??
+      resolveTargetTotalDraft('net', targetTotalInputs.net);
+    if (
+      !pending ||
+      pending.reason === 'no_lines' ||
+      pending.reason === 'gross_zero' ||
+      pending.reason === 'invalid_target'
+    ) {
+      return null;
+    }
+    return pending.discountPercent;
+  };
+
+  const applyTargetTotal = (kind: TargetTotalKind) => {
+    const raw = targetTotalInputs[kind];
+    const clearDraft = () => setTargetTotalInputs((prev) => ({ ...prev, [kind]: null }));
+    if (raw == null) return;
+    if (raw.trim() !== '' && parseTargetTotalInput(raw) == null) {
+      toast.warning('Geçerli bir tutar girin.');
+      clearDraft();
+      return;
+    }
+    const result = resolveTargetTotalDraft(kind, raw);
+    if (!result) {
+      clearDraft();
+      return;
+    }
+    const label = kind === 'net' ? 'İskontolu tutar' : 'Genel toplam';
+    switch (result.reason) {
+      case 'no_lines':
+        clearDraft();
+        return;
+      case 'gross_zero':
+        toast.warning('Satır tutarları 0 iken iskonto hesaplanamaz.');
+        clearDraft();
+        return;
+      case 'invalid_target':
+        toast.warning('Geçerli bir tutar girin.');
+        clearDraft();
+        return;
+      case 'target_above_gross':
+        toast.warning(`${label} iskontosuz tutarı aşamaz; iskonto %0 yapıldı.`);
+        break;
+      case 'full_discount':
+        toast.warning('Tutar 0 girildi; tüm satırlara %100 iskonto uygulandı.');
+        break;
+      case 'rounding':
+        toast.info(
+          `Kuruş yuvarlaması nedeniyle ${label.toLocaleLowerCase('tr-TR')} ${formatCurrency(result.achievedTotal)} oldu.`
+        );
+        break;
+      default:
+        break;
+    }
+    handleGlobalIskontoChange(result.discountPercent);
   };
 
   const handleSave = async () => {
@@ -1521,12 +1627,15 @@ export default function ContractDetailModal({
       return;
     }
     const source = fullContract ?? contract;
+    const uniformPct = pendingUniformDiscount();
+    const headerDiscount = uniformPct ?? iskonto;
+    const lineDiscount = (item: ContractLineItem) => uniformPct ?? getRowDiscountPercent(item);
     const validationError = firstValidationError([
       validateRequired(String(selectedCustomerId || ''), 'Müşteri'),
       validateRequired(String(selectedAuthorizedContactId || ''), 'Merkez yetkili'),
       validateDate(startDate, 'Başlangıç tarihi', true),
       validateDate(plannedEndDate, 'Planlanan bitiş tarihi', true),
-      validateNumber(iskonto, 'İskonto', { min: 0, max: 100 }),
+      validateNumber(headerDiscount, 'İskonto', { min: 0, max: 100 }),
       validateNumber(vatRate, 'KDV', { min: 0, max: 100 }),
     ]);
     if (validationError) {
@@ -1593,7 +1702,7 @@ export default function ContractDetailModal({
               Description: item.Description,
               RentedQuantity: item.RentedQuantity,
               UnitPriceSnapshot: item.UnitPriceSnapshot,
-              Iskonto: getRowDiscountPercent(item),
+              Iskonto: lineDiscount(item),
               LineOrder: lineOrder,
             };
           }
@@ -1602,7 +1711,7 @@ export default function ContractDetailModal({
             WarehouseId: item.WarehouseId,
             RentedQuantity: item.RentedQuantity,
             ItemCodeOverride: normalizeOptionalOverride(item.ItemCodeOverride),
-            Iskonto: getRowDiscountPercent(item),
+            Iskonto: lineDiscount(item),
             LineOrder: lineOrder,
           };
         });
@@ -1613,7 +1722,7 @@ export default function ContractDetailModal({
           StartDate: new Date(startDate).toISOString(),
           InitialTotalPrice: initialTotalPrice,
           IsCompleted: false,
-          Iskonto: iskonto,
+          Iskonto: headerDiscount,
           VatRate: vatRate,
           Currency: currency,
           Type: contractType,
@@ -1653,6 +1762,11 @@ export default function ContractDetailModal({
           });
         }
         toast.success(`Sözleşme başarıyla oluşturuldu! (ID: ${result.ContractId})`);
+        invalidateData('contracts');
+        if (isPage && onCreated) {
+          onCreated(result.ContractId);
+          return;
+        }
         onClose();
         return;
       } else if (contract) {
@@ -1679,7 +1793,7 @@ export default function ContractDetailModal({
         }
 
         const originalIskonto = Number((source as { Iskonto?: number } | null | undefined)?.Iskonto ?? 0) || 0;
-        const nextIskonto = Number(iskonto) || 0;
+        const nextIskonto = Number(headerDiscount) || 0;
         if (originalIskonto !== nextIskonto) {
           updateBody.Iskonto = nextIskonto;
         }
@@ -1731,7 +1845,7 @@ export default function ContractDetailModal({
           .filter(({ item }) => Number(item.DetailId) > 0)
           .map(({ item, lineOrder }) => ({
             DetailId: item.DetailId,
-            Iskonto: getRowDiscountPercent(item),
+            Iskonto: lineDiscount(item),
             LineOrder: lineOrder,
           }));
         if (persistedLineIskontos.length > 0) {
@@ -1945,13 +2059,15 @@ export default function ContractDetailModal({
       if (result.QuoteId) {
         toast.success('Sözleşme kaldırıldı; kaynak teklif aktif listeye döndü.');
         await onDataChanged?.({ quoteReleased: true });
+        if (isPage) acknowledgeTabSaved();
         onClose();
-        navigate('/contracts/sale', { replace: true, state: { openQuoteId: result.QuoteId } });
+        navigate(`/quotes/${result.QuoteId}`);
       } else {
         toast.success('Sözleşme kaldırıldı.');
         await onDataChanged?.({ quoteReleased: true });
+        if (isPage) acknowledgeTabSaved();
         onClose();
-        navigate('/contracts/sale', { replace: true });
+        navigate(contractType === 'SALE' ? '/contracts/sale' : '/contracts/rental');
       }
     } catch (error) {
       const status = (error as any)?.status as number | undefined;
@@ -2125,6 +2241,52 @@ export default function ContractDetailModal({
     return formatMoney(safe, currency);
   };
 
+  const renderTargetTotalInput = (kind: TargetTotalKind, value: number, className: string) => {
+    const label = kind === 'net' ? 'İskontolu tutar (KDV hariç)' : 'Genel toplam (KDV dahil)';
+    return (
+      <span className="inline-flex items-center gap-1">
+        <input
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={targetTotalInputs[kind] ?? formatNetPriceInput(value)}
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => {
+            const cleaned = normalizeMaskedDecimalTR_OnChange(e.target.value, {
+              maxIntDigits: 15,
+              maxFracDigits: 2,
+            });
+            setTargetTotalInputs((prev) => ({ ...prev, [kind]: cleaned }));
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.currentTarget.blur();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              cancelTargetTotalRef.current = true;
+              setTargetTotalInputs((prev) => ({ ...prev, [kind]: null }));
+              e.currentTarget.blur();
+            }
+          }}
+          onBlur={() => {
+            if (cancelTargetTotalRef.current) {
+              cancelTargetTotalRef.current = false;
+              return;
+            }
+            applyTargetTotal(kind);
+          }}
+          disabled={isReadOnly}
+          className={`input py-0.5 text-right tabular-nums w-[130px] ${className}`}
+          aria-label={label}
+          title={`${label} — değiştirirseniz girdiğiniz kuruşa göre genel iskonto hesaplanır ve tüm satırlara aynı oran uygulanır`}
+        />
+        <span className="text-[11px] text-text-secondary">{currency}</span>
+      </span>
+    );
+  };
+
   const renderPriceBreakdownFields = (
     breakdown: {
       subtotal: number;
@@ -2133,7 +2295,7 @@ export default function ContractDetailModal({
       vatAmount: number;
       grandTotal: number;
     },
-    options?: { includeSettlement?: boolean; compactGrand?: boolean }
+    options?: { includeSettlement?: boolean; compactGrand?: boolean; editableTotals?: boolean }
   ) => (
     <>
       <div>
@@ -2152,7 +2314,11 @@ export default function ContractDetailModal({
       </div>
       <div>
         <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
-        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.discountedTotal)}</span>
+        {options?.editableTotals ? (
+          renderTargetTotalInput('net', breakdown.discountedTotal, 'text-sm font-semibold text-text-primary')
+        ) : (
+          <span className="font-semibold text-text-primary">{formatCurrency(breakdown.discountedTotal)}</span>
+        )}
       </div>
       <div>
         <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
@@ -2160,9 +2326,13 @@ export default function ContractDetailModal({
       </div>
       <div>
         <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
-        <span className={options?.compactGrand ? 'font-semibold text-green-400' : 'text-lg font-bold text-green-400'}>
-          {formatCurrency(breakdown.grandTotal)}
-        </span>
+        {options?.editableTotals ? (
+          renderTargetTotalInput('grand', breakdown.grandTotal, 'text-base font-bold text-green-400')
+        ) : (
+          <span className={options?.compactGrand ? 'font-semibold text-green-400' : 'text-lg font-bold text-green-400'}>
+            {formatCurrency(breakdown.grandTotal)}
+          </span>
+        )}
       </div>
     </>
   );
@@ -2262,17 +2432,12 @@ export default function ContractDetailModal({
       void Promise.resolve(onOpenSourceQuote(sourceQuoteId));
       return;
     }
-    onClose();
-    const path = contractType === 'SALE' ? '/contracts/sale' : '/contracts/rental';
-    navigate(path, {
-      replace: false,
-      state: { openQuoteId: sourceQuoteId, openQuoteNonce: Date.now() },
-    });
+    navigate(`/quotes/${sourceQuoteId}`);
   };
 
   const requestClose = () => {
     if (isBusy) return;
-    if (isReadOnly) {
+    if (isPage || isReadOnly) {
       onClose();
       return;
     }
@@ -2288,7 +2453,7 @@ export default function ContractDetailModal({
     }`;
 
   const modalTree = (
-    <div className={`fixed inset-0 flex flex-col overflow-hidden bg-background-main ${stackAboveParent ? 'z-[60]' : 'z-50'}`}>
+    <div className={isPage ? 'flex h-full min-h-0 flex-col overflow-hidden bg-background-main' : `fixed inset-0 flex flex-col overflow-hidden bg-background-main ${stackAboveParent ? 'z-[60]' : 'z-50'}`}>
       <header className="shrink-0 flex items-center justify-between px-3 py-1 bg-background-panel border-b border-background-border gap-2">
         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
           <h1 className="text-sm font-semibold text-text-primary tracking-tight truncate">
@@ -2646,7 +2811,9 @@ export default function ContractDetailModal({
                               type="button"
                               className="cell-clip text-left hover:text-primary hover:underline transition-colors cursor-pointer max-w-full"
                               title={formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}
-                              onClick={() => setSelectedInventoryForDetail(invItem)}
+                              onClick={() => {
+                                if (invItem?.ItemId) navigate(`/inventory/${invItem.ItemId}`);
+                              }}
                             >
                               {displayItemName}
                             </button>
@@ -3804,7 +3971,9 @@ export default function ContractDetailModal({
                                         ? `${item.ItemNameOverride ?? canonicalItemName} (Bu ürünün İngilizce adı yoktur)`
                                         : (item.ItemNameOverride ?? (language === 'EN' ? itemEnName : canonicalItemName) ?? canonicalItemName)
                                     }
-                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                    onClick={() => {
+                                      if (invItem?.ItemId) navigate(`/inventory/${invItem.ItemId}`);
+                                    }}
                                   >
                                     {language === 'EN' ? (
                                       item.ItemNameOverride ?? itemEnName ?? canonicalItemName
@@ -3860,7 +4029,9 @@ export default function ContractDetailModal({
                                     </button>
                                     <button
                                       type="button"
-                                      onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                      onClick={() => {
+                                      if (invItem?.ItemId) navigate(`/inventory/${invItem.ItemId}`);
+                                    }}
                                       className="btn-secondary shrink-0"
                                       title="Ürün detayını görüntüle"
                                     >
@@ -4282,7 +4453,10 @@ export default function ContractDetailModal({
           <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-col gap-1.5 min-w-0">
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
-                {renderPriceBreakdownFields(displayedPriceBreakdown, { includeSettlement: true })}
+                {renderPriceBreakdownFields(displayedPriceBreakdown, {
+                  includeSettlement: true,
+                  editableTotals: !isReadOnly && contractItems.length > 0,
+                })}
                 {contractType === 'RENTAL' && (
                   <span className="text-[11px] text-text-secondary">
                     30 gün üzerinden
@@ -4654,18 +4828,6 @@ export default function ContractDetailModal({
         downloadFileName={`sozlesme_${contract?.ContractId ?? ''}.pdf`}
         onClose={closePdfPreview}
       />
-      {selectedInventoryForDetail && (
-        <InventoryDetailModal
-          item={selectedInventoryForDetail}
-          categories={inventoryCategories}
-          isNew={false}
-          stackAboveParent
-          onCategoriesChanged={() => {
-            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
-          }}
-          onClose={() => setSelectedInventoryForDetail(null)}
-        />
-      )}
       {openHistoryDetailId != null &&
         historyPopoverPos &&
         openLineHistoryEvents &&
@@ -4739,6 +4901,7 @@ export default function ContractDetailModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  if (isPage) return modalTree;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }
 

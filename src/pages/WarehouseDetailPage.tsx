@@ -15,6 +15,7 @@ import {
   type WarehouseMovementsResponse,
   type WarehouseMovementRow,
 } from '../models';
+import { useTabTitle } from '../components/tabs/TabContext';
 import { warehouseService } from '../services/warehouseService';
 import { contractService } from '../services/contractService';
 import { inventoryService } from '../services/inventoryService';
@@ -39,6 +40,7 @@ export default function WarehouseDetailPage() {
   const canDelete = canDeleteWarehouse(user);
 
   const [warehouse, setWarehouse] = useState<Warehouse | null>(null);
+  useTabTitle(warehouse?.WarehouseName ? warehouse.WarehouseName : 'Depo Detayı');
   const [stock, setStock] = useState<WarehouseStock[]>([]);
   const [loading, setLoading] = useState(true);
   const [loadingStock, setLoadingStock] = useState(false);
@@ -237,36 +239,15 @@ export default function WarehouseDetailPage() {
     );
 
   const openContractDetail = (row: WarehouseMovementRow) => {
-    const type = resolveContractQuoteType({ Type: row.contract?.Type });
-    navigate(type === 'SALE' ? '/contracts/sale' : '/contracts/rental', {
-      state: {
-        openContractId: row.contract?.ContractId,
-        initialTab: 'info',
-        preferTab: row.contract?.isCompleted ? 'completed' : 'active',
-        returnOnClose: true,
-        returnTo: { path: `/warehouses/${id}`, state: { initialTab: 'movements' } },
-      },
-    });
+    if (row.contract?.ContractId) navigate(`/contracts/${row.contract.ContractId}`);
   };
 
   const openCustomerDetail = (row: WarehouseMovementRow) => {
-    navigate('/customers', {
-      state: {
-        openCustomerId: row.customer?.CustomerId,
-        returnOnClose: true,
-        returnTo: { path: `/warehouses/${id}`, state: { initialTab: 'movements' } },
-      },
-    });
+    if (row.customer?.CustomerId) navigate(`/customers/${row.customer.CustomerId}`);
   };
 
   const openItemDetail = (row: WarehouseMovementRow) => {
-    navigate('/inventory', {
-      state: {
-        openItemId: row.item?.ItemId,
-        returnOnClose: true,
-        returnTo: { path: `/warehouses/${id}`, state: { initialTab: 'movements' } },
-      },
-    });
+    if (row.item?.ItemId) navigate(`/inventory/${row.item.ItemId}`);
   };
 
   useEffect(() => {

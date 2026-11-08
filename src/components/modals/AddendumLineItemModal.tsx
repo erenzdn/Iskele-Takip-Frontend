@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { PackageIcon, XIcon } from '@phosphor-icons/react';
 import type {
   AddendumDetail,
@@ -134,6 +135,7 @@ export default function AddendumLineItemModal({
   onSaved,
   zIndexClass = 'z-[70]',
 }: AddendumLineItemModalProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
   const isSale = contractType === 'SALE';
   const isEdit = Boolean(editingDetail?.DetailId);
@@ -852,5 +854,5 @@ export default function AddendumLineItemModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }
