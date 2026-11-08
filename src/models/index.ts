@@ -92,6 +92,8 @@ export interface Inventory {
   ItemNameEn?: string | null;
   TotalStock: number;
   OnRent: number;
+  /** Sevk bekleyen (SHIPMENT modundaki sözleşmelere rezerve) miktar; depoda ama kullanılamaz */
+  Reserved?: number;
   DailyPrice: number;
   DailyPriceEur?: number | null;
   DailyPriceUsd?: number | null;
@@ -324,6 +326,103 @@ export interface Contract {
   /** Kaynak teklif (dönüşümle oluşan sözleşmelerde); manuel sözleşmede null */
   SourceQuoteId?: number | null;
   SourceQuoteCode?: string | null;
+  /**
+   * Teslim modu. IMMEDIATE: stok ve kira sözleşmeyle başlar (eski davranış).
+   * SHIPMENT: sözleşme malzemeyi rezerve eder; kira ve depodan çıkış sevkiyat fişiyle başlar.
+   */
+  DeliveryMode?: DeliveryMode;
+  /** SHIPMENT: henüz sevk edilmemiş (rezerve) toplam miktar */
+  PendingShipmentQuantity?: number;
+  /** SHIPMENT: sevk edilmiş toplam miktar */
+  ShippedQuantityTotal?: number;
+  /** SHIPMENT: ilk aktif sevk tarihi = kira başlangıcı (sevk yoksa null) */
+  FirstShipmentDate?: string | null;
+}
+
+export type DeliveryMode = 'IMMEDIATE' | 'SHIPMENT';
+
+export type ShipmentStatus = 'ACTIVE' | 'CANCELLED';
+
+export interface ShipmentItem {
+  ShipmentItemId: number;
+  ShipmentId: number;
+  DetailId: number;
+  ItemId: number;
+  Quantity: number;
+  ItemCode?: string | null;
+  ItemName?: string | null;
+  UnitName?: string | null;
+  /** Sözleşme satırının miktarı */
+  ContractQuantity?: number;
+  /** Fiş anındaki kümülatif sevk (bu fiş dahil) */
+  TotalShippedQuantity?: number;
+  /** Satırın güncel toplam sevki */
+  CurrentShippedQuantity?: number;
+  ReturnedQuantity?: number;
+}
+
+export interface Shipment {
+  ShipmentId: number;
+  ShipmentNo: string;
+  ContractId: number;
+  ContractCode?: string | null;
+  CustomerId?: number;
+  CustomerName?: string | null;
+  SiteId?: number | null;
+  SiteName?: string | null;
+  SiteAddress?: string | null;
+  WarehouseId: number;
+  WarehouseName?: string | null;
+  ShipmentDate: string;
+  Status: ShipmentStatus;
+  DriverName?: string | null;
+  VehiclePlate?: string | null;
+  ReceiverName?: string | null;
+  DeliveryAddress?: string | null;
+  ExternalWaybillNo?: string | null;
+  Notes?: string | null;
+  CreatedBy?: number;
+  CreatedByName?: string | null;
+  CreatedAt?: string;
+  CancelledAt?: string | null;
+  CancelledByName?: string | null;
+  CancellationReason?: string | null;
+  TotalQuantity?: number;
+  ItemCount?: number;
+  items?: ShipmentItem[];
+}
+
+export interface CreateShipmentRequest {
+  ShipmentDate?: string;
+  WarehouseId: number;
+  DriverName?: string | null;
+  VehiclePlate?: string | null;
+  ReceiverName?: string | null;
+  DeliveryAddress?: string | null;
+  ExternalWaybillNo?: string | null;
+  Notes?: string | null;
+  items: Array<{ DetailId: number; Quantity: number }>;
+}
+
+export interface ShipmentMutationResult {
+  shipment: Shipment;
+  warnings: string[];
+  /** Kira başlangıcı kaydıysa yeni planlanan bitiş */
+  plannedEndDate: string | null;
+}
+
+export interface ContractAwaitingShipment {
+  ContractId: number;
+  ContractCode?: string | null;
+  CustomerId: number;
+  CustomerName?: string | null;
+  SiteName?: string | null;
+  StartDate: string;
+  PlannedEndDate?: string | null;
+  ContractQuantity: number;
+  ShippedQuantity: number;
+  PendingQuantity: number;
+  FirstShipmentDate?: string | null;
 }
 
 export interface ContractDetail {
@@ -333,6 +432,8 @@ export interface ContractDetail {
   WarehouseId?: number;
   RentedQuantity: number;
   ReturnedQuantity: number;
+  /** SHIPMENT modunda sevk edilmiş miktar (IMMEDIATE'te anlamsız, 0) */
+  ShippedQuantity?: number;
   /** Hesaplamada kullanılan snapshot birim fiyat (DAY/EACH ile birlikte) */
   UnitPriceSnapshot: number;
   PriceUnit: PriceUnit;
@@ -536,6 +637,8 @@ export interface InventoryContractLineItem {
   WarehouseName?: string;
   RentedQuantity: number;
   ReturnedQuantity: number;
+  /** SHIPMENT modunda sevk edilmiş miktar */
+  ShippedQuantity?: number;
   UnitPriceSnapshot: number;
   PriceUnit: PriceUnit;
   MonthlyPriceOverride?: number | null;
@@ -874,6 +977,8 @@ export interface WarehouseStock {
   WarehouseId: number;
   ItemId: number;
   Quantity: number;
+  /** Bu depoda sevk bekleyen sözleşmelere rezerve miktar (Quantity içinde) */
+  Reserved?: number;
   ItemName: string;
   CategoryId: number;
   CategoryName?: string;

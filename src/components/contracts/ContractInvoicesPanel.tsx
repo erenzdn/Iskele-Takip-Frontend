@@ -25,9 +25,15 @@ interface ContractInvoicesPanelProps {
   contractCurrency?: 'TRY' | 'EUR' | 'USD';
   /** Backend NetTotal (iskontolu, KDV dahil). Satış sözleşmesinde sözleşme tutarı olarak kullanılır. */
   contractNetTotal?: number;
-  contractStartDate?: string | null; // Sözleşme başlangıç tarihi
+  /**
+   * Kira başlangıcı. Sevkiyat modunda ilk sevk tarihidir (varsayılan dönem ve tahakkuk
+   * sınırları buna göre hesaplanır); anında modda sözleşme başlangıcı.
+   */
+  contractStartDate?: string | null;
   contractPlannedEndDate?: string | null; // Sözleşme planlanan bitiş tarihi (uzatmalar dahil güncel)
   isRentalContract?: boolean; // Kiralama sözleşmesi mi?
+  /** Sevkiyat modunda henüz sevk yoksa true: kira başlamadı, faturalanacak tahakkuk yok. */
+  awaitingShipment?: boolean;
 }
 
 export default function ContractInvoicesPanel({
@@ -38,6 +44,7 @@ export default function ContractInvoicesPanel({
   contractStartDate,
   contractPlannedEndDate,
   isRentalContract = false,
+  awaitingShipment = false,
 }: ContractInvoicesPanelProps) {
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState<ContractInvoice[]>([]);
@@ -392,6 +399,11 @@ export default function ContractInvoicesPanel({
   return (
     <div>
       <div className="p-4 space-y-4">
+      {awaitingShipment && (
+        <div className="rounded-lg border border-amber-700/50 bg-amber-900/20 px-3 py-2 text-xs text-amber-100">
+          Henüz sevkiyat yapılmadı. Kira ilk sevkiyat fişiyle başlar; o tarihe kadar faturalanacak tahakkuk yoktur.
+        </div>
+      )}
       {/* Fatura Durumu Kartı */}
       {(contractTotalAmount != null || rentalPlanTotalLoading) && (
         <div className="p-4 bg-background-elevated rounded-lg border border-background-border">

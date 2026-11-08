@@ -6,7 +6,7 @@ export type CustomerTabState = {
 };
 
 export type ContractTabState = {
-  initialTab?: 'info' | 'billing' | 'return' | 'returns' | 'history' | 'addenda' | 'extensions' | 'invoices';
+  initialTab?: 'info' | 'billing' | 'shipments' | 'return' | 'returns' | 'history' | 'addenda' | 'extensions' | 'invoices';
 };
 
 export type QuoteTabState = {

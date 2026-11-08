@@ -186,6 +186,8 @@ export default function QuoteDetailModal({
   /** RENTAL sözleşmeye çevir: zorunlu sözleşme tarihleri */
   const [convertContractStartDate, setConvertContractStartDate] = useState('');
   const [convertContractEndDate, setConvertContractEndDate] = useState('');
+  /** RENTAL dönüşümünde teslim modu; varsayılan sevkiyat ile (kira sevkte başlar). */
+  const [convertDeliveryMode, setConvertDeliveryMode] = useState<'IMMEDIATE' | 'SHIPMENT'>('SHIPMENT');
   // perItemAssignments[ItemId] = { WarehouseId, Quantity }[]
   const [perItemAssignments, setPerItemAssignments] = useState<
     Record<number, { WarehouseId: number; Quantity: number }[]>
@@ -2274,6 +2276,7 @@ export default function QuoteDetailModal({
           ? {
               StartDate: new Date(convertContractStartDate).toISOString(),
               PlannedEndDate: new Date(convertContractEndDate).toISOString(),
+              DeliveryMode: convertDeliveryMode,
             }
           : {}),
       });
@@ -4241,6 +4244,41 @@ export default function QuoteDetailModal({
                       className="input w-full text-sm py-1.5"
                     />
                   </div>
+                </div>
+                <div className="mt-3 rounded-lg border border-background-border p-3 space-y-2">
+                  <div className="text-sm font-medium text-text-primary">Teslim</div>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="convertDeliveryMode"
+                      checked={convertDeliveryMode === 'SHIPMENT'}
+                      onChange={() => setConvertDeliveryMode('SHIPMENT')}
+                      className="rounded-full mt-0.5"
+                      disabled={isBusy}
+                    />
+                    <span className="text-sm">
+                      Sevkiyat ile
+                      <span className="block text-xs text-text-secondary">
+                        Malzeme rezerve edilir; kira ve depodan çıkış sevkiyat fişiyle başlar. Parçalı sevkte her parti kendi tarihinden işler.
+                      </span>
+                    </span>
+                  </label>
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <input
+                      type="radio"
+                      name="convertDeliveryMode"
+                      checked={convertDeliveryMode === 'IMMEDIATE'}
+                      onChange={() => setConvertDeliveryMode('IMMEDIATE')}
+                      className="rounded-full mt-0.5"
+                      disabled={isBusy}
+                    />
+                    <span className="text-sm">
+                      Anında
+                      <span className="block text-xs text-text-secondary">
+                        Stok sözleşmeyle düşer; kira başlangıç tarihinden işler.
+                      </span>
+                    </span>
+                  </label>
                 </div>
               </div>
             )}

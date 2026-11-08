@@ -1,0 +1,291 @@
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { FilePdfIcon, TruckIcon } from '@phosphor-icons/react';
+import type { ContractAwaitingShipment, Shipment, ShipmentStatus, Warehouse } from '../models';
+import { shipmentService } from '../services/shipmentService';
+import { warehouseService } from '../services/warehouseService';
+import { useAuthStore } from '../store/authStore';
+import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import EmptyState from '../components/EmptyState';
+import { formatDate } from '../utils/formatters';
+import { contractPath } from '../utils/entityNavigation';
+import { getApiErrorMessage } from '../utils/apiError';
+import { toast } from '../hooks/useToast';
+import { useShipmentPdfPreview } from '../hooks/useShipmentPdfPreview';
+
+type ViewMode = 'awaiting' | 'shipments';
+
+const th =
+  'text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover';
+const td = 'py-1 px-2 align-middle border-r border-background-border/60 last:border-r-0';
+
+/**
+ * Sevkiyatlar: sevk bekleyen sözleşmeler (rezervasyonu olan) ve tüm sevkiyat fişleri.
+ * Fiş, sözleşmenin "Sevkiyatlar" sekmesinden kesilir; bu sayfa operasyon takibi içindir.
+ */
+export default function ShipmentsPage() {
+  const navigate = useNavigate();
+  const { setActions } = useHeaderActions();
+  const user = useAuthStore((s) => s.user);
+  const canView = Boolean(user?.permissions?.includes('shipments_view'));
+
+  const [view, setView] = useState<ViewMode>('awaiting');
+  const [search, setSearch] = useState('');
+  const [warehouseId, setWarehouseId] = useState<number | ''>('');
+  const [status, setStatus] = useState<ShipmentStatus | ''>('');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
+  const [awaiting, setAwaiting] = useState<ContractAwaitingShipment[]>([]);
+  const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [loading, setLoading] = useState(false);
+  const { openPreview, loadingId, element: pdfPreviewElement } = useShipmentPdfPreview();
+
+  useEffect(() => {
+    warehouseService.getAllAsync().then(setWarehouses).catch(() => setWarehouses([]));
+  }, []);
+
+  const load = useCallback(async () => {
+    if (!canView) return;
+    try {
+      setLoading(true);
+      if (view === 'awaiting') {
+        setAwaiting(await shipmentService.listAwaitingContractsAsync(search.trim() || undefined));
+      } else {
+        const res = await shipmentService.listAsync({
+          search: search.trim() || undefined,
+          warehouseId: warehouseId === '' ? undefined : warehouseId,
+          status: status || undefined,
+          dateFrom: dateFrom ? new Date(`${dateFrom}T00:00:00`).toISOString() : undefined,
+          dateTo: dateTo ? new Date(`${dateTo}T23:59:59`).toISOString() : undefined,
+          limit: 500,
+        });
+        setShipments(res.items ?? []);
+      }
+    } catch (err) {
+      toast.error(getApiErrorMessage(err) || 'Sevkiyatlar yüklenemedi.');
+    } finally {
+      setLoading(false);
+    }
+  }, [canView, view, search, warehouseId, status, dateFrom, dateTo]);
+
+  useEffect(() => {
+    const t = window.setTimeout(() => void load(), 250);
+    return () => window.clearTimeout(t);
+  }, [load]);
+
+  const headerActions = useMemo(
+    () =>
+      canView ? (
+        <button onClick={() => void load()} className="btn-secondary py-2 px-3 text-sm">
+          Yenile
+        </button>
+      ) : null,
+    [canView, load]
+  );
+
+  useEffect(() => {
+    setActions(headerActions);
+    return () => setActions(null);
+  }, [headerActions, setActions]);
+
+  const openContract = (contractId: number) => navigate(contractPath(contractId), { state: { initialTab: 'shipments' } });
+
+  if (!canView) {
+    return (
+      <div className="flex items-center justify-center py-16">
+        <div className="text-text-secondary">Bu sayfayı görüntüleme yetkiniz yok.</div>
+      </div>
+    );
+  }
+
+  const awaitingTotal = awaiting.reduce((s, a) => s + (a.PendingQuantity || 0), 0);
+
+  return (
+    <div>
+      <div className="mb-1.5 rounded border border-background-border bg-background-panel p-1.5 flex flex-wrap items-center gap-1.5">
+        <div className="flex rounded border border-background-border overflow-hidden text-sm">
+          <button
+            type="button"
+            className={`px-3 py-1.5 ${view === 'awaiting' ? 'bg-accent/20 text-accent' : 'text-text-secondary hover:bg-background-hover'}`}
+            onClick={() => setView('awaiting')}
+          >
+            Sevk bekleyenler
+          </button>
+          <button
+            type="button"
+            className={`px-3 py-1.5 border-l border-background-border ${view === 'shipments' ? 'bg-accent/20 text-accent' : 'text-text-secondary hover:bg-background-hover'}`}
+            onClick={() => setView('shipments')}
+          >
+            Sevkiyat fişleri
+          </button>
+        </div>
+        <input
+          type="search"
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          placeholder={view === 'awaiting' ? 'Sözleşme no veya müşteri' : 'Fiş no, sözleşme, müşteri, plaka'}
+          className="input py-1.5 px-2 text-sm min-w-[220px]"
+        />
+        {view === 'shipments' && (
+          <>
+            <select
+              value={warehouseId}
+              onChange={(e) => setWarehouseId(e.target.value === '' ? '' : Number(e.target.value))}
+              className="input py-1.5 px-2 text-sm min-w-[140px]"
+              title="Depo"
+            >
+              <option value="">Tüm depolar</option>
+              {warehouses.map((w) => (
+                <option key={w.WarehouseId} value={w.WarehouseId}>
+                  {w.WarehouseName}
+                </option>
+              ))}
+            </select>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value as ShipmentStatus | '')}
+              className="input py-1.5 px-2 text-sm min-w-[110px]"
+              title="Durum"
+            >
+              <option value="">Tüm durumlar</option>
+              <option value="ACTIVE">Aktif</option>
+              <option value="CANCELLED">İptal</option>
+            </select>
+            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input py-1.5 px-2 text-sm w-[130px]" title="Başlangıç" />
+            <span className="text-text-secondary text-xs">–</span>
+            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input py-1.5 px-2 text-sm w-[130px]" title="Bitiş" />
+          </>
+        )}
+        {view === 'awaiting' && awaiting.length > 0 && (
+          <span className="text-xs text-text-secondary ml-auto">
+            {awaiting.length} sözleşmede toplam {awaitingTotal} adet sevk bekliyor
+          </span>
+        )}
+      </div>
+
+      {loading && (view === 'awaiting' ? awaiting.length === 0 : shipments.length === 0) ? (
+        <div className="flex items-center justify-center py-16 text-text-secondary">Yükleniyor...</div>
+      ) : view === 'awaiting' ? (
+        awaiting.length === 0 ? (
+          <EmptyState
+            icon={<TruckIcon size={48} weight="duotone" />}
+            title="Sevk bekleyen sözleşme yok"
+            description="“Sevkiyat ile” açılan kiralama sözleşmeleri, malzemenin tamamı sevk edilene kadar burada listelenir."
+          />
+        ) : (
+          <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel">
+            <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[200px]">
+              <table className="w-full text-xs border-collapse text-text-primary">
+                <thead className="sticky top-0 z-10 border-b border-background-border">
+                  <tr>
+                    <th className={th}>Sözleşme</th>
+                    <th className={th}>Müşteri</th>
+                    <th className={th}>Şantiye</th>
+                    <th className={th}>Sözleşme tarihi</th>
+                    <th className={th}>İlk sevk</th>
+                    <th className={`${th} text-right`}>Sözleşme</th>
+                    <th className={`${th} text-right`}>Sevk edilen</th>
+                    <th className={`${th} text-right`}>Bekleyen</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {awaiting.map((a, index) => (
+                    <tr
+                      key={a.ContractId}
+                      className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
+                      onClick={() => openContract(a.ContractId)}
+                      title="Sözleşmeyi aç (Sevkiyatlar sekmesinden fiş kesin)"
+                    >
+                      <td className={td}>
+                        <span className="font-medium text-primary">{a.ContractCode || `#${a.ContractId}`}</span>
+                      </td>
+                      <td className={td}>{a.CustomerName || '—'}</td>
+                      <td className={td}>{a.SiteName || '—'}</td>
+                      <td className={td}>{formatDate(a.StartDate)}</td>
+                      <td className={td}>
+                        {a.FirstShipmentDate ? formatDate(a.FirstShipmentDate) : <span className="text-amber-300">Sevk yok</span>}
+                      </td>
+                      <td className={`${td} text-right`}>{a.ContractQuantity}</td>
+                      <td className={`${td} text-right`}>{a.ShippedQuantity}</td>
+                      <td className={`${td} text-right font-semibold text-amber-300`}>{a.PendingQuantity}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )
+      ) : shipments.length === 0 ? (
+        <EmptyState
+          icon={<TruckIcon size={48} weight="duotone" />}
+          title="Sevkiyat fişi bulunamadı"
+          description="Fişler sözleşmenin “Sevkiyatlar” sekmesinden kesilir."
+        />
+      ) : (
+        <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel">
+          <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[200px]">
+            <table className="w-full text-xs border-collapse text-text-primary">
+              <thead className="sticky top-0 z-10 border-b border-background-border">
+                <tr>
+                  <th className={th}>Fiş no</th>
+                  <th className={th}>Sevk tarihi</th>
+                  <th className={th}>Sözleşme</th>
+                  <th className={th}>Müşteri</th>
+                  <th className={th}>Depo</th>
+                  <th className={`${th} text-right`}>Miktar</th>
+                  <th className={th}>Plaka</th>
+                  <th className={th}>İrsaliye</th>
+                  <th className={th}>Durum</th>
+                  <th className={`${th} text-center w-14`}>PDF</th>
+                </tr>
+              </thead>
+              <tbody>
+                {shipments.map((s, index) => {
+                  const cancelled = s.Status === 'CANCELLED';
+                  return (
+                    <tr
+                      key={s.ShipmentId}
+                      className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'} ${cancelled ? 'opacity-60' : ''}`}
+                      onClick={() => openContract(s.ContractId)}
+                    >
+                      <td className={td}>
+                        <span className={`font-medium text-primary ${cancelled ? 'line-through' : ''}`}>{s.ShipmentNo}</span>
+                      </td>
+                      <td className={td}>{formatDate(s.ShipmentDate)}</td>
+                      <td className={td}>{s.ContractCode || `#${s.ContractId}`}</td>
+                      <td className={td}>{s.CustomerName || '—'}</td>
+                      <td className={td}>{s.WarehouseName || '—'}</td>
+                      <td className={`${td} text-right`}>{s.TotalQuantity ?? 0}</td>
+                      <td className={td}>{s.VehiclePlate || '—'}</td>
+                      <td className={td}>{s.ExternalWaybillNo || '—'}</td>
+                      <td className={td}>
+                        {cancelled ? (
+                          <span className="text-red-400" title={s.CancellationReason || undefined}>İptal</span>
+                        ) : (
+                          <span className="text-green-400">Aktif</span>
+                        )}
+                      </td>
+                      <td className={`${td} text-center`} onClick={(e) => e.stopPropagation()}>
+                        <button
+                          type="button"
+                          className="p-1 rounded hover:bg-background-secondary text-text-secondary hover:text-text-primary"
+                          onClick={() => void openPreview(s)}
+                          disabled={loadingId === s.ShipmentId}
+                          aria-label={`${s.ShipmentNo} PDF`}
+                        >
+                          <FilePdfIcon size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+      {pdfPreviewElement}
+    </div>
+  );
+}

@@ -11,6 +11,7 @@ import {
   ScrollIcon,
   ShieldCheckIcon,
   ShoppingCartIcon,
+  TruckIcon,
   UserIcon,
   UsersIcon,
   VaultIcon,
@@ -38,6 +39,7 @@ const UsersPage = lazy(() => import('./pages/UsersPage'));
 const AuditLogsPage = lazy(() => import('./pages/AuditLogsPage'));
 const RentalMovementReportPage = lazy(() => import('./pages/RentalMovementReportPage'));
 const StockReceiptsPage = lazy(() => import('./pages/StockReceiptsPage'));
+const ShipmentsPage = lazy(() => import('./pages/ShipmentsPage'));
 const ChecksPage = lazy(() => import('./pages/ChecksPage'));
 const CashPage = lazy(() => import('./pages/CashPage'));
 const CashAccountDetailPage = lazy(() => import('./pages/CashAccountDetailPage'));
@@ -236,6 +238,18 @@ export const appRoutes: RouteConfig[] = [
       permission: 'contracts_view',
     },
     element: guarded('contracts_view', <QuoteDetailPage />),
+  },
+  {
+    path: '/shipments',
+    meta: {
+      title: 'Sevkiyatlar',
+      description: 'Sevk bekleyen sözleşmeler ve sevkiyat fişleri',
+      icon: TruckIcon,
+      section: 'main',
+      menu: true,
+      permission: 'shipments_view',
+    },
+    element: guarded('shipments_view', <ShipmentsPage />),
   },
   {
     path: '/contracts',

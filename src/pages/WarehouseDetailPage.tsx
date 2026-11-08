@@ -691,6 +691,14 @@ export default function WarehouseDetailPage() {
                                 <span className="font-medium text-green-600 dark:text-green-500">
                                   {s.Quantity.toLocaleString('tr-TR')}
                                 </span>
+                                {(s.Reserved ?? 0) > 0 && (
+                                  <span
+                                    className="block text-[10px] text-amber-500"
+                                    title="Sevk bekleyen sözleşmelere rezerve; depoda ama yeni sözleşmeye verilemez"
+                                  >
+                                    {(s.Reserved ?? 0).toLocaleString('tr-TR')} rezerve
+                                  </span>
+                                )}
                               </td>
                             </tr>
                           );

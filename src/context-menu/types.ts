@@ -50,6 +50,8 @@ export interface ScaffoldRowTarget {
     ItemCode?: string;
     TotalStock: number;
     OnRent: number;
+    /** Sevk bekleyen sözleşmelere rezerve miktar */
+    Reserved?: number;
     UnitPrice?: number;
     MonthlyListPrice?: number;
     DeletedAt?: string | null;

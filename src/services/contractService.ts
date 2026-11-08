@@ -8,6 +8,7 @@ import {
   ContractReturn,
   ContractPriceCalculation,
   ContractStatusFilter,
+  DeliveryMode,
   MarkBilledPeriodRequest,
   MarkBilledPeriodResponse,
   ReturnItemResponse,
@@ -78,6 +79,11 @@ export interface CreateContractRequest {
   Currency?: 'TRY' | 'EUR';
   Type?: ContractQuoteType;
   Language?: 'TR' | 'EN';
+  /**
+   * Kiralamada teslim modu. SHIPMENT: stok rezerve edilir, kira ve depodan çıkış sevkiyat
+   * fişiyle başlar. Gönderilmezse backend IMMEDIATE (eski davranış) kabul eder.
+   */
+  DeliveryMode?: DeliveryMode;
   /** Opsiyonel. Bir kalemde WarehouseId yoksa bu depo kullanılır; depo stoğu düşümü için her detayda WarehouseId veya bu alan gerekir. */
   defaultWarehouseId?: number;
   details: CreateContractDetailPayload[];

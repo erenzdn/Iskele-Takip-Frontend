@@ -17,6 +17,7 @@ import {
   ContractReturn,
   ContractPriceCalculation,
   ContractTemplate,
+  DeliveryMode,
   Warehouse,
   resolveContractQuoteType,
   isContractActive,
@@ -61,6 +62,16 @@ import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import ContractBillingPlanPanel from '../contracts/ContractBillingPlanPanel';
 import ContractExtensionsPanel from '../contracts/ContractExtensionsPanel';
 import ContractInvoicesPanel from '../contracts/ContractInvoicesPanel';
+import ContractShipmentsPanel from '../contracts/ContractShipmentsPanel';
+import type { ContractTabState } from '../../utils/entityNavigation';
+import {
+  DELIVERY_MODE_LABELS,
+  getMaxReturnableQuantity,
+  getRentalStartIso,
+  getShipmentState,
+  isShipmentContract,
+  SHIPMENT_STATE_LABELS,
+} from '../../utils/shipment';
 import { addendumService } from '../../services/addendumService';
 import { buildAddendumExtrasDisplayGroups, buildContractItemDisplayEntries, getChangeTypeLabel, getLineAddendumBadgeLabel, type AddendumLineSource, type LineAddendumEvent } from '../../utils/addendum';
 import {
@@ -118,7 +129,7 @@ function findInventoryLineByReturnKey(
   return undefined;
 }
 
-type ContractDetailTab = 'info' | 'billing' | 'return' | 'returns' | 'history' | 'addenda' | 'addendum-extras' | 'extensions' | 'invoices';
+type ContractDetailTab = NonNullable<ContractTabState['initialTab']> | 'addendum-extras';
 
 interface ContractDetailModalProps {
   contract: Contract | null;
@@ -193,6 +204,8 @@ export default function ContractDetailModal({
   const [newSiteForm, setNewSiteForm] = useState<NewSiteFormState>(EMPTY_NEW_SITE_FORM);
   const [startDate, setStartDate] = useState(() => todayDateInput());
   const [plannedEndDate, setPlannedEndDate] = useState(() => addCalendarDays(todayDateInput(), 30));
+  /** Yeni kiralama sözleşmesinde teslim modu; varsayılan sevkiyat ile (kira sevkte başlar). */
+  const [deliveryMode, setDeliveryMode] = useState<DeliveryMode>('SHIPMENT');
   const [actualEndDate, setActualEndDate] = useState<string>('');
   const [contractItems, setContractItems] = useState<ContractLineItem[]>([]);
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -342,6 +355,11 @@ export default function ContractDetailModal({
   );
 
   const effectiveContract = fullContract ?? contract;
+  /** SHIPMENT modunda yalnızca sevk edilmiş (sahadaki) miktar; IMMEDIATE'te kiralanan − iade. */
+  const isShipmentMode = isShipmentContract(effectiveContract);
+  const shipmentState = effectiveContract ? getShipmentState(effectiveContract) : 'not_applicable';
+  const onSiteQty = (item: Pick<InventoryLineItem, 'RentedQuantity' | 'ReturnedQuantity' | 'ShippedQuantity'>) =>
+    getMaxReturnableQuantity(item, effectiveContract);
   const sourceQuoteId = (() => {
     const raw = effectiveContract?.SourceQuoteId ?? (effectiveContract as { sourceQuoteId?: number | null } | null)?.sourceQuoteId;
     if (raw == null) return null;
@@ -721,6 +739,7 @@ export default function ContractDetailModal({
             WarehouseName: wh?.WarehouseName ?? detail.WarehouseName ?? detail.warehouseName ?? '',
             RentedQuantity: detail.RentedQuantity ?? detail.rentedQuantity,
             ReturnedQuantity: detail.ReturnedQuantity ?? detail.returnedQuantity,
+            ShippedQuantity: Number(detail.ShippedQuantity ?? detail.shippedQuantity ?? 0) || 0,
             UnitPriceSnapshot: unitPriceSnapshot,
             PriceUnit: (detail.PriceUnit ?? detail.priceUnit ?? (resolveContractQuoteType(source as Contract) === 'SALE' ? 'EACH' : 'DAY')) as any,
             MonthlyPriceOverride:
@@ -1733,6 +1752,9 @@ export default function ContractDetailModal({
         if (isRentalContract && plannedEndDate) {
           requestBody.PlannedEndDate = new Date(plannedEndDate).toISOString();
         }
+        if (isRentalContract) {
+          requestBody.DeliveryMode = deliveryMode;
+        }
 
         const siteFields = buildSiteRequestFields(isNewSiteMode, newSiteForm, selectedSiteId);
         Object.assign(requestBody, siteFields);
@@ -2115,7 +2137,7 @@ export default function ContractDetailModal({
     const item = findInventoryLineByReturnKey(contractItems, returnDetailKey);
     if (!item) return;
     const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
-    const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+    const remainingOnRent = onSiteQty(item);
     if (qty <= 0 || qty > remainingOnRent) {
       toast.warning(`İade miktarı 1 ile ${remainingOnRent} arasında olmalıdır`);
       return;
@@ -2134,7 +2156,7 @@ export default function ContractDetailModal({
     const warehouseId = item.WarehouseId;
 
     const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
-    const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+    const remainingOnRent = onSiteQty(item);
     if (qty <= 0 || qty > remainingOnRent) {
       toast.warning(`İade miktarı 1 ile ${remainingOnRent} arasında olmalıdır`);
       return;
@@ -2205,7 +2227,7 @@ export default function ContractDetailModal({
 
   const openReturnForm = (item: InventoryLineItem, rowIndex: number) => {
     if (!isRentalContract) return;
-    const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+    const remainingOnRent = onSiteQty(item);
     if (remainingOnRent > 0) {
       setIsReturning(false); // Önceki istek takılı kaldıysa input disabled kalmasın
       setReturnDetailKey(inventoryLineRowKey(item, rowIndex));
@@ -2641,6 +2663,20 @@ export default function ContractDetailModal({
               Faturalama Planı
             </button>
           )}
+          {isShipmentMode && canViewContracts && (
+            <button
+              type="button"
+              onClick={() => setActiveTab('shipments')}
+              className={tabBtn(activeTab === 'shipments')}
+            >
+              Sevkiyatlar
+              {shipmentState === 'awaiting' || shipmentState === 'partial' ? (
+                <span className="ml-1 bg-amber-500/20 text-amber-300 text-[10px] px-1 py-0.5 rounded-full">
+                  {effectiveContract?.PendingShipmentQuantity ?? 0} bekliyor
+                </span>
+              ) : null}
+            </button>
+          )}
           {isRentalContract && active && (fullContract ?? contract) && (
             <button
               type="button"
@@ -2651,9 +2687,9 @@ export default function ContractDetailModal({
               className={tabBtn(activeTab === 'return')}
             >
               İade Al
-              {contractItems.some(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0) && (
+              {contractItems.some(i => i.kind === 'inventory' && onSiteQty(i) > 0) && (
                 <span className="ml-1 bg-green-600/30 text-green-400 text-[10px] px-1 py-0.5 rounded-full">
-                  {contractItems.filter(i => i.kind === 'inventory' && (i.RentedQuantity - i.ReturnedQuantity) > 0).length}
+                  {contractItems.filter(i => i.kind === 'inventory' && onSiteQty(i) > 0).length}
                 </span>
               )}
             </button>
@@ -2777,7 +2813,7 @@ export default function ContractDetailModal({
                 </thead>
                 <tbody>
                   {contractItems.filter((i) => i.kind === 'inventory').map((item, rowIndex) => {
-                    const remainingOnRent = item.RentedQuantity - item.ReturnedQuantity;
+                    const remainingOnRent = onSiteQty(item);
                     const rowKey = inventoryLineRowKey(item, rowIndex);
                     const isReturnFormOpen = returnDetailKey === rowKey;
                     const invItem = availableItems.find((i) => i.ItemId === item.ItemId) ?? item.Item ?? null;
@@ -3251,6 +3287,23 @@ export default function ContractDetailModal({
         </div>
       )}
 
+      {activeTab === 'shipments' && !isNew && effectiveContract?.ContractId && isShipmentMode && canViewContracts && (
+        <div className="min-h-0 flex-1 overflow-y-auto">
+          <ContractShipmentsPanel
+            contract={effectiveContract}
+            lines={contractItems.filter((i): i is InventoryLineItem => i.kind === 'inventory')}
+            canEdit={active}
+            onChanged={async () => {
+              try {
+                await refreshContract();
+              } catch (error) {
+                console.error('Refresh contract after shipment error:', error);
+              }
+            }}
+          />
+        </div>
+      )}
+
       {activeTab === 'invoices' && !isNew && contract?.ContractId && (canViewContracts || canManageInvoices) && (
         <div className="min-h-0 flex-1 overflow-y-auto">
           <ContractInvoicesPanel
@@ -3259,7 +3312,8 @@ export default function ContractDetailModal({
             contractCurrency={currency}
             /* `contract` listeden gelen ilk kopyadır; uzatma/güncelleme sonrası güncel olan fullContract'tır. */
             contractNetTotal={(fullContract ?? contract).NetTotal}
-            contractStartDate={(fullContract ?? contract).StartDate}
+            contractStartDate={getRentalStartIso(fullContract ?? contract) ?? (fullContract ?? contract).StartDate}
+            awaitingShipment={shipmentState === 'awaiting'}
             contractPlannedEndDate={(fullContract ?? contract).PlannedEndDate}
             isRentalContract={isRentalContract}
           />
@@ -3453,6 +3507,44 @@ export default function ContractDetailModal({
                       disabled={isReadOnly}
                       className={fieldInput}
                     />
+                  </div>
+                  <div className="min-w-[130px] w-[150px]">
+                    <label
+                      className={fieldLabel}
+                      title="Sevkiyat ile: sözleşme malzemeyi rezerve eder; kira ve depodan çıkış sevkiyat fişiyle başlar (parçalı sevkte her parti ayrı). Anında: stok ve kira sözleşmeyle başlar."
+                    >
+                      Teslim
+                    </label>
+                    {isNew ? (
+                      <select
+                        value={deliveryMode}
+                        onChange={(e) => setDeliveryMode(e.target.value as DeliveryMode)}
+                        disabled={isReadOnly}
+                        className={fieldInput}
+                      >
+                        <option value="SHIPMENT">{DELIVERY_MODE_LABELS.SHIPMENT}</option>
+                        <option value="IMMEDIATE">{DELIVERY_MODE_LABELS.IMMEDIATE}</option>
+                      </select>
+                    ) : (
+                      <div
+                        className={`${fieldInput} flex items-center gap-1 truncate`}
+                        title={
+                          isShipmentMode
+                            ? (effectiveContract?.FirstShipmentDate
+                                ? `Kira başlangıcı (ilk sevk): ${new Date(effectiveContract.FirstShipmentDate).toLocaleDateString('tr-TR')}`
+                                : 'Henüz sevk yok; kira ilk sevkiyat fişiyle başlar')
+                            : 'Stok ve kira sözleşmeyle başladı'
+                        }
+                      >
+                        {isShipmentMode ? (
+                          <span className={shipmentState === 'shipped' ? 'text-green-400' : 'text-amber-300'}>
+                            {shipmentState !== 'not_applicable' ? SHIPMENT_STATE_LABELS[shipmentState] : DELIVERY_MODE_LABELS.SHIPMENT}
+                          </span>
+                        ) : (
+                          <span className="text-text-secondary">{DELIVERY_MODE_LABELS.IMMEDIATE}</span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </>
               )}
@@ -3795,7 +3887,7 @@ export default function ContractDetailModal({
                       if (entry.kind === 'separator') return null;
 
                       const { item, isAddendumRow, addendumNo } = entry;
-                      const remainingOnRent = item.kind === 'inventory' ? item.RentedQuantity - item.ReturnedQuantity : 0;
+                      const remainingOnRent = item.kind === 'inventory' ? onSiteQty(item) : 0;
                       // İskonto / iade formu için ürün+depo anahtarı (iş kuralı)
                       const itemKey = item.kind === 'inventory' ? `${item.ItemId}-${item.WarehouseId}` : item.ClientId;
                       const rowKey =

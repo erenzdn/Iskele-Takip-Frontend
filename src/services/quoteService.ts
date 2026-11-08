@@ -102,6 +102,8 @@ export interface ConvertQuoteRequest {
   StartDate?: string;
   /** RENTAL dönüşümünde zorunlu (ISO 8601) */
   PlannedEndDate?: string;
+  /** RENTAL: teslim modu. SHIPMENT'ta stok rezerve edilir; kira sevkiyat fişiyle başlar. */
+  DeliveryMode?: 'IMMEDIATE' | 'SHIPMENT';
 }
 
 // POST /api/quotes/:id/clone yaniti GET /api/quotes/:id ile ayni formatta yeni teklifi
@@ -392,6 +394,9 @@ export const quoteService = {
     }
     if (options.PlannedEndDate != null && String(options.PlannedEndDate).trim()) {
       body.PlannedEndDate = options.PlannedEndDate;
+    }
+    if (options.DeliveryMode) {
+      body.DeliveryMode = options.DeliveryMode;
     }
     return apiClient.post<ConvertQuoteResponse>(`/quotes/${id}/convert`, body);
   },

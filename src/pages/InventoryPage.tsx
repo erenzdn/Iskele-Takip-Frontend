@@ -198,7 +198,7 @@ export default function InventoryPage() {
         activeSubCategories.length === 0 ||
         item.SubCategories?.some((sc) => activeSubCategories.includes(sc.SubCategoryName));
 
-      const availableStock = item.TotalStock - item.OnRent;
+      const availableStock = item.TotalStock - item.OnRent - (item.Reserved ?? 0);
       const matchesMin = minAvailable === '' || availableStock >= minAvailable;
       const matchesMax = maxAvailable === '' || availableStock <= maxAvailable;
 
@@ -263,6 +263,7 @@ export default function InventoryPage() {
           ItemCode: item.ItemCode,
           TotalStock: item.TotalStock,
           OnRent: item.OnRent,
+          Reserved: item.Reserved,
           UnitPrice: item.UnitPrice,
           MonthlyListPrice: item.MonthlyListPrice,
           DeletedAt: item.DeletedAt,
@@ -281,7 +282,7 @@ export default function InventoryPage() {
   };
 
   const printInventoryItemPdf = (target: ScaffoldRowTarget) => {
-    const availableStock = target.rawData.TotalStock - target.rawData.OnRent;
+    const availableStock = target.rawData.TotalStock - target.rawData.OnRent - (target.rawData.Reserved ?? 0);
     const opened = window.open('', '_blank', 'noopener,noreferrer,width=960,height=700');
     if (!opened) {
       toast.warning('PDF penceresi acilamadi. Tarayici popup ayarlarini kontrol edin.');
@@ -307,6 +308,7 @@ export default function InventoryPage() {
             <tr><th>Kod</th><td>${target.rawData.ItemCode ?? '-'}</td></tr>
             <tr><th>Toplam Stok</th><td>${target.rawData.TotalStock}</td></tr>
             <tr><th>Kirada</th><td>${target.rawData.OnRent}</td></tr>
+            <tr><th>Rezerve (sevk bekleyen)</th><td>${target.rawData.Reserved ?? 0}</td></tr>
             <tr><th>Musait</th><td>${availableStock}</td></tr>
             <tr><th>Birim Fiyat</th><td>${target.rawData.UnitPrice ?? '-'}</td></tr>
             <tr><th>Aylik Liste</th><td>${target.rawData.MonthlyListPrice ?? '-'}</td></tr>
@@ -934,7 +936,7 @@ export default function InventoryPage() {
               <tbody>
                 {filteredInventory.map((item, index) => {
                   const archived = isInventoryArchived(item);
-                  const availableStock = item.TotalStock - item.OnRent;
+                  const availableStock = item.TotalStock - item.OnRent - (item.Reserved ?? 0);
                   const stockPercentage = item.TotalStock > 0 ? (availableStock / item.TotalStock) * 100 : 0;
                   let statusBadge: React.ReactNode;
                   const badgeClass = 'inline-block px-2 py-0.5 rounded text-xs font-medium';
@@ -1030,7 +1032,10 @@ export default function InventoryPage() {
                         </td>
                       ) : null}
                       {isInventoryColVisible('status') ? (
-                        <td className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0 overflow-hidden">
+                        <td
+                          className="py-0 px-1.5 text-center align-middle border-r border-background-border/60 last:border-r-0 overflow-hidden"
+                          title={`Toplam ${item.TotalStock} · Kirada ${item.OnRent} · Rezerve (sevk bekleyen) ${item.Reserved ?? 0} · Müsait ${availableStock}`}
+                        >
                           {statusBadge}
                         </td>
                       ) : null}
