@@ -1,10 +1,13 @@
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
+import { acknowledgeTabSaved } from '../../store/tabStore';
+import { invalidateData } from '../../store/dataInvalidationStore';
+import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
 import { ClipboardIcon, CopySimpleIcon, DotsSixVerticalIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
-  Contract,
   resolveContractQuoteType,
   Quote,
   QuoteTemplate,
@@ -19,12 +22,12 @@ import {
   isQuoteConverted,
 } from '../../models';
 import { quoteService, WarehouseAssignment } from '../../services/quoteService';
-import { contractService } from '../../services/contractService';
 import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { customerService } from '../../services/customerService';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
-import { clampDiscountRange, commitQuotePricingDrafts, discountPercentFromNet, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
+import { clampDiscountRange, commitQuotePricingDrafts, discountPercentFromNet, formatDiscountPercent, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
+import { computePriceBreakdown, solveUniformDiscountForTarget, type PriceBreakdown, type TargetTotalKind } from '../../utils/quoteTargetTotal';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -43,8 +46,6 @@ import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
 import CustomerDetailModal from './CustomerDetailModal';
 import SiteCreateModal from './SiteCreateModal';
-import ContractDetailModal from './ContractDetailModal';
-import InventoryDetailModal from './InventoryDetailModal';
 import {
   applyCreatedSiteId,
   buildSiteRequestFields,
@@ -61,13 +62,7 @@ import {
   hydrateQuotePriceMetadata,
 } from '../../utils/linePriceMetadata';
 import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
-import {
-  copyQuoteLineDiscounts,
-  extractContractDetails,
-  sortByQuoteLineOrder,
-  sortByStoredLineOrder,
-  withContractDetails,
-} from '../../utils/lineItemOrder';
+import { sortByStoredLineOrder } from '../../utils/lineItemOrder';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -98,6 +93,8 @@ interface QuoteDetailModalProps {
    * iş mantığını etkilemez.
    */
   isClonedDraft?: boolean;
+  presentation?: 'modal' | 'page';
+  onCreated?: (quoteId: number) => void;
 }
 
 function unitPriceForQuoteInventory(
@@ -130,15 +127,18 @@ export default function QuoteDetailModal({
   onQuoteCloned,
   startInEditMode = false,
   isClonedDraft = false,
+  presentation = 'modal',
+  onCreated,
 }: QuoteDetailModalProps) {
+  const navigate = useNavigate();
+  const isPage = presentation === 'page';
+  const portalTarget = usePortalTarget();
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
   const [showCloneConfirm, setShowCloneConfirm] = useState(false);
   const [isCloning, setIsCloning] = useState(false);
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [availableItems, setAvailableItems] = useState<Inventory[]>([]);
-  const [inventoryCategories, setInventoryCategories] = useState<MaterialCategory[]>([]);
-  const [selectedInventoryForDetail, setSelectedInventoryForDetail] = useState<Inventory | null>(null);
-  const [showInventoryCreateModal, setShowInventoryCreateModal] = useState(false);
+  const [, setInventoryCategories] = useState<MaterialCategory[]>([]);
   const [selectedCustomerId, setSelectedCustomerId] = useState<number | ''>('');
   const [selectedAuthorizedContactId, setSelectedAuthorizedContactId] = useState<number | ''>('');
   const [authorizedContacts, setAuthorizedContacts] = useState<NonNullable<Customer['AuthorizedContacts']>>([]);
@@ -153,6 +153,8 @@ export default function QuoteDetailModal({
   const [plannedEndDate, setPlannedEndDate] = useState('');
   /** RENTAL: kiralama süresi (gün), min 1 */
   const [rentalDurationDays, setRentalDurationDays] = useState(30);
+  /** Süre (gün) taslak yazımı; boşaltınca 1'e zıplamasın ve metin rahat seçilsin diye. */
+  const [rentalDurationDaysInput, setRentalDurationDaysInput] = useState<string | null>(null);
   const [quoteItems, setQuoteItems] = useState<QuoteLineItem[]>([]);
   const [status, setStatus] = useState<QuoteStatus>(QuoteStatus.Pending);
   const [subject, setSubject] = useState('');
@@ -160,6 +162,7 @@ export default function QuoteDetailModal({
   const [isBusy, setIsBusy] = useState(false);
   const [persistedQuoteId, setPersistedQuoteId] = useState<number | null>(quote?.QuoteId ?? null);
   const [isDirty, setIsDirty] = useState(false);
+  useTabDirty(isPage && isDirty);
   const skipDirtyRef = useRef(true);
   const [showUnsavedConfirm, setShowUnsavedConfirm] = useState(false);
 
@@ -208,6 +211,12 @@ export default function QuoteDetailModal({
   /** İskonto % taslak yazımı (boşaltınca netin brüte zıplamasın diye). */
   const [iskontoInputs, setIskontoInputs] = useState<Record<string, string>>({});
   const [globalIskontoInput, setGlobalIskontoInput] = useState<string | null>(null);
+  /** Özetteki İskontolu / Genel Toplam hedef tutar taslağı; uygulanınca ana iskonto tüm satırlara yazılır. */
+  const [targetTotalInputs, setTargetTotalInputs] = useState<Record<TargetTotalKind, string | null>>({
+    net: null,
+    grand: null,
+  });
+  const cancelTargetTotalRef = useRef(false);
   const [vatRate, setVatRate] = useState<number>(20);
   /** Kiralama alt toplamları varsayılan 30 gün; true olunca planlanan sürenin tam tutarı açılır. */
   const [showFullQuotePrice, setShowFullQuotePrice] = useState(false);
@@ -247,30 +256,24 @@ export default function QuoteDetailModal({
   const [isCreatingPackage, setIsCreatingPackage] = useState(false);
   const [packagesLoadError, setPackagesLoadError] = useState<string | null>(null);
   const [fullQuote, setFullQuote] = useState<Quote | null>(null);
-  const [isContractModalOpen, setIsContractModalOpen] = useState(false);
-  const [convertedContract, setConvertedContract] = useState<Contract | null>(null);
-  const [isOpeningConvertedContract, setIsOpeningConvertedContract] = useState(false);
   const [activeQuoteGridCell, setActiveQuoteGridCell] = useState<{ row: number; col: 2 | 3 | 4 | 5 | 6 } | null>(null);
   const quoteGridRefs = useRef<Map<string, HTMLElement>>(new Map());
   const [dragItemIndex, setDragItemIndex] = useState<number | null>(null);
   const [dragOverItemIndex, setDragOverItemIndex] = useState<number | null>(null);
   const dragItemIndexRef = useRef<number | null>(null);
   const activeQuote = fullQuote ?? quote;
+  useTabTitle(
+    isPage
+      ? isNew
+        ? quoteCode.trim() || 'Yeni Teklif'
+        : quoteCode.trim() || activeQuote?.QuoteCode || activeQuote?.CustomerName || 'Teklif'
+      : null
+  );
   const converted = Boolean(activeQuote && isQuoteConverted(activeQuote));
 
-  const openConvertedContract = async () => {
+  const openConvertedContract = () => {
     if (!activeQuote?.ConvertedContractId) return;
-    try {
-      setIsOpeningConvertedContract(true);
-      const c = await contractService.getByIdAsync(activeQuote.ConvertedContractId);
-      setConvertedContract(c);
-      setIsContractModalOpen(true);
-    } catch (error) {
-      console.error('Open converted contract error:', error);
-      toast.error(getApiErrorMessage(error) || 'Sözleşme açılamadı');
-    } finally {
-      setIsOpeningConvertedContract(false);
-    }
+    navigate(`/contracts/${activeQuote.ConvertedContractId}`);
   };
 
   const formatAuthorizedContactLabel = (contact: NonNullable<Customer['AuthorizedContacts']>[number]) => {
@@ -475,17 +478,6 @@ export default function QuoteDetailModal({
     };
   }, [quote?.QuoteId, isNew]);
 
-  const refreshQuoteDetail = useCallback(async () => {
-    if (!quote?.QuoteId || isNew) return;
-    try {
-      const detail = await quoteService.getByIdAsync(quote.QuoteId);
-      setFullQuote(detail);
-    } catch (error) {
-      console.error('Refresh quote error:', error);
-    }
-    await onDataChanged?.();
-  }, [quote?.QuoteId, isNew, onDataChanged]);
-
   useEffect(() => {
     if (converted) {
       setIsReadOnly(true);
@@ -548,6 +540,7 @@ export default function QuoteDetailModal({
             setRentalDurationDays(30);
           }
         }
+        setRentalDurationDaysInput(null);
       }
       setStatus(source.Status);
       setRejectionReason(String((source as Quote).RejectionReason ?? '').trim());
@@ -632,7 +625,7 @@ export default function QuoteDetailModal({
                 : it.OverrideUnitPrice;
             if (candidate != null && Number.isFinite(candidate)) {
               const { masked } = normalizeMaskedDecimalTR(String(candidate), {
-                maxIntDigits: 9,
+                maxIntDigits: 12,
                 maxFracDigits: 2,
               });
               next[it.ItemId] = masked;
@@ -720,13 +713,98 @@ export default function QuoteDetailModal({
     return compact.replace('.', ',');
   };
 
+  /**
+   * onChange için canlı formatlama - kullanıcı yazarken binlik ayırıcıları otomatik ekler
+   * Kullanıcının yazmaya devam etmesini engellemez
+   */
+  const normalizeMaskedDecimalTR_OnChange = (
+    raw: string,
+    opts?: { maxIntDigits?: number; maxFracDigits?: number }
+  ): string => {
+    const maxIntDigits = opts?.maxIntDigits ?? 15;
+    const maxFracDigits = opts?.maxFracDigits ?? 2;
+    
+    // Para birimi sembolleri ve harfleri temizle
+    let cleaned = String(raw ?? '')
+      .replace(/[₺€$£¥]/g, '')
+      .replace(/[a-zA-ZğüşöçıİĞÜŞÖÇ]/g, '')
+      .replace(/\.{2,}/g, '.')
+      .replace(/,{2,}/g, ',');
+    
+    // Virgül sayısını kontrol et
+    const commaCount = (cleaned.match(/,/g) || []).length;
+    
+    // Sadece 1 tane ondalık ayırıcı olabilir (virgül)
+    if (commaCount > 1) {
+      // Son virgülü tut, diğerlerini kaldır
+      const lastCommaIdx = cleaned.lastIndexOf(',');
+      cleaned = cleaned.slice(0, lastCommaIdx).replace(/,/g, '') + cleaned.slice(lastCommaIdx);
+    }
+    
+    // Virgül varsa ondalık ayırıcı olarak kullan
+    const decimalSep = cleaned.includes(',') ? ',' : null;
+    
+    let intPart = '';
+    let fracPart = '';
+    
+    if (decimalSep) {
+      const idx = cleaned.lastIndexOf(decimalSep);
+      intPart = cleaned.slice(0, idx);
+      fracPart = cleaned.slice(idx + 1);
+      
+      // Ondalık kısmı limitini uygula
+      fracPart = fracPart.replace(/\D/g, '').slice(0, maxFracDigits);
+      
+      // Tam sayı kısmından sadece rakamları al
+      const intDigits = intPart.replace(/\D/g, '');
+      
+      if (intDigits.length > maxIntDigits) {
+        return cleaned; // Limit aşıldı, değişiklik yapma
+      }
+      
+      // Binlik ayırıcıları ekle
+      const formattedInt = formatThousandsTR(intDigits);
+      
+      return formattedInt + decimalSep + fracPart;
+    } else {
+      // Virgül yok, sadece rakamları al
+      const intDigits = cleaned.replace(/\D/g, '');
+      
+      if (intDigits.length > maxIntDigits) {
+        const limitedDigits = intDigits.slice(0, maxIntDigits);
+        return formatThousandsTR(limitedDigits);
+      }
+      
+      // Binlik ayırıcıları ekle
+      return formatThousandsTR(intDigits);
+    }
+  };
+
+  /**
+   * Türkçe ondalık formatı ile sayı maskesi oluşturur.
+   * - Nokta (.) binlik ayıracı olarak kullanılır: 1.000.000
+   * - Virgül (,) ondalık ayıracı olarak kullanılır: 1.000.000,50
+   * - Otomatik olarak binlik ayıracı ekler
+   * - Para birimi sembolleri (₺, €, $) ve harfler (TL, EUR, USD) otomatik temizlenir
+   * - maxIntDigits: tam sayı kısmı için maksimum basamak (varsayılan: 15)
+   * - maxFracDigits: ondalık kısmı için maksimum basamak (varsayılan: 2)
+   */
   const normalizeMaskedDecimalTR = (
     raw: string,
     opts?: { maxIntDigits?: number; maxFracDigits?: number }
   ): { masked: string; numeric: number | undefined | null } => {
-    const maxIntDigits = opts?.maxIntDigits ?? 9;
+    const maxIntDigits = opts?.maxIntDigits ?? 15;
     const maxFracDigits = opts?.maxFracDigits ?? 2;
-    const s = coerceDecimalDotToComma(String(raw ?? '').trim());
+    
+    // Para birimi sembolleri ve harfleri temizle, sadece rakam, nokta, virgül ve boşluk kalsın
+    let cleaned = String(raw ?? '').trim()
+      .replace(/[₺€$£¥]/g, '')           // Para birimi sembolleri
+      .replace(/[a-zA-ZğüşöçıİĞÜŞÖÇ]/g, '') // Harfler (Türkçe dahil)
+      .replace(/\.{2,}/g, '.')           // Ardışık noktalar
+      .replace(/,{2,}/g, ',')            // Ardışık virgüller
+      .trim();
+    
+    const s = coerceDecimalDotToComma(cleaned);
     if (!s) return { masked: '', numeric: undefined };
 
     // TR gösterimde '.' binlik, ',' ondalık olsun.
@@ -748,11 +826,15 @@ export default function QuoteDetailModal({
     const fracDigits = limitDigits(fracPart.replace(/\D/g, ''), maxFracDigits);
 
     const maskedInt = formatThousandsTR(intDigits);
+    
+    // Eğer sadece ondalık kısım varsa (örn: ",50") başına 0 ekle
+    const displayInt = maskedInt || (fracDigits || hasTrailingDecimalSep ? '0' : '');
+    
     const masked = fracDigits
-      ? `${maskedInt},${fracDigits}`
-      : hasTrailingDecimalSep && maskedInt
-        ? `${maskedInt},`
-        : maskedInt;
+      ? `${displayInt},${fracDigits}`
+      : hasTrailingDecimalSep && displayInt
+        ? `${displayInt},`
+        : displayInt;
 
     const numeric = parsePriceInput(masked);
     return { masked, numeric };
@@ -1050,16 +1132,14 @@ export default function QuoteDetailModal({
   const getLineNetTotal = (item: QuoteLineItem) =>
     lineNetFromGross(getLineTotal(item, displayPricingDays), getRowDiscountPercent(item));
 
-  const buildPriceBreakdown = (days: number) => {
-    const subtotal = quoteItems.reduce((sum, item) => sum + getLineTotal(item, days), 0);
-    const discountAmount = quoteItems.reduce((sum, item) => {
-      return sum + lineDiscountAmount(getLineTotal(item, days), getRowDiscountPercent(item));
-    }, 0);
-    const discountedTotal = subtotal - discountAmount;
-    const vatAmount = discountedTotal * (vatRate / 100);
-    const grandTotal = discountedTotal + vatAmount;
-    return { subtotal, discountAmount, discountedTotal, vatAmount, grandTotal };
-  };
+  const buildPriceBreakdown = (days: number) =>
+    computePriceBreakdown(
+      quoteItems.map((item) => ({
+        gross: getLineTotal(item, days),
+        discountPercent: getRowDiscountPercent(item),
+      })),
+      vatRate
+    );
 
   const monthlyPriceBreakdown = buildPriceBreakdown(MONTHLY_PRICING_DAYS);
   const fullQuotePriceBreakdown = buildPriceBreakdown(billedDays);
@@ -1319,6 +1399,75 @@ export default function QuoteDetailModal({
     setLineNetInputs({});
     setIskontoInputs({});
     setGlobalIskontoInput(null);
+    setTargetTotalInputs({ net: null, grand: null });
+  };
+
+  const parseTargetTotalInput = (raw: string | null): number | null => {
+    if (raw == null) return null;
+    const { numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 15, maxFracDigits: 2 });
+    return numeric == null || !Number.isFinite(numeric) ? null : numeric;
+  };
+
+  /**
+   * Hedef toplam taslağını çözer. Tutar boş/geçersizse veya ekrandaki toplamla aynıysa null döner;
+   * böylece alana girip çıkmak satır bazlı özel iskontoları ezmez.
+   */
+  const resolveTargetTotalDraft = (kind: TargetTotalKind, raw: string | null) => {
+    const target = parseTargetTotalInput(raw);
+    if (target == null || quoteItems.length === 0) return null;
+    const current =
+      kind === 'net' ? displayedPriceBreakdown.discountedTotal : displayedPriceBreakdown.grandTotal;
+    if (roundTo(target, 2) === roundTo(current, 2)) return null;
+    return solveUniformDiscountForTarget({
+      grossList: quoteItems.map((item) => getLineTotal(item, displayPricingDays)),
+      vatRate,
+      target,
+      kind,
+    });
+  };
+
+  const applyTargetTotal = (kind: TargetTotalKind) => {
+    const raw = targetTotalInputs[kind];
+    const clearDraft = () => setTargetTotalInputs((prev) => ({ ...prev, [kind]: null }));
+    if (raw == null) return;
+    if (raw.trim() !== '' && parseTargetTotalInput(raw) == null) {
+      toast.warning('Geçerli bir tutar girin.');
+      clearDraft();
+      return;
+    }
+    const result = resolveTargetTotalDraft(kind, raw);
+    if (!result) {
+      clearDraft();
+      return;
+    }
+    const label = kind === 'net' ? 'İskontolu tutar' : 'Genel toplam';
+    switch (result.reason) {
+      case 'no_lines':
+        clearDraft();
+        return;
+      case 'gross_zero':
+        toast.warning('Satır tutarları 0 iken iskonto hesaplanamaz.');
+        clearDraft();
+        return;
+      case 'invalid_target':
+        toast.warning('Geçerli bir tutar girin.');
+        clearDraft();
+        return;
+      case 'target_above_gross':
+        toast.warning(`${label} iskontosuz tutarı aşamaz; iskonto %0 yapıldı.`);
+        break;
+      case 'full_discount':
+        toast.warning('Tutar 0 girildi; tüm satırlara %100 iskonto uygulandı.');
+        break;
+      case 'rounding':
+        toast.info(
+          `Kuruş yuvarlaması nedeniyle ${label.toLocaleLowerCase('tr-TR')} ${formatMoney(result.achievedTotal, currency)} oldu.`
+        );
+        break;
+      default:
+        break;
+    }
+    handleGlobalIskontoChange(result.discountPercent);
   };
 
   const currentUser = useAuthStore((s) => s.user);
@@ -1326,7 +1475,6 @@ export default function QuoteDetailModal({
   const canDeleteQuote = Boolean(currentUser?.permissions?.includes('quotes_delete'));
   const canCancelContract = Boolean(currentUser?.permissions?.includes('contracts_delete'));
 
-  const isDraftRecord = isNew || isQuoteDraftStatus(status);
   const hasDraftContent = hasMeaningfulQuoteDraftContent({
     customerId: selectedCustomerId === '' ? null : Number(selectedCustomerId),
     itemCount: quoteItems.length,
@@ -1335,19 +1483,36 @@ export default function QuoteDetailModal({
     quoteCode,
   });
 
-  const getCommittedPricing = () =>
-    commitQuotePricingDrafts({
+  const getCommittedPricing = () => {
+    const pendingTarget =
+      resolveTargetTotalDraft('grand', targetTotalInputs.grand) ??
+      resolveTargetTotalDraft('net', targetTotalInputs.net);
+    const pendingTargetPercent =
+      pendingTarget && pendingTarget.reason !== 'gross_zero' && pendingTarget.reason !== 'invalid_target'
+        ? pendingTarget.discountPercent
+        : null;
+    return commitQuotePricingDrafts({
       items: quoteItems,
       lineKey: lineNetInputKey,
       getGross: (item) => getLineTotal(item, displayPricingDays),
-      drafts: {
-        itemIskonto,
-        iskontoInputs,
-        lineNetInputs,
-        globalIskontoInput,
-        headerIskonto: iskonto,
-      },
+      drafts:
+        pendingTargetPercent != null
+          ? {
+              itemIskonto: {},
+              iskontoInputs: {},
+              lineNetInputs: {},
+              globalIskontoInput: null,
+              headerIskonto: pendingTargetPercent,
+            }
+          : {
+              itemIskonto,
+              iskontoInputs,
+              lineNetInputs,
+              globalIskontoInput,
+              headerIskonto: iskonto,
+            },
     });
+  };
 
   const buildQuoteDetailsPayload = (lineIskontoMap?: Record<string, number>) => {
     const discounts = lineIskontoMap ?? getCommittedPricing().lineIskonto;
@@ -1427,6 +1592,11 @@ export default function QuoteDetailModal({
             resetNewSiteMode,
           });
         }
+        if (isPage && onCreated) {
+          invalidateData('quotes');
+          onCreated(quoteId);
+          return quoteId;
+        }
       } else {
         const updateResult = await quoteService.updateAsync(quoteId, body as any);
         if (updateResult.CreatedSiteId && selectedCustomerId) {
@@ -1457,7 +1627,7 @@ export default function QuoteDetailModal({
 
   const requestClose = () => {
     if (isBusy) return;
-    if (isReadOnly || converted) {
+    if (isPage || isReadOnly || converted) {
       onClose();
       return;
     }
@@ -1467,13 +1637,7 @@ export default function QuoteDetailModal({
   const handleCloseConfirm = async () => {
     if (isBusy) return;
     setShowUnsavedConfirm(false);
-    if (isDraftRecord && isDirty && hasDraftContent) {
-      const savedId = await persistDraft({ silent: true });
-      if (!savedId) return;
-      toast.info('Taslak kaydedildi. Listeden devam edebilirsiniz.');
-      onClose();
-      return;
-    }
+    // Taslaklar dahil tüm durumlar için kaydetmeden çık
     setIsDirty(false);
     onClose();
   };
@@ -1485,7 +1649,11 @@ export default function QuoteDetailModal({
       return;
     }
     const savedId = await persistDraft();
-    if (savedId) onClose();
+    if (savedId && !isPage) onClose();
+    if (savedId && isPage) {
+      acknowledgeTabSaved();
+      setIsDirty(false);
+    }
   };
 
   const openProductPicker = async () => {
@@ -1501,7 +1669,11 @@ export default function QuoteDetailModal({
   const handleSave = async (forceStatus?: QuoteStatus) => {
     if (!forceStatus && !isNew && isQuoteDraftStatus(status)) {
       const savedId = await persistDraft();
-      if (savedId) onClose();
+      if (savedId && !isPage) onClose();
+      if (savedId && isPage) {
+        acknowledgeTabSaved();
+        setIsDirty(false);
+      }
       return;
     }
 
@@ -1616,7 +1788,12 @@ export default function QuoteDetailModal({
           });
         }
         toast.success(`Teklif başarıyla oluşturuldu! (ID: ${result.QuoteId})`);
+        invalidateData('quotes');
         await onDataChanged?.();
+        if (isPage && onCreated) {
+          onCreated(result.QuoteId);
+          return;
+        }
         onClose();
         return;
         }
@@ -2106,28 +2283,13 @@ export default function QuoteDetailModal({
         toast.warning(result.warnings.join('\n'));
       }
       toast.success('Teklif sözleşmeye dönüştürüldü.');
+      invalidateData('quotes');
+      invalidateData('contracts');
       if (onConverted) {
         await onConverted(result.ContractId);
         return;
       }
-      const updatedQuote = await quoteService.getByIdAsync(activeQuote.QuoteId);
-      setFullQuote(updatedQuote);
-      await onDataChanged?.();
-      try {
-        const c = await contractService.getByIdAsync(result.ContractId);
-        const quoteLinesWithDiscount = quoteItems.map((item) => ({
-          ...item,
-          Iskonto: committedLines[lineNetInputKey(item)] ?? getRowDiscountPercent(item),
-        }));
-        const ordered = copyQuoteLineDiscounts(
-          sortByQuoteLineOrder(extractContractDetails(c), quoteLinesWithDiscount),
-          quoteLinesWithDiscount
-        );
-        setConvertedContract(withContractDetails(c, ordered));
-        setIsContractModalOpen(true);
-      } catch (openError) {
-        console.error('Open contract after convert error:', openError);
-      }
+      navigate(`/contracts/${result.ContractId}`);
     } catch (error: unknown) {
       console.error('Convert quote error:', error);
       const msg = getApiErrorMessage(error);
@@ -2149,15 +2311,54 @@ export default function QuoteDetailModal({
     return formatMoney(amount, currency);
   };
 
+  const renderTargetTotalInput = (kind: TargetTotalKind, value: number, className: string) => {
+    const label = kind === 'net' ? 'İskontolu tutar (KDV hariç)' : 'Genel toplam (KDV dahil)';
+    return (
+      <span className="inline-flex items-center gap-1">
+        <input
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          value={targetTotalInputs[kind] ?? formatNetPriceInput(value)}
+          onFocus={(e) => e.currentTarget.select()}
+          onChange={(e) => {
+            const cleaned = normalizeMaskedDecimalTR_OnChange(e.target.value, {
+              maxIntDigits: 15,
+              maxFracDigits: 2,
+            });
+            setTargetTotalInputs((prev) => ({ ...prev, [kind]: cleaned }));
+          }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.currentTarget.blur();
+            } else if (e.key === 'Escape') {
+              e.preventDefault();
+              e.stopPropagation();
+              cancelTargetTotalRef.current = true;
+              setTargetTotalInputs((prev) => ({ ...prev, [kind]: null }));
+              e.currentTarget.blur();
+            }
+          }}
+          onBlur={() => {
+            if (cancelTargetTotalRef.current) {
+              cancelTargetTotalRef.current = false;
+              return;
+            }
+            applyTargetTotal(kind);
+          }}
+          className={`input py-0.5 text-right tabular-nums w-[130px] ${className}`}
+          aria-label={label}
+          title={`${label} — değiştirirseniz ana iskonto otomatik hesaplanır ve tüm satırlara aynı oran uygulanır`}
+        />
+        <span className="text-[11px] text-text-secondary">{currency}</span>
+      </span>
+    );
+  };
+
   const renderPriceBreakdownFields = (
-    breakdown: {
-      subtotal: number;
-      discountAmount: number;
-      discountedTotal: number;
-      vatAmount: number;
-      grandTotal: number;
-    },
-    options?: { compactGrand?: boolean }
+    breakdown: PriceBreakdown,
+    options?: { compactGrand?: boolean; editableTotals?: boolean }
   ) => (
     <>
       <div>
@@ -2170,7 +2371,11 @@ export default function QuoteDetailModal({
       </div>
       <div>
         <span className="text-[11px] text-text-secondary mr-1.5">İskontolu</span>
-        <span className="font-semibold text-text-primary">{formatCurrency(breakdown.discountedTotal)}</span>
+        {options?.editableTotals ? (
+          renderTargetTotalInput('net', breakdown.discountedTotal, 'text-sm font-semibold text-text-primary')
+        ) : (
+          <span className="font-semibold text-text-primary">{formatCurrency(breakdown.discountedTotal)}</span>
+        )}
       </div>
       <div>
         <span className="text-[11px] text-text-secondary mr-1.5">KDV ({vatRate || 0}%)</span>
@@ -2178,9 +2383,13 @@ export default function QuoteDetailModal({
       </div>
       <div>
         <span className="text-[11px] text-text-secondary mr-1.5">Genel Toplam</span>
-        <span className={options?.compactGrand ? 'font-semibold text-green-400' : 'text-lg font-bold text-green-400'}>
-          {formatCurrency(breakdown.grandTotal)}
-        </span>
+        {options?.editableTotals ? (
+          renderTargetTotalInput('grand', breakdown.grandTotal, 'text-base font-bold text-green-400')
+        ) : (
+          <span className={options?.compactGrand ? 'font-semibold text-green-400' : 'text-lg font-bold text-green-400'}>
+            {formatCurrency(breakdown.grandTotal)}
+          </span>
+        )}
       </div>
     </>
   );
@@ -2483,7 +2692,7 @@ export default function QuoteDetailModal({
   const fieldInput = 'input w-full text-xs py-1';
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden">
+    <div className={isPage ? 'flex h-full min-h-0 flex-col overflow-hidden bg-background-main' : 'fixed inset-0 z-50 flex flex-col bg-background-main overflow-hidden'}>
       <header className="shrink-0 flex items-center justify-between px-3 py-1 bg-background-panel border-b border-background-border gap-2">
         <div className="flex items-center gap-1.5 min-w-0 flex-wrap">
           <h1 className="text-sm font-semibold text-text-primary tracking-tight truncate">
@@ -2544,10 +2753,10 @@ export default function QuoteDetailModal({
           <button
             type="button"
             onClick={openConvertedContract}
-            disabled={isBusy || isOpeningConvertedContract}
+            disabled={isBusy}
             className={`btn-primary ml-auto ${compactBtn}`}
           >
-            {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+            Sözleşmeye git
           </button>
         </div>
       )}
@@ -2711,17 +2920,33 @@ export default function QuoteDetailModal({
                 <div className="min-w-[90px] w-[110px]">
                   <label className={fieldLabel}>Süre (gün) *</label>
                   <input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={rentalDurationDays}
+                    type="text"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    autoComplete="off"
+                    value={rentalDurationDaysInput ?? String(rentalDurationDays)}
                     onChange={(e) => {
-                      const v = Math.floor(Number(e.target.value));
+                      const raw = e.target.value.replace(/\D/g, '').slice(0, 5);
+                      setRentalDurationDaysInput(raw);
+                      const v = Math.floor(Number(raw));
+                      if (Number.isFinite(v) && v >= 1) {
+                        setRentalDurationDays(v);
+                      }
+                    }}
+                    onFocus={(e) => {
+                      const el = e.currentTarget;
+                      el.select();
+                      el.addEventListener('mouseup', (ev) => ev.preventDefault(), { once: true });
+                    }}
+                    onBlur={(e) => {
+                      const v = Math.floor(Number(e.currentTarget.value.replace(/\D/g, '')));
                       setRentalDurationDays(Number.isFinite(v) && v >= 1 ? v : 1);
+                      setRentalDurationDaysInput(null);
                     }}
                     disabled={isReadOnly}
                     className={fieldInput}
                     title="Fiyatlandırma en az 30 gün üzerinden hesaplanır. PDF'de tarih yoksa 'Belirlenecek' görünebilir."
+                    aria-label="Kiralama süresi gün"
                   />
                 </div>
               )}
@@ -2731,7 +2956,7 @@ export default function QuoteDetailModal({
                 <input
                   type="text"
                   inputMode="decimal"
-                  value={globalIskontoInput ?? String(Number(iskonto) || 0).replace('.', ',')}
+                  value={globalIskontoInput ?? formatDiscountPercent(Number(iskonto) || 0)}
                   onChange={(e) => setGlobalIskontoInput(e.target.value)}
                   onBlur={() => {
                     const parsed = parseDiscountInput(globalIskontoInput ?? '');
@@ -3123,23 +3348,21 @@ export default function QuoteDetailModal({
                                   : 'bg-background-secondary/35'
                           } ${isDragging ? 'opacity-40' : ''} ${isDragOver ? 'border-t-2 border-t-primary' : ''}`}
                         >
-                          <td className="row-index-col">
+                          <td
+                            className={`row-index-col${isReadOnly ? '' : ' is-row-drag'}`}
+                            draggable={!isReadOnly}
+                            onDragStart={!isReadOnly ? (e) => handleQuoteItemDragStart(e, rowIndex) : undefined}
+                            onDragEnd={!isReadOnly ? handleQuoteItemDragEnd : undefined}
+                            title={isReadOnly ? `Satır ${rowIndex + 1}` : 'Sürükleyerek sırala'}
+                            aria-label={isReadOnly ? undefined : 'Sürükleyerek sırala'}
+                          >
                             <span className="row-index-cell">
                               <span className="row-index-num" title={`Satır ${rowIndex + 1}`}>
                                 {rowIndex + 1}
                               </span>
                               {!isReadOnly && (
-                                <span
-                                  draggable
-                                  onDragStart={(e) => handleQuoteItemDragStart(e, rowIndex)}
-                                  onDragEnd={handleQuoteItemDragEnd}
-                                  className="drag-handle"
-                                  title="Sürükleyerek sırala"
-                                  aria-label="Sürükleyerek sırala"
-                                  role="button"
-                                  tabIndex={0}
-                                >
-                                  <DotsSixVerticalIcon size={10} weight="bold" aria-hidden />
+                                <span className="drag-handle" aria-hidden>
+                                  <DotsSixVerticalIcon size={10} weight="bold" />
                                 </span>
                               )}
                             </span>
@@ -3212,7 +3435,9 @@ export default function QuoteDetailModal({
                                   type="button"
                                   className="text-left hover:text-primary hover:underline transition-colors cursor-pointer"
                                   title="Ürün detayını görüntüle"
-                                  onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                  onClick={() => {
+                                  if (invItem?.ItemId) navigate(`/inventory/${invItem.ItemId}`);
+                                }}
                                 >
                                   {language === 'EN' ? (
                                     itemEnName ? (
@@ -3277,7 +3502,9 @@ export default function QuoteDetailModal({
                                   </button>
                                   <button
                                     type="button"
-                                    onClick={() => setSelectedInventoryForDetail(invItem ?? null)}
+                                    onClick={() => {
+                                  if (invItem?.ItemId) navigate(`/inventory/${invItem.ItemId}`);
+                                }}
                                     className="btn-secondary !py-0.5 !px-2 text-xs whitespace-nowrap"
                                     title="Ürün detayını görüntüle"
                                   >
@@ -3388,9 +3615,27 @@ export default function QuoteDetailModal({
                                 onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 3)}
                                 onChange={(e) => {
                                   const raw = e.target.value;
-                                  const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                  // onChange: Sadece basit temizleme, kullanıcı yazmaya devam edebilsin
+                                  const cleaned = normalizeMaskedDecimalTR_OnChange(raw, { maxIntDigits: 12, maxFracDigits: 2 });
+                                  setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: cleaned }));
+                                }}
+                                onBlur={() => {
+                                  const raw = priceOverrideInputs[item.ItemId] ?? '';
+                                  // onBlur: Tam formatlama ve validasyon
+                                  const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 12, maxFracDigits: 2 });
+                                  if (numeric === null) {
+                                    toast.warning('Birim fiyat negatif olamaz ve sayı olmalıdır.');
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: '' }));
+                                    setQuoteItems((prev) =>
+                                      prev.map((x) =>
+                                        x.kind === 'inventory' && x.ItemId === item.ItemId
+                                          ? { ...x, OverrideUnitPrice: null }
+                                          : x
+                                      )
+                                    );
+                                    return;
+                                  }
                                   setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: masked }));
-                                  if (numeric === null) return;
                                   setQuoteItems((prev) =>
                                     prev.map((x) =>
                                       x.kind === 'inventory' && x.ItemId === item.ItemId
@@ -3405,23 +3650,6 @@ export default function QuoteDetailModal({
                                     delete next[key];
                                     return next;
                                   });
-                                }}
-                                onBlur={() => {
-                                  const raw = priceOverrideInputs[item.ItemId] ?? '';
-                                  const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
-                                  if (numeric === null) {
-                                    toast.warning('Birim fiyat negatif olamaz ve sayı olmalıdır.');
-                                    setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: '' }));
-                                    setQuoteItems((prev) =>
-                                      prev.map((x) =>
-                                        x.kind === 'inventory' && x.ItemId === item.ItemId
-                                          ? { ...x, OverrideUnitPrice: null }
-                                          : x
-                                      )
-                                    );
-                                    return;
-                                  }
-                                  setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: masked }));
                                 }}
                                 className="input w-full text-right py-0.5 text-xs"
                                 placeholder={formatCurrency(item.UnitPriceSnapshot)}
@@ -3450,9 +3678,27 @@ export default function QuoteDetailModal({
                                 onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 3)}
                                 onChange={(e) => {
                                   const raw = e.target.value;
-                                  const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
+                                  // onChange: Sadece basit temizleme
+                                  const cleaned = normalizeMaskedDecimalTR_OnChange(raw, { maxIntDigits: 12, maxFracDigits: 2 });
+                                  setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: cleaned }));
+                                }}
+                                onBlur={() => {
+                                  const raw = priceOverrideInputs[item.ItemId] ?? '';
+                                  // onBlur: Tam formatlama ve validasyon
+                                  const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 12, maxFracDigits: 2 });
+                                  if (numeric === null) {
+                                    toast.warning('Aylık fiyat negatif olamaz ve sayı olmalıdır.');
+                                    setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: '' }));
+                                    setQuoteItems((prev) =>
+                                      prev.map((x) =>
+                                        x.kind === 'inventory' && x.ItemId === item.ItemId
+                                          ? { ...x, OverrideMonthlyPrice: null }
+                                          : x
+                                      )
+                                    );
+                                    return;
+                                  }
                                   setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: masked }));
-                                  if (numeric === null) return;
                                   setQuoteItems((prev) =>
                                     prev.map((x) =>
                                       x.kind === 'inventory' && x.ItemId === item.ItemId
@@ -3468,23 +3714,6 @@ export default function QuoteDetailModal({
                                     return next;
                                   });
                                 }}
-                                onBlur={() => {
-                                  const raw = priceOverrideInputs[item.ItemId] ?? '';
-                                  const { masked, numeric } = normalizeMaskedDecimalTR(raw, { maxIntDigits: 9, maxFracDigits: 2 });
-                                  if (numeric === null) {
-                                    toast.warning('Aylık fiyat negatif olamaz ve sayı olmalıdır.');
-                                    setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: '' }));
-                                    setQuoteItems((prev) =>
-                                      prev.map((x) =>
-                                        x.kind === 'inventory' && x.ItemId === item.ItemId
-                                          ? { ...x, OverrideMonthlyPrice: null }
-                                          : x
-                                      )
-                                    );
-                                    return;
-                                  }
-                                  setPriceOverrideInputs((prev) => ({ ...prev, [item.ItemId]: masked }));
-                                }}
                                 className="input w-full text-right py-0.5 text-xs"
                                 placeholder={formatCurrency(item.UnitPriceSnapshot * 30)}
                                 aria-label="Aylık Fiyat"
@@ -3493,14 +3722,14 @@ export default function QuoteDetailModal({
                           </td>
                           <td className="text-right tabular-nums">
                             {isReadOnly ? (
-                              getRowDiscountPercent(item)
+                              formatDiscountPercent(getRowDiscountPercent(item))
                             ) : (
                               <input
                                 type="text"
                                 inputMode="decimal"
                                 value={
                                   iskontoInputs[netKey] ??
-                                  String(getRowDiscountPercent(item)).replace('.', ',')
+                                  formatDiscountPercent(getRowDiscountPercent(item))
                                 }
                                 ref={(el) => {
                                   const key = `${rowIndex}-4`;
@@ -3558,11 +3787,12 @@ export default function QuoteDetailModal({
                                 onKeyDown={(e) => handleQuoteGridKeyDown(e, rowIndex, 5)}
                                 onChange={(e) => {
                                   const raw = e.target.value;
-                                  const { masked } = normalizeMaskedDecimalTR(raw, {
+                                  // onChange: Sadece basit temizleme
+                                  const cleaned = normalizeMaskedDecimalTR_OnChange(raw, {
                                     maxIntDigits: 12,
                                     maxFracDigits: 2,
                                   });
-                                  setLineNetInputs((prev) => ({ ...prev, [netKey]: masked }));
+                                  setLineNetInputs((prev) => ({ ...prev, [netKey]: cleaned }));
                                 }}
                                 onBlur={(e) => {
                                   const raw = e.currentTarget.value;
@@ -3640,7 +3870,9 @@ export default function QuoteDetailModal({
           <section className="shrink-0 rounded-lg border border-background-border bg-background-panel px-3 py-2 flex flex-wrap items-center justify-between gap-2">
             <div className="flex flex-col gap-1.5 min-w-0">
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm min-w-0">
-                {renderPriceBreakdownFields(displayedPriceBreakdown)}
+                {renderPriceBreakdownFields(displayedPriceBreakdown, {
+                  editableTotals: !isReadOnly && quoteItems.length > 0,
+                })}
                 {quoteType === 'RENTAL' && (
                   <span className="text-[11px] text-text-secondary">
                     30 gün üzerinden
@@ -3682,10 +3914,10 @@ export default function QuoteDetailModal({
                     <button
                       type="button"
                       onClick={openConvertedContract}
-                      disabled={isBusy || isOpeningConvertedContract}
+                      disabled={isBusy}
                       className={`btn-primary ${compactBtn}`}
                     >
-                      {isOpeningConvertedContract ? 'Açılıyor...' : 'Sözleşmeye git'}
+                      Sözleşmeye git
                     </button>
                   )}
                   {!converted && canUpdateQuote && (
@@ -3930,21 +4162,15 @@ export default function QuoteDetailModal({
         open={showUnsavedConfirm}
         title="Teklif kapatılsın mı?"
         message={
-          isDirty && !isDraftRecord
+          isDirty
             ? 'Kaydedilmemiş değişiklikler var. Kaydetmeden kapatırsanız bu değişiklikler kaybolur.'
-            : isDirty && isDraftRecord && hasDraftContent
-              ? 'Taslak kaydedilerek kapatılacak. Listeden devam edebilirsiniz.'
-              : 'Teklif penceresini kapatmak istediğinize emin misiniz?'
+            : 'Teklif penceresini kapatmak istediğinize emin misiniz?'
         }
         confirmLabel={
-          isDirty && !isDraftRecord
-            ? 'Kaydetmeden kapat'
-            : isDirty && isDraftRecord && hasDraftContent
-              ? 'Kaydet ve kapat'
-              : 'Kapat'
+          isDirty ? 'Kaydetmeden kapat' : 'Kapat'
         }
         cancelLabel="Geri dön"
-        variant={isDirty && !isDraftRecord ? 'danger' : 'default'}
+        variant={isDirty ? 'danger' : 'default'}
         loading={isBusy}
         onConfirm={() => void handleCloseConfirm()}
         onCancel={() => setShowUnsavedConfirm(false)}
@@ -3952,7 +4178,7 @@ export default function QuoteDetailModal({
 
       {/* Sözleşmeye Dönüştür - Depo Atama Modal */}
       {showConvertModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60]">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
           <div className="bg-background-panel rounded-panel w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold mb-4">Sözleşmeye Dönüştür – Stok / Depo</h3>
             <p className="text-sm text-text-secondary mb-4">
@@ -4301,7 +4527,7 @@ export default function QuoteDetailModal({
         currency={currency}
         pickedItemIds={pickerPickedItemIds}
         onAddNewItem={() => {
-          setShowInventoryCreateModal(true);
+          navigate('/inventory/new');
         }}
       />
       <ManualLineItemModal
@@ -4330,7 +4556,7 @@ export default function QuoteDetailModal({
       {showCreateContactModal &&
         createPortal(
           <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
-            <div className="bg-background-panel rounded-panel shadow-xl w-full max-w-md border border-background-border">
+            <div className="bg-background-panel rounded-panel shadow-xl w-full max-w-md border border-background-border max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between p-4 border-b border-background-border">
                 <h3 className="text-sm font-medium text-text-primary">Yeni Merkez Yetkilisi Ekle</h3>
                 <button
@@ -4404,7 +4630,7 @@ export default function QuoteDetailModal({
               </div>
             </div>
           </div>,
-          document.body
+          portalTarget
         )}
       {showCreateCustomerModal &&
         createPortal(
@@ -4415,7 +4641,7 @@ export default function QuoteDetailModal({
             onSaved={handleCustomerSaved}
             onClose={() => setShowCreateCustomerModal(false)}
           />,
-          document.body
+          portalTarget
         )}
       {showCreateSiteModal && selectedCustomerId && (
         <SiteCreateModal
@@ -4442,7 +4668,7 @@ export default function QuoteDetailModal({
               loadTemplates();
             }}
           />,
-          document.body
+          portalTarget
         )}
       <PdfPreviewModal
         open={showPdfPreview}
@@ -4451,59 +4677,9 @@ export default function QuoteDetailModal({
         downloadFileName={`teklif_${activeQuote?.QuoteId ?? ''}.pdf`}
         onClose={closePdfPreview}
       />
-      {isContractModalOpen && (
-        <ContractDetailModal
-          key={`converted-contract-${convertedContract?.ContractId ?? 'x'}`}
-          contract={convertedContract}
-          isNew={false}
-          stackAboveParent
-          onDataChanged={refreshQuoteDetail}
-          onClose={async () => {
-            setIsContractModalOpen(false);
-            setConvertedContract(null);
-            await refreshQuoteDetail();
-          }}
-          onOpenSourceQuote={async () => {
-            setIsContractModalOpen(false);
-            setConvertedContract(null);
-          }}
-        />
-      )}
-      {selectedInventoryForDetail && (
-        <InventoryDetailModal
-          item={selectedInventoryForDetail}
-          categories={inventoryCategories}
-          isNew={false}
-          stackAboveParent
-          onCategoriesChanged={() => {
-            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
-          }}
-          onClose={() => setSelectedInventoryForDetail(null)}
-        />
-      )}
-      {showInventoryCreateModal && (
-        <InventoryDetailModal
-          item={null}
-          categories={inventoryCategories}
-          isNew={true}
-          stackAboveParent
-          onCategoriesChanged={() => {
-            void inventoryService.getAllCategoriesAsync().then(setInventoryCategories).catch(() => undefined);
-          }}
-          onClose={async () => {
-            setShowInventoryCreateModal(false);
-            try {
-              const invData = await inventoryService.getAllAsync(undefined, { forceRefresh: true });
-              setAvailableItems(invData);
-            } catch {
-              // sessizce devam et
-            }
-          }}
-        />
-      )}
       {showCreatePackageModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70]">
-          <div className="bg-background-panel rounded-panel w-full max-w-lg p-6">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold mb-3">Tekliften Yeni Paket Oluştur</h3>
             <div className="space-y-3">
               <div>

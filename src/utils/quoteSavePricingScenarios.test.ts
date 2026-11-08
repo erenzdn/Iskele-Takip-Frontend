@@ -165,7 +165,7 @@ describe('teklif kaydet: yeşil toplam override', () => {
 
   it('SALE: blur sonrası (taslak temiz, itemIskonto dolu) aynı neti kaydeder', () => {
     const item = inventoryLine({ Quantity: 2, UnitPriceSnapshot: 500, PriceUnit: 'EACH' });
-    const gross = saleGross(500, 2);
+    // const gross = saleGross(500, 2); // Not used in this test
     const focused = saveQuote({
       items: [item],
       quoteType: 'SALE',
@@ -206,7 +206,7 @@ describe('teklif kaydet: yeşil toplam override', () => {
 
   it('RENTAL: kuruşluk toplam (1.499,50) kayıttan sonra birebir döner', () => {
     const item = inventoryLine({ OverrideMonthlyPrice: 150 });
-    const gross = rentalGross(150, 10, 30);
+    // const gross = rentalGross(150, 10, 30); // Not used in this test
     const saved = saveQuote({
       items: [item],
       quoteType: 'RENTAL',
@@ -442,7 +442,7 @@ describe('teklif kaydet: fiyat override + bağımsız satırlar', () => {
       UnitPriceSnapshot: 5,
       OverrideMonthlyPrice: 200,
     });
-    const gross = rentalGross(200, 10, 30);
+    // const gross = rentalGross(200, 10, 30); // Not used in this test
     const saved = saveQuote({
       items: [item],
       quoteType: 'RENTAL',

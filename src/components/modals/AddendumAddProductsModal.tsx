@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { PlusIcon, TrashIcon, XIcon } from '@phosphor-icons/react';
 import type {
   ContractLineItem,
@@ -35,6 +36,11 @@ type StagingLine = {
   discountPercent: number;
 };
 
+type SeedPick = {
+  item: Inventory;
+  warehouseId?: number | '';
+};
+
 interface AddendumAddProductsModalProps {
   open: boolean;
   addendumId: number;
@@ -49,6 +55,9 @@ interface AddendumAddProductsModalProps {
   onClose: () => void;
   onSaved: () => Promise<void> | void;
   zIndexClass?: string;
+  /** Modal açılınca listeye düşecek ürünler (sözleşme satırından tıklama) */
+  seedPicks?: SeedPick[];
+  onSeedConsumed?: () => void;
 }
 
 function parseDecimalInput(raw: string): number | null {
@@ -56,6 +65,34 @@ function parseDecimalInput(raw: string): number | null {
   if (!normalized) return null;
   const n = Number(normalized);
   return Number.isFinite(n) ? n : null;
+}
+
+function buildStagingLine(opts: {
+  item: Inventory;
+  quantity: number;
+  warehouseId: number | '';
+  contractType: ContractQuoteType;
+  currency: CurrencyCode;
+  contractLines: ContractLineItem[];
+  fallbackDiscountPercent: number;
+  keySuffix?: string | number;
+}): StagingLine {
+  const pricing = resolveAddendumAddedItemPricing({
+    item: opts.item,
+    contractType: opts.contractType,
+    currency: opts.currency,
+    contractLines: opts.contractLines,
+    preferredWarehouseId: opts.warehouseId,
+    fallbackDiscountPercent: opts.fallbackDiscountPercent,
+  });
+  return {
+    key: `add-${opts.item.ItemId}-${Date.now()}-${opts.keySuffix ?? ''}`,
+    item: opts.item,
+    quantity: Math.max(1, opts.quantity),
+    warehouseId: opts.warehouseId,
+    unitPrice: pricing.unitPrice,
+    discountPercent: pricing.discountPercent,
+  };
 }
 
 export default function AddendumAddProductsModal({
@@ -70,7 +107,10 @@ export default function AddendumAddProductsModal({
   onClose,
   onSaved,
   zIndexClass = 'z-[75]',
+  seedPicks,
+  onSeedConsumed,
 }: AddendumAddProductsModalProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
   const [lines, setLines] = useState<StagingLine[]>([]);
   const [defaultWarehouseId, setDefaultWarehouseId] = useState<number | ''>('');
@@ -83,12 +123,38 @@ export default function AddendumAddProductsModal({
   const [qtyDrafts, setQtyDrafts] = useState<Record<string, string>>({});
   const [priceDrafts, setPriceDrafts] = useState<Record<string, string>>({});
   const [iskontoDrafts, setIskontoDrafts] = useState<Record<string, string>>({});
+  const seedPicksRef = useRef(seedPicks);
+  seedPicksRef.current = seedPicks;
+  const onSeedConsumedRef = useRef(onSeedConsumed);
+  onSeedConsumedRef.current = onSeedConsumed;
 
   useEffect(() => {
     if (!open) return;
-    setLines([]);
+    const discount = clampDiscountRange(contractDiscountPercent);
+    const seed = seedPicksRef.current ?? [];
+    const seen = new Set<number>();
+    const seededLines: StagingLine[] = [];
+    seed.forEach((pick, index) => {
+      if (seen.has(pick.item.ItemId)) return;
+      seen.add(pick.item.ItemId);
+      const warehouseId =
+        pick.warehouseId && Number(pick.warehouseId) > 0 ? Number(pick.warehouseId) : '';
+      seededLines.push(
+        buildStagingLine({
+          item: pick.item,
+          quantity: 1,
+          warehouseId,
+          contractType,
+          currency,
+          contractLines,
+          fallbackDiscountPercent: discount,
+          keySuffix: index,
+        })
+      );
+    });
+    setLines(seededLines);
     setDefaultWarehouseId('');
-    setGlobalIskonto(clampDiscountRange(contractDiscountPercent));
+    setGlobalIskonto(discount);
     setShowPicker(false);
     setShowContractPeek(false);
     setIsBusy(false);
@@ -97,6 +163,7 @@ export default function AddendumAddProductsModal({
     setQtyDrafts({});
     setPriceDrafts({});
     setIskontoDrafts({});
+    if (seed.length) onSeedConsumedRef.current?.();
   }, [open]);
 
   useEffect(() => {
@@ -123,7 +190,11 @@ export default function AddendumAddProductsModal({
     return lineNetFromGross(line.unitPrice * qty, line.discountPercent) / qty;
   };
 
-  const addOrToggleItem = (item: Inventory, quantity: number) => {
+  const addOrToggleItem = (
+    item: Inventory,
+    quantity: number,
+    opts?: { warehouseId?: number | '' }
+  ) => {
     const existing = lines.find((l) => l.item.ItemId === item.ItemId);
     if (existing) {
       setLines((prev) => prev.filter((l) => l.item.ItemId !== item.ItemId));
@@ -134,25 +205,20 @@ export default function AddendumAddProductsModal({
       });
       return 'removed' as const;
     }
-    const key = `add-${item.ItemId}-${Date.now()}`;
-    const pricing = resolveAddendumAddedItemPricing({
-      item,
-      contractType,
-      currency,
-      contractLines,
-      preferredWarehouseId: defaultWarehouseId,
-      fallbackDiscountPercent: globalIskonto,
-    });
+    const warehouseId =
+      defaultWarehouseId ||
+      (opts?.warehouseId && Number(opts.warehouseId) > 0 ? Number(opts.warehouseId) : '');
     setLines((prev) => [
       ...prev,
-      {
-        key,
+      buildStagingLine({
         item,
-        quantity: Math.max(1, quantity),
-        warehouseId: defaultWarehouseId,
-        unitPrice: pricing.unitPrice,
-        discountPercent: pricing.discountPercent,
-      },
+        quantity,
+        warehouseId,
+        contractType,
+        currency,
+        contractLines,
+        fallbackDiscountPercent: globalIskonto,
+      }),
     ]);
     return 'added' as const;
   };
@@ -652,9 +718,16 @@ export default function AddendumAddProductsModal({
         highlightedItemIds={pickedItemIds}
         highlightLabel="Ekleniyor"
         zIndexClass="z-[85]"
+        items={items}
+        onSelectInventory={(item, line) => {
+          const result = addOrToggleItem(item, 1, { warehouseId: line.WarehouseId });
+          const label = formatInventoryBilingualLabel(item.ItemName, item.ItemNameEn);
+          if (result === 'added') toast.success(`${label} listeye eklendi`);
+          else toast.info(`${label} listeden çıkarıldı`);
+        }}
       />
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }

@@ -50,7 +50,7 @@ export default function CategoryDiscountModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-black/50 flex items-center justify-center p-4">
-      <div className="bg-background-panel border border-background-border rounded-lg shadow-lg max-w-md w-full overflow-hidden">
+      <div className="bg-background-panel border border-background-border rounded-lg shadow-lg max-w-md w-full max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-4 border-b border-background-border">
           <h2 className="text-lg font-bold text-text-primary">
             [{category.CategoryName}] Kategorisine İndirim Uygula

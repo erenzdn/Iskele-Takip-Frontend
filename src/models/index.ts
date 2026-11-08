@@ -401,6 +401,10 @@ export interface LoginUserDto {
 
 export interface LoginResponse {
   accessToken: string;
+  /** `tokenTransport: 'body'` ile istendiğinde döner (eski backend sürümleri döndürmez). */
+  refreshToken?: string;
+  /** Mutlak oturum sonu (ISO); eski backend sürümleri döndürmez. */
+  sessionExpiresAt?: string;
   user: LoginUserDto;
 }
 
@@ -619,6 +623,62 @@ export interface SettleNonReturnRequest {
   priceBasis: 'TRY' | 'USD' | 'EUR';
   warehouseId?: number;
   settlementChargeOverride?: number | string;
+  /** Kapama tarihi (ISO). Kapatılan adetlerin kirası bu tarihe kadar hesaplanır; boşsa backend "şimdi" kullanır. */
+  SettlementDate?: string;
+  /** Aynı ItemId için birden fazla sözleşme satırı varsa zorunlu */
+  DetailId?: number | null;
+}
+
+export interface BillingVarianceReason {
+  AddendumId: number;
+  AddendumNumber: number;
+  Reason: string | null;
+  EffectiveDate: string;
+}
+
+export interface BillingPeriodLine {
+  DetailId: number;
+  ItemId: number;
+  gross: number;
+  net: number;
+}
+
+export interface BillingPeriod {
+  index: number;
+  periodStart: string;
+  periodEnd: string;
+  isPartial: boolean;
+  isClosed: boolean;
+  accrualSubtotal: number;
+  accrualNetTotal: number;
+  billedAmount: number | null;
+  variance: number | null;
+  varianceReasons: BillingVarianceReason[];
+  lines: BillingPeriodLine[];
+}
+
+export interface BillingCurrentPeriodProjection {
+  periodStart: string;
+  periodEnd: string;
+  projectedNetTotal: number;
+}
+
+export interface BillingSummary {
+  asOf: string;
+  dueNow: number;
+  currentPeriodProjection: BillingCurrentPeriodProjection | null;
+  warnings: string[];
+}
+
+export interface MarkBilledPeriodRequest {
+  periodStart: string;
+  periodEnd: string;
+  billedAmount: number;
+  notes?: string | null;
+}
+
+export interface MarkBilledPeriodResponse {
+  billedPeriodId: number;
 }
 
 // Sözleşme Fiyat Hesaplama
@@ -636,6 +696,100 @@ export interface ContractPriceCalculation {
     LateDays: number;
     LateFee: number;
   }[];
+}
+
+// Sözleşme Uzatma (Contract Extension) Modelleri
+export interface ContractExtension {
+  extensionId: number;
+  contractId: number;
+  previousPlannedEndDate: string;
+  newPlannedEndDate: string;
+  extensionDays: number;
+  reason?: string | null;
+  notes?: string | null;
+  status: 'active' | 'cancelled';
+  createdAt: string;
+  createdBy?: string | null;
+  createdByUserId?: number;
+  cancelledAt?: string | null;
+  cancelledByUserId?: number | null;
+  cancellationReason?: string | null;
+}
+
+export interface ContractExtensionHistory {
+  contractId: number;
+  originalPlannedEndDate: string;
+  currentPlannedEndDate: string;
+  totalExtensionDays: number;
+  extensions: ContractExtension[];
+}
+
+export interface CreateExtensionRequest {
+  newPlannedEndDate: string;
+  reason?: string;
+  notes?: string;
+}
+
+export interface CancelExtensionRequest {
+  reason: string;
+}
+
+// Sözleşme Fatura (Contract Invoice) Modelleri
+export interface ContractInvoice {
+  invoiceRecordId: number;
+  contractId: number;
+  invoiceNumber?: string | null;
+  invoiceDate: string;
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  currency: string;
+  notes?: string | null;
+  createdAt: string;
+  createdBy?: string | null;
+  createdByUserId?: number;
+  deletedAt?: string | null;
+  deletedByUserId?: number | null;
+}
+
+export interface ContractInvoicingSummary {
+  contractId: number;
+  contractCode?: string | null;
+  currency: string;
+  totalInvoiced: number;
+  invoiceCount: number;
+  lastInvoiceDate?: string | null;
+  monthlyBreakdown: Array<{
+    month: string;
+    count: number;
+    total: number;
+    invoices: Array<{
+      invoiceRecordId: number;
+      invoiceNumber?: string | null;
+      invoiceDate: string;
+      amount: number;
+    }>;
+  }>;
+}
+
+export interface CreateInvoiceRequest {
+  invoiceNumber?: string;
+  invoiceDate: string;
+  periodStart: string;
+  periodEnd: string;
+  amount: number;
+  currency?: string;
+  notes?: string;
+}
+
+export interface UpdateInvoiceRequest {
+  invoiceNumber?: string;
+  invoiceDate?: string;
+  periodStart?: string;
+  periodEnd?: string;
+  amount?: number;
+  currency?: string;
+  notes?: string;
 }
 
 // Alış Faturası

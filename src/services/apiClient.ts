@@ -1,4 +1,5 @@
-import { useAuthStore } from '../store/authStore';
+import { getServerNow, useAuthStore, waitForUnlock } from '../store/authStore';
+import { getJwtExpiryMs } from '../utils/jwt';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const SIGNING_SECRET = import.meta.env.VITE_SIGNING_SECRET;
@@ -37,6 +38,11 @@ if (SIGNING_ENABLED && !SIGNING_SECRET) {
     'Lütfen .env dosyanızda VITE_SIGNING_SECRET değerini tanımlayın.'
   );
 }
+
+/** Access token bu süreden az ömrü kaldıysa istekten önce yenilenir. */
+const ACCESS_TOKEN_REFRESH_MARGIN_MS = 60_000;
+
+const SESSION_EXPIRED_LOCK_MESSAGE = 'Oturum süreniz doldu. Kaldığınız yerden devam etmek için şifrenizi girin.';
 
 interface SignatureResult {
   signature: string;
@@ -137,7 +143,8 @@ class ApiClient {
     path: string,
     body?: unknown
   ): Promise<SignatureResult> {
-    const timestamp = Date.now().toString();
+    // Backend damgayı kendi saatiyle karşılaştırır; cihaz saati yanlış olsa da istek reddedilmesin
+    const timestamp = getServerNow().toString();
     const nonce = crypto.randomUUID();
 
     // Body hash: JSON body varsa SHA256(JSON.stringify(body)), yoksa SHA256('')
@@ -203,7 +210,18 @@ class ApiClient {
 
   /** Yerel oturumu temizle (API logout çağırmaz — 401 döngüsünü önler). */
   private forceLogout(message = 'Oturumunuz sonlandı. Lütfen tekrar giriş yapın.'): never {
-    useAuthStore.setState({ accessToken: null, user: null, isAuthenticated: false });
+    // Çıkıştan sonra yolda kalan istekler login ekranındaki mesajı ezmesin
+    if (!useAuthStore.getState().user) throw new Error(message);
+    useAuthStore.setState({
+      accessToken: null,
+      refreshToken: null,
+      user: null,
+      isAuthenticated: false,
+      sessionExpiresAt: null,
+      isLocked: false,
+      lockMessage: null,
+      sessionEndMessage: message,
+    });
     if (typeof window !== 'undefined' && window.location) {
       window.location.hash = '#/login';
     }
@@ -240,11 +258,52 @@ class ApiClient {
     return { userMessage, errorCode };
   }
 
+  private isAuthEndpoint(endpoint: string): boolean {
+    return this.getSigningPath(endpoint).startsWith('/auth/');
+  }
+
+  /**
+   * Access token dolmak üzereyse istekten önce yeniler; 401 → retry yolu olmayan
+   * blob/multipart istekleri de böylece kesintisiz çalışır. Başarısızlıkta istek
+   * mevcut token ile gider ve 401 akışı devreye girer.
+   */
+  private async ensureFreshAccessToken(endpoint: string): Promise<void> {
+    if (this.isAuthEndpoint(endpoint)) return;
+    const { accessToken, isAuthenticated, isLocked } = useAuthStore.getState();
+    if (isLocked) {
+      if (!(await waitForUnlock())) throw new Error('Oturum kapatıldı.');
+      return;
+    }
+    if (!isAuthenticated) return;
+    const expiresAt = getJwtExpiryMs(accessToken);
+    if (expiresAt !== null && expiresAt - getServerNow() > ACCESS_TOKEN_REFRESH_MARGIN_MS) return;
+    const refreshed = await this.attemptRefresh();
+    if (!refreshed && expiresAt !== null && expiresAt <= getServerNow()) {
+      if (!(await this.lockAndWait())) throw new Error('Oturum kapatıldı.');
+    }
+  }
+
+  /**
+   * Oturum yenilenemediğinde kullanıcıyı login'e atmak yerine ekranı kilitler ve
+   * şifre girilmesini bekler. Kilit açılırsa true (istek tekrar denenebilir).
+   */
+  private async lockAndWait(): Promise<boolean> {
+    if (!useAuthStore.getState().user) return false;
+    void useAuthStore.getState().lock(SESSION_EXPIRED_LOCK_MESSAGE);
+    return waitForUnlock();
+  }
+
+  /** Access token'ı hemen yeniler (oturum yöneticisinin proaktif yenilemesi için). */
+  refreshSession(): Promise<boolean> {
+    return this.attemptRefresh();
+  }
+
   private async createRequest(
     method: HttpMethod,
     endpoint: string,
     body?: unknown
   ): Promise<{ request: Request; endpoint: string; body?: unknown }> {
+    await this.ensureFreshAccessToken(endpoint);
     const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const accessToken = useAuthStore.getState().accessToken;
 
@@ -290,17 +349,22 @@ class ApiClient {
     this.isRefreshing = true;
     this.refreshPromise = (async () => {
       try {
-        devLog('[AUTH] Access token süresi doldu, refresh deneniyor...');
+        devLog('[AUTH] Access token yenileniyor...');
+
+        const { refreshToken } = useAuthStore.getState();
+        // refreshToken yoksa (eski backend) cookie ile denenir
+        const body = refreshToken ? { refreshToken, tokenTransport: 'body' } : undefined;
 
         const headers: HeadersInit = {
           'Content-Type': 'application/json',
         };
-        await this.addSignatureHeaders(headers, 'POST', '/auth/refresh');
+        await this.addSignatureHeaders(headers, 'POST', '/auth/refresh', body);
 
         const response = await fetch(`${this.baseUrl.replace(/\/$/, '')}/auth/refresh`, {
           method: 'POST',
           headers,
           credentials: 'include',
+          body: body ? JSON.stringify(body) : undefined,
         });
 
         if (!response.ok) {
@@ -308,13 +372,17 @@ class ApiClient {
           return false;
         }
 
-        const data = (await response.json()) as { accessToken?: string };
+        const data = (await response.json()) as {
+          accessToken?: string;
+          refreshToken?: string;
+          sessionExpiresAt?: string;
+        };
         if (!data.accessToken) {
           devLog('[AUTH] Refresh yanıtında accessToken bulunamadı');
           return false;
         }
 
-        useAuthStore.getState().setAccessToken(data.accessToken);
+        useAuthStore.getState().setTokens(data.accessToken, data.refreshToken, data.sessionExpiresAt);
         devLog('[AUTH] Access token başarıyla yenilendi');
         return true;
       } catch (error) {
@@ -358,24 +426,23 @@ class ApiClient {
           throw error;
         }
 
-        // TOKEN_INVALID / TOKEN_MISSING → logout (refresh deneme)
+        const retry = async () => {
+          const retryPrepared = await this.createRequest(request.method as HttpMethod, endpoint, body);
+          return this.sendAsync<T>(retryPrepared, { allowRefreshRetry: false });
+        };
+
+        // TOKEN_INVALID / TOKEN_MISSING → refresh denenmez; şifre ile kilit açılınca tekrar denenir
         if (errorCode === 'TOKEN_INVALID' || errorCode === 'TOKEN_MISSING') {
-          devLog(`[AUTH] ${errorCode}, oturum sonlandırılıyor`);
+          devLog(`[AUTH] ${errorCode}, oturum kilitleniyor`);
+          if (allowRefreshRetry && (await this.lockAndWait())) return retry();
           this.forceLogout();
         }
 
-        // TOKEN_EXPIRED (veya kodsuz 401) → refresh + 1 kez retry
+        // TOKEN_EXPIRED (veya kodsuz 401) → refresh + 1 kez retry; refresh olmazsa kilit ekranı
         if (allowRefreshRetry && (errorCode === 'TOKEN_EXPIRED' || !errorCode)) {
           devLog('[AUTH] 401 — silent refresh deneniyor...');
-          const refreshSuccess = await this.attemptRefresh();
-          if (refreshSuccess) {
-            const retryPrepared = await this.createRequest(
-              request.method as HttpMethod,
-              endpoint,
-              body
-            );
-            return this.sendAsync<T>(retryPrepared, { allowRefreshRetry: false });
-          }
+          if (await this.attemptRefresh()) return retry();
+          if (await this.lockAndWait()) return retry();
           this.forceLogout();
         }
 
@@ -468,6 +535,7 @@ class ApiClient {
   }
 
   async getBlob(endpoint: string): Promise<Blob> {
+    await this.ensureFreshAccessToken(endpoint);
     const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const accessToken = useAuthStore.getState().accessToken;
 
@@ -517,6 +585,7 @@ class ApiClient {
    * GET ile blob indirir; Content-Disposition içindeki dosya adını döner.
    */
   async getBlobDownload(endpoint: string): Promise<{ blob: Blob; filename: string | null }> {
+    await this.ensureFreshAccessToken(endpoint);
     const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const accessToken = useAuthStore.getState().accessToken;
 
@@ -569,6 +638,7 @@ class ApiClient {
    * Excel import gibi JSON dönen uçlar için: success:false gövdesi HTTP 400 olsa bile parse edilip döndürülür.
    */
   async postFormData<T = unknown>(endpoint: string, formData: FormData): Promise<T> {
+    await this.ensureFreshAccessToken(endpoint);
     const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const accessToken = useAuthStore.getState().accessToken;
 
@@ -639,6 +709,7 @@ class ApiClient {
   }
 
   async postBlob(endpoint: string, body?: unknown): Promise<Blob> {
+    await this.ensureFreshAccessToken(endpoint);
     const url = `${this.baseUrl.replace(/\/$/, '')}${endpoint.startsWith('/') ? endpoint : `/${endpoint}`}`;
     const accessToken = useAuthStore.getState().accessToken;
 

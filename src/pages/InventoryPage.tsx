@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent } from 'react';
 import { MagnifyingGlassIcon, PackageIcon } from '@phosphor-icons/react';
-import { useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
 import { Inventory, MaterialCategory, isInventoryArchived } from '../models';
@@ -10,7 +10,7 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import { toast } from '../hooks/useToast';
 import EmptyState from '../components/EmptyState';
 import ExcelManager from '../components/ExcelManager';
-import InventoryDetailModal from '../components/modals/InventoryDetailModal';
+import { useInvalidation } from '../store/dataInvalidationStore';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import { useAuthStore } from '../store/authStore';
@@ -33,7 +33,6 @@ function parseStockStatus(value: string | null): StockStatusFilter {
 
 export default function InventoryPage() {
   const navigate = useNavigate();
-  const location = useLocation();
   const [searchParams, setSearchParams] = useSearchParams();
   const user = useAuthStore((state) => state.user);
   const permissions = user?.permissions ?? [];
@@ -46,10 +45,6 @@ export default function InventoryPage() {
     Array.from({ length: 6 }, () => '')
   );
   const [loading, setLoading] = useState(true);
-  const [selectedItem, setSelectedItem] = useState<Inventory | null>(null);
-  const [isItemModalOpen, setIsItemModalOpen] = useState(false);
-  const [isNewItem, setIsNewItem] = useState(false);
-  const [startItemInEditMode, setStartItemInEditMode] = useState(false);
   const [isCategoryModalOpen, setIsCategoryModalOpen] = useState(false);
   const [editingCategory, setEditingCategory] = useState<MaterialCategory | null>(null);
   const [searchText, setSearchText] = useState('');
@@ -90,11 +85,7 @@ export default function InventoryPage() {
   const [restoreConflictMessage, setRestoreConflictMessage] = useState<string | null>(null);
   const { openContextMenu } = useContextMenu();
   const { setActions } = useHeaderActions();
-  const consumedOpenItemIdRef = useRef<number | null>(null);
-  const fetchingOpenItemByIdRef = useRef<number | null>(null);
   const hadFirstListLoadRef = useRef(false);
-  const returnOnCloseRef = useRef<boolean>(false);
-  const returnToRef = useRef<{ path: string; state?: any } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -227,12 +218,13 @@ export default function InventoryPage() {
     setSelectedItemIds(filteredInventory.map((item) => item.ItemId));
   }, [filteredInventory]);
 
+  useInvalidation('inventory', () => {
+    void loadData(true);
+  });
+
   const handleAddNewItem = useCallback(() => {
-    setSelectedItem(null);
-    setIsNewItem(true);
-    setStartItemInEditMode(true);
-    setIsItemModalOpen(true);
-  }, []);
+    navigate('/inventory/new');
+  }, [navigate]);
 
   const handleAddCategory = useCallback(() => {
     setEditingCategory(null);
@@ -249,54 +241,10 @@ export default function InventoryPage() {
   }, []);
 
   const handleOpenItemDetail = (item: Inventory, options?: { startInEditMode?: boolean }) => {
-    setSelectedItem(item);
-    setIsNewItem(false);
-    setStartItemInEditMode(Boolean(options?.startInEditMode));
-    setIsItemModalOpen(true);
+    navigate(`/inventory/${item.ItemId}`, {
+      state: options?.startInEditMode ? { startInEditMode: true } : null,
+    });
   };
-
-  useEffect(() => {
-    const st = location.state as any;
-    const openItemId = st?.openItemId;
-    if (!openItemId) return;
-    const idNum = Number(openItemId);
-    if (!Number.isFinite(idNum) || idNum <= 0) return;
-    if (consumedOpenItemIdRef.current === idNum) return;
-
-    const found = allInventory.find((i) => i.ItemId === idNum);
-    if (found) {
-      consumedOpenItemIdRef.current = idNum;
-      returnOnCloseRef.current = Boolean(st?.returnOnClose);
-      const rt = st?.returnTo;
-      returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
-      handleOpenItemDetail(found);
-      navigate(location.pathname + location.search, { replace: true, state: null });
-      return;
-    }
-
-    if (listLoading || !hadFirstListLoadRef.current) return;
-    if (fetchingOpenItemByIdRef.current === idNum) return;
-
-    fetchingOpenItemByIdRef.current = idNum;
-    void inventoryService
-      .getByIdAsync(idNum)
-      .then((item) => {
-        fetchingOpenItemByIdRef.current = null;
-        if (consumedOpenItemIdRef.current === idNum) return;
-        consumedOpenItemIdRef.current = idNum;
-        returnOnCloseRef.current = Boolean(st?.returnOnClose);
-        const rt = st?.returnTo;
-        returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
-        handleOpenItemDetail(item);
-        navigate(location.pathname + location.search, { replace: true, state: null });
-      })
-      .catch(() => {
-        fetchingOpenItemByIdRef.current = null;
-        consumedOpenItemIdRef.current = idNum;
-        toast.warning('Ürün bulunamadı.');
-        navigate(location.pathname + location.search, { replace: true, state: null });
-      });
-  }, [allInventory, listLoading, handleOpenItemDetail, location.pathname, location.search, location.state, navigate]);
 
   const openInventoryContextMenu = (event: MouseEvent<HTMLTableRowElement>, item: Inventory) => {
     event.preventDefault();
@@ -324,24 +272,6 @@ export default function InventoryPage() {
         },
       },
     });
-  };
-
-  const handleItemModalClose = () => {
-    setIsItemModalOpen(false);
-    setSelectedItem(null);
-    setStartItemInEditMode(false);
-    if (returnOnCloseRef.current) {
-      returnOnCloseRef.current = false;
-      const rt = returnToRef.current;
-      returnToRef.current = null;
-      if (rt?.path) {
-        navigate(rt.path, { replace: true, state: rt.state ?? null });
-      } else {
-        navigate(-1);
-      }
-      return;
-    }
-    loadData(true);
   };
 
   const handleCategoryModalClose = () => {
@@ -1149,19 +1079,6 @@ export default function InventoryPage() {
             <span className="text-text-secondary/80">Ekranda yaklaşık 25–40 satır görünür (pencere boyutuna göre)</span>
           </div>
         </div>
-      )}
-
-      {isItemModalOpen && (
-        <InventoryDetailModal
-          item={selectedItem}
-          categories={categories}
-          isNew={isNewItem}
-          startInEditMode={startItemInEditMode}
-          onCategoriesChanged={() => {
-            void inventoryService.getAllCategoriesAsync().then(setCategories).catch(() => undefined);
-          }}
-          onClose={handleItemModalClose}
-        />
       )}
 
       {isCategoryModalOpen && (

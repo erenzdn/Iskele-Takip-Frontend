@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import type {
   Addendum,
@@ -79,7 +80,7 @@ interface AddendumDetailModalProps {
   canDelete: boolean;
   onClose: () => void;
   /** Liste + sözleşme yenileme; openAddendumId ile detayı yeni kayda taşı */
-  onChanged: (opts?: { approved?: boolean; openAddendumId?: number }) => Promise<void> | void;
+  onChanged: (opts?: { approved?: boolean; rejected?: boolean; openAddendumId?: number }) => Promise<void> | void;
   zIndexClass?: string;
 }
 
@@ -102,6 +103,7 @@ export default function AddendumDetailModal({
   onChanged,
   zIndexClass = 'z-[60]',
 }: AddendumDetailModalProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
 
   const [addendum, setAddendum] = useState<Addendum | null>(null);
@@ -114,6 +116,9 @@ export default function AddendumDetailModal({
   const [showLineModal, setShowLineModal] = useState(false);
   const [showAddProductsModal, setShowAddProductsModal] = useState(false);
   const [showContractPeek, setShowContractPeek] = useState(false);
+  const [seedAddPicks, setSeedAddPicks] = useState<Array<{ item: Inventory; warehouseId?: number | '' }>>(
+    []
+  );
   const [editingDetail, setEditingDetail] = useState<AddendumDetail | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -175,6 +180,7 @@ export default function AddendumDetailModal({
       setShowLineModal(false);
       setShowAddProductsModal(false);
       setShowContractPeek(false);
+      setSeedAddPicks([]);
       setEditingDetail(null);
       setConfirmApprove(false);
       setConfirmDelete(false);
@@ -342,7 +348,7 @@ export default function AddendumDetailModal({
       setShowRejectModal(false);
       setRejectionReason('');
       toast.success('Zeyilname reddedildi');
-      await Promise.resolve(onChanged());
+      await Promise.resolve(onChanged({ rejected: true }));
     } catch (error) {
       console.error('Reject addendum error:', error);
       toast.error(getUserFacingApiErrorMessage(error, 'addendum'));
@@ -876,7 +882,7 @@ export default function AddendumDetailModal({
 
       {showRejectModal && (
         <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 shadow-xl space-y-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold">Zeyilnameyi reddet</h3>
             <p className="text-sm text-text-secondary">Red gerekçesi zorunludur.</p>
             <textarea
@@ -919,6 +925,8 @@ export default function AddendumDetailModal({
           contractLines={contractLines}
           contractDiscountPercent={contractDiscountPercent}
           zIndexClass="z-[75]"
+          seedPicks={seedAddPicks}
+          onSeedConsumed={() => setSeedAddPicks([])}
           onClose={() => setShowAddProductsModal(false)}
           onSaved={async () => {
             await refreshDetails();
@@ -936,6 +944,16 @@ export default function AddendumDetailModal({
         highlightedItemIds={contractPeekHighlightedIds}
         highlightLabel="Bu zeyilnamede"
         zIndexClass="z-[80]"
+        items={items}
+        onSelectInventory={
+          editable
+            ? (item, line) => {
+                setSeedAddPicks([{ item, warehouseId: line.WarehouseId }]);
+                setShowContractPeek(false);
+                setShowAddProductsModal(true);
+              }
+            : undefined
+        }
       />
 
       {addendum && (
@@ -982,5 +1000,5 @@ export default function AddendumDetailModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }

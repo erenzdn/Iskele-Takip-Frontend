@@ -17,6 +17,9 @@ import { getApiErrorMessage, getInventoryDeleteErrorMessage, getInventoryRestore
 import { formatShortDateTime } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
 import { useAuthStore } from '../../store/authStore';
+import { acknowledgeTabSaved } from '../../store/tabStore';
+import { invalidateData } from '../../store/dataInvalidationStore';
+import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 import CategoryDetailModal, { type CategoryModalSuccessResult } from './CategoryDetailModal';
@@ -31,6 +34,8 @@ interface InventoryDetailModalProps {
   /** Kategori listesi güncellendiğinde üst sayfanın da yenilenmesi için */
   onCategoriesChanged?: () => void;
   onClose: () => void;
+  onCreated?: (itemId: number) => void;
+  presentation?: 'modal' | 'page';
 }
 
 // Depo stok girişi için tip
@@ -88,7 +93,11 @@ export default function InventoryDetailModal({
   stackAboveParent = false,
   onCategoriesChanged,
   onClose,
+  onCreated,
+  presentation = 'modal',
 }: InventoryDetailModalProps) {
+  const isPage = presentation === 'page';
+  const portalTarget = usePortalTarget();
   const user = useAuthStore((state) => state.user);
   const canDelete = (user?.permissions ?? []).includes('inventory_delete');
   const [resolvedItem, setResolvedItem] = useState<Inventory | null>(item);
@@ -101,6 +110,7 @@ export default function InventoryDetailModal({
     return formatted && formatted !== '-' ? formatted : raw;
   })();
   const [isReadOnly, setIsReadOnly] = useState(!isNew && !startInEditMode);
+  useTabDirty(isPage && !isReadOnly);
   const [itemCode, setItemCode] = useState('');
   const [itemName, setItemName] = useState('');
   const [itemNameEn, setItemNameEn] = useState('');
@@ -567,6 +577,11 @@ export default function InventoryDetailModal({
             Quantity: Number(ws.quantity),
           });
         }
+        invalidateData('inventory');
+        if (isPage && onCreated) {
+          onCreated(result.ItemId);
+          return;
+        }
       } else if (effectiveItem) {
         await inventoryService.updateAsync(effectiveItem.ItemId, {
           ItemCode: itemCode.trim() || undefined,
@@ -585,6 +600,12 @@ export default function InventoryDetailModal({
           Weight: toOptionalNumber(weight),
           UnitId: selectedUnitId || undefined,
         });
+        invalidateData('inventory');
+        if (isPage) {
+          acknowledgeTabSaved();
+          setIsReadOnly(true);
+          return;
+        }
       }
       onClose();
     } catch (error) {
@@ -615,6 +636,8 @@ export default function InventoryDetailModal({
       await inventoryService.deleteAsync(effectiveItem.ItemId);
       setShowDeleteConfirm(false);
       toast.success('Ürün listeden kaldırıldı.');
+      invalidateData('inventory');
+      if (isPage) acknowledgeTabSaved();
       onClose();
     } catch (error) {
       console.error('Delete inventory error:', error);
@@ -741,10 +764,13 @@ export default function InventoryDetailModal({
 
   const selectedUnitName = units.find((u) => u.UnitId === selectedUnitId)?.UnitName || 'kg';
   const overlayZClass = stackAboveParent ? 'z-[70]' : 'z-50';
+  useTabTitle(
+    isPage ? (isNew ? itemName.trim() || 'Yeni Malzeme' : itemName.trim() || 'Malzeme') : null
+  );
   const confirmZClass = stackAboveParent ? 'z-[80]' : 'z-[70]';
 
   const modalTree = (
-    <div className={`fixed inset-0 flex flex-col overflow-hidden bg-background-panel ${overlayZClass}`}>
+    <div className={isPage ? 'flex h-full min-h-0 flex-col overflow-hidden bg-background-panel' : `fixed inset-0 flex flex-col overflow-hidden bg-background-panel ${overlayZClass}`}>
       <header className="shrink-0 border-b border-background-border px-3 py-2 sm:px-4">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -853,7 +879,7 @@ export default function InventoryDetailModal({
           </div>
         ) : (
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto lg:grid-cols-2 lg:overflow-hidden">
-            <div className="flex min-h-0 flex-col gap-3 lg:overflow-hidden">
+            <div className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto">
               <SectionCard
                 title="Ürün bilgisi"
                 subtitle="Ad zorunludur. Kod ve İngilizce ad isteğe bağlıdır."
@@ -1219,7 +1245,7 @@ export default function InventoryDetailModal({
               </SectionCard>
             </div>
 
-            <div className="flex min-h-0 flex-col gap-3 lg:overflow-hidden">
+            <div className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto">
               {isNew ? (
                 <SectionCard
                   title="Başlangıç stoğu"
@@ -1505,8 +1531,8 @@ export default function InventoryDetailModal({
     </div>
   );
 
-  if (stackAboveParent && typeof document !== 'undefined') {
-    return createPortal(modalTree, document.body);
+  if (!isPage && stackAboveParent && typeof document !== 'undefined') {
+    return createPortal(modalTree, portalTarget);
   }
 
   return modalTree;

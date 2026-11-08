@@ -424,7 +424,7 @@ export default function WarehouseDetailModal({
           </div>
         ) : (
           <div className="grid min-h-0 flex-1 grid-cols-1 gap-3 overflow-y-auto lg:grid-cols-2 lg:overflow-hidden">
-            <div className="flex min-h-0 flex-col gap-3 lg:overflow-hidden">
+            <div className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto">
               <SectionCard
                 title="Depo bilgisi"
                 subtitle="Ad zorunludur. Adres ve açıklama isteğe bağlıdır."
@@ -470,7 +470,7 @@ export default function WarehouseDetailModal({
               </SectionCard>
             </div>
 
-            <div className="flex min-h-0 flex-col gap-3 lg:overflow-hidden">
+            <div className="flex min-h-0 flex-col gap-3 lg:overflow-y-auto">
               {isNew ? (
                 <SectionCard
                   title="Depo stoğu"

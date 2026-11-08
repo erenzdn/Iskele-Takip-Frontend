@@ -1,14 +1,27 @@
 import { apiClient } from './apiClient';
 import {
   AuditLog,
+  BillingPeriod,
+  BillingSummary,
   Contract,
   ContractQuoteType,
   ContractReturn,
   ContractPriceCalculation,
   ContractStatusFilter,
+  MarkBilledPeriodRequest,
+  MarkBilledPeriodResponse,
   ReturnItemResponse,
   SettleNonReturnRequest,
+  ContractExtension,
+  ContractExtensionHistory,
+  CreateExtensionRequest,
+  CancelExtensionRequest,
+  ContractInvoice,
+  ContractInvoicingSummary,
+  CreateInvoiceRequest,
+  UpdateInvoiceRequest,
 } from '../models';
+import { billedPeriodDeletePath, parseBillingPlan, parseBillingSummary } from '../utils/billingPlan';
 import { CreateSiteRequest } from './siteService';
 import {
   DEFAULT_PAGE_LIMIT,
@@ -20,7 +33,7 @@ import {
   copyQuoteLineDiscounts,
   extractContractDetails,
   extractQuoteDetails,
-  sortByQuoteLineOrder,
+  resolveContractDisplayOrder,
   sortByStoredLineOrder,
   withContractDetails,
 } from '../utils/lineItemOrder';
@@ -33,6 +46,8 @@ export interface CreateContractDetailRequest {
   ItemCodeOverride?: string | null;
   /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
   Iskonto?: number;
+  /** 1 tabanlı görünen sıra. Son kayıt bir sonraki açılışta bu sırayı korur. */
+  LineOrder?: number;
 }
 
 export interface CreateContractManualDetailRequest {
@@ -42,6 +57,8 @@ export interface CreateContractManualDetailRequest {
   UnitPriceSnapshot: number;
   /** Satır bazlı iskonto yüzdesi (0–100). Yoksa başlık Iskonto kullanılır. */
   Iskonto?: number;
+  /** 1 tabanlı görünen sıra. Son kayıt bir sonraki açılışta bu sırayı korur. */
+  LineOrder?: number;
 }
 
 export type CreateContractDetailPayload = CreateContractDetailRequest | CreateContractManualDetailRequest;
@@ -80,8 +97,8 @@ export interface UpdateContractRequest {
   /** Kiralama sözleşmesi planlanan bitiş (ISO 8601) */
   PlannedEndDate?: string;
   Language?: 'TR' | 'EN';
-  /** Mevcut satırların iskontosunu güncellemek için */
-  details?: Array<{ DetailId: number; Iskonto: number }>;
+  /** Mevcut satırların iskontosunu ve görünen sırasını güncellemek için */
+  details?: Array<{ DetailId: number; Iskonto: number; LineOrder?: number }>;
 }
 
 export interface UpdateContractResponse {
@@ -245,7 +262,10 @@ async function alignContractDetailsWithSourceQuote(contract: Contract): Promise<
       const { quoteService } = await import('./quoteService');
       const quote = await quoteService.getByIdAsync(sourceQuoteId);
       const quoteDetails = extractQuoteDetails(quote);
-      ordered = copyQuoteLineDiscounts(sortByQuoteLineOrder(details, quoteDetails), quoteDetails);
+      ordered = copyQuoteLineDiscounts(
+        resolveContractDisplayOrder(details, quoteDetails),
+        quoteDetails
+      );
     } catch {
       ordered = details;
     }
@@ -343,7 +363,7 @@ export const contractService = {
     itemId: number,
     warehouseId: number,
     returnQuantity: number,
-    options?: { returnDate?: string; returnWarehouseId?: number }
+    options?: { returnDate?: string; returnWarehouseId?: number; detailId?: number | null }
   ): Promise<ReturnItemResponse> {
     const body: Record<string, unknown> = {
       ItemId: itemId,
@@ -356,6 +376,9 @@ export const contractService = {
     if (options?.returnWarehouseId) {
       body.ReturnWarehouseId = options.returnWarehouseId;
     }
+    if (options?.detailId != null && Number.isFinite(options.detailId) && options.detailId > 0) {
+      body.DetailId = options.detailId;
+    }
     return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/return`, body);
   },
 
@@ -363,11 +386,39 @@ export const contractService = {
     contractId: number,
     payload: SettleNonReturnRequest
   ): Promise<ReturnItemResponse> {
-    return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/settle-non-return`, payload);
+    const body: Record<string, unknown> = { ...payload };
+    if (payload.DetailId != null && Number.isFinite(payload.DetailId) && payload.DetailId > 0) {
+      body.DetailId = payload.DetailId;
+      body.detailId = payload.DetailId;
+    }
+    return apiClient.post<ReturnItemResponse>(`/contracts/${contractId}/settle-non-return`, body);
   },
 
   async getReturnsAsync(contractId: number): Promise<ContractReturn[]> {
     return apiClient.get<ContractReturn[]>(`/contracts/${contractId}/returns`);
+  },
+
+  async getBillingPlanAsync(contractId: number, asOf?: string): Promise<BillingPeriod[]> {
+    const trimmed = asOf?.trim();
+    const qs = trimmed ? `?asOf=${encodeURIComponent(trimmed)}` : '';
+    const raw = await apiClient.get<unknown>(`/contracts/${contractId}/billing-plan${qs}`);
+    return parseBillingPlan(raw);
+  },
+
+  async getBillingSummaryAsync(contractId: number): Promise<BillingSummary> {
+    const raw = await apiClient.get<unknown>(`/contracts/${contractId}/billing-summary`);
+    return parseBillingSummary(raw);
+  },
+
+  async markBilledPeriodAsync(
+    contractId: number,
+    data: MarkBilledPeriodRequest
+  ): Promise<MarkBilledPeriodResponse> {
+    return apiClient.post<MarkBilledPeriodResponse>(`/contracts/${contractId}/billed-periods`, data);
+  },
+
+  async unmarkBilledPeriodAsync(contractId: number, periodStart: string): Promise<void> {
+    await apiClient.delete<void>(billedPeriodDeletePath(contractId, periodStart));
   },
 
   async calculatePriceAsync(contractId: number): Promise<ContractPriceCalculation> {
@@ -431,6 +482,74 @@ export const contractService = {
     }
 
     return Array.from(byItem.values());
+  },
+
+  // ==================== Sözleşme Uzatma (Contract Extensions) ====================
+
+  /** Sözleşme uzatma geçmişini getirir */
+  async getExtensionsAsync(contractId: number): Promise<ContractExtensionHistory> {
+    return apiClient.get<ContractExtensionHistory>(`/contracts/${contractId}/extensions`);
+  },
+
+  /** Yeni sözleşme uzatması oluşturur */
+  async createExtensionAsync(
+    contractId: number,
+    data: CreateExtensionRequest
+  ): Promise<ContractExtension> {
+    return apiClient.post<ContractExtension>(`/contracts/${contractId}/extensions`, data);
+  },
+
+  /** Son uzatmayı iptal eder */
+  async cancelExtensionAsync(
+    contractId: number,
+    extensionId: number,
+    data: CancelExtensionRequest
+  ): Promise<ContractExtension> {
+    return apiClient.delete<ContractExtension>(
+      `/contracts/${contractId}/extensions/${extensionId}`,
+      data as unknown as Record<string, unknown>
+    );
+  },
+
+  // ==================== Sözleşme Faturaları (Contract Invoices) ====================
+
+  /** Sözleşme faturalarını listeler */
+  async getInvoicesAsync(
+    contractId: number,
+    includeDeleted: boolean = false
+  ): Promise<ContractInvoice[]> {
+    const qs = includeDeleted ? '?includeDeleted=true' : '';
+    return apiClient.get<ContractInvoice[]>(`/contracts/${contractId}/invoices${qs}`);
+  },
+
+  /** Yeni fatura kaydı oluşturur */
+  async createInvoiceAsync(
+    contractId: number,
+    data: CreateInvoiceRequest
+  ): Promise<ContractInvoice> {
+    return apiClient.post<ContractInvoice>(`/contracts/${contractId}/invoices`, data);
+  },
+
+  /** Fatura kaydını günceller */
+  async updateInvoiceAsync(
+    contractId: number,
+    invoiceId: number,
+    data: UpdateInvoiceRequest
+  ): Promise<ContractInvoice> {
+    return apiClient.put<ContractInvoice>(
+      `/contracts/${contractId}/invoices/${invoiceId}`,
+      data as unknown as Record<string, unknown>
+    );
+  },
+
+  /** Fatura kaydını siler (soft delete) */
+  async deleteInvoiceAsync(contractId: number, invoiceId: number): Promise<void> {
+    return apiClient.delete<void>(`/contracts/${contractId}/invoices/${invoiceId}`);
+  },
+
+  /** Aylık fatura özetini getirir */
+  async getInvoicingSummaryAsync(contractId: number): Promise<ContractInvoicingSummary> {
+    return apiClient.get<ContractInvoicingSummary>(`/contracts/${contractId}/invoicing-summary`);
   },
 };
 

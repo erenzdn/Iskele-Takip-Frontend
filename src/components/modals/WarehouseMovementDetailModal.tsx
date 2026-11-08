@@ -1,4 +1,5 @@
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon, PackageIcon, FileTextIcon, UserIcon, BuildingsIcon } from '@phosphor-icons/react';
 import { WarehouseMovementRow, resolveContractQuoteType } from '../../models';
 
@@ -17,6 +18,7 @@ export default function WarehouseMovementDetailModal({
   onOpenCustomer,
   onOpenItem,
 }: WarehouseMovementDetailModalProps) {
+  const portalTarget = usePortalTarget();
   if (!row) return null;
 
   const returned = row.totals?.returned ?? 0;
@@ -232,5 +234,5 @@ export default function WarehouseMovementDetailModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalContent, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalContent, portalTarget) : null;
 }

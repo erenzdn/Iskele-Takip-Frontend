@@ -1,6 +1,6 @@
 ﻿import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } from 'react';
 import { UsersIcon } from '@phosphor-icons/react';
-import { useLocation, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { customerService } from '../services/customerService';
 import { Customer } from '../models';
 import { DEFAULT_PAGE_LIMIT } from '../utils/paginatedResponse';
@@ -8,7 +8,7 @@ import { formatShortDateTime } from '../utils/formatters';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from '../components/EmptyState';
 import ExcelManager from '../components/ExcelManager';
-import CustomerDetailModal from '../components/modals/CustomerDetailModal';
+import { useInvalidation } from '../store/dataInvalidationStore';
 import { getPreferredCustomerContact } from '../utils/customerContacts';
 import { getUserFacingErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
@@ -23,7 +23,6 @@ import { useContextMenu, useContextMenuHandlers, type CustomerModalInitialTab, t
 import { useHeaderActions } from '../layouts/HeaderActionsContext';
 
 export default function CustomersPage() {
-  const location = useLocation();
   const navigate = useNavigate();
   const user = useAuthStore((state) => state.user);
   const permissions = user?.permissions ?? [];
@@ -49,15 +48,6 @@ export default function CustomersPage() {
   const [listLoading, setListLoading] = useState(false);
   const [hadFirstLoad, setHadFirstLoad] = useState(false);
   const hadFirstLoadRef = useRef(false);
-  const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null);
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isNewCustomer, setIsNewCustomer] = useState(false);
-  const [startInEditMode, setStartInEditMode] = useState(false);
-  const [initialTab, setInitialTab] = useState<CustomerModalInitialTab>('info');
-  const consumedOpenCustomerIdRef = useRef<number | null>(null);
-  const fetchingOpenCustomerByIdRef = useRef<number | null>(null);
-  const returnOnCloseRef = useRef<boolean>(false);
-  const returnToRef = useRef<{ path: string; state?: any } | null>(null);
   const { openContextMenu } = useContextMenu();
   const { setActions } = useHeaderActions();
 
@@ -97,83 +87,20 @@ export default function CustomersPage() {
     void fetchCustomers();
   }, [fetchCustomers]);
 
+  useInvalidation('customers', loadCustomers);
+
   const handleAddNew = useCallback(() => {
-    setSelectedCustomer(null);
-    setIsNewCustomer(true);
-    setStartInEditMode(true);
-    setInitialTab('info');
-    setIsModalOpen(true);
-  }, []);
+    navigate('/customers/new');
+  }, [navigate]);
 
   const handleOpenDetail = useCallback((customer: Customer, options?: { startInEditMode?: boolean; initialTab?: CustomerModalInitialTab }) => {
-    setSelectedCustomer(customer);
-    setIsNewCustomer(false);
-    setStartInEditMode(Boolean(options?.startInEditMode));
-    setInitialTab(options?.initialTab ?? 'info');
-    setIsModalOpen(true);
-  }, []);
-
-  useEffect(() => {
-    const st = location.state as any;
-    const openCustomerId = st?.openCustomerId;
-    if (!openCustomerId) return;
-    const idNum = Number(openCustomerId);
-    if (!Number.isFinite(idNum) || idNum <= 0) return;
-    if (consumedOpenCustomerIdRef.current === idNum) return;
-
-    const found = customers.find((c) => c.CustomerId === idNum);
-    if (found) {
-      consumedOpenCustomerIdRef.current = idNum;
-      returnOnCloseRef.current = Boolean(st?.returnOnClose);
-      const rt = st?.returnTo;
-      returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
-      handleOpenDetail(found);
-      navigate(location.pathname + location.search, { replace: true, state: null });
-      return;
-    }
-
-    if (loading || !hadFirstLoadRef.current) return;
-    if (fetchingOpenCustomerByIdRef.current === idNum) return;
-
-    fetchingOpenCustomerByIdRef.current = idNum;
-    void customerService
-      .getByIdAsync(idNum)
-      .then((c) => {
-        fetchingOpenCustomerByIdRef.current = null;
-        if (consumedOpenCustomerIdRef.current === idNum) return;
-        consumedOpenCustomerIdRef.current = idNum;
-        returnOnCloseRef.current = Boolean(st?.returnOnClose);
-        const rt = st?.returnTo;
-        returnToRef.current = rt && typeof rt.path === 'string' ? rt : null;
-        handleOpenDetail(c);
-        navigate(location.pathname + location.search, { replace: true, state: null });
-      })
-      .catch(() => {
-        fetchingOpenCustomerByIdRef.current = null;
-        consumedOpenCustomerIdRef.current = idNum;
-        toast.warning('Müşteri bulunamadı.');
-        navigate(location.pathname + location.search, { replace: true, state: null });
-      });
-  }, [customers, loading, location.pathname, location.search, location.state, navigate, handleOpenDetail]);
-
-  const handleModalClose = () => {
-    setIsModalOpen(false);
-    setSelectedCustomer(null);
-    setStartInEditMode(false);
-    setInitialTab('info');
-    if (returnOnCloseRef.current) {
-      returnOnCloseRef.current = false;
-      const rt = returnToRef.current;
-      returnToRef.current = null;
-      if (rt?.path) {
-        navigate(rt.path, { replace: true, state: rt.state ?? null });
-      } else {
-        navigate(-1);
-      }
-      return;
-    }
-    loadCustomers();
-  };
+    navigate(`/customers/${customer.CustomerId}`, {
+      state: {
+        initialTab: options?.initialTab ?? 'info',
+        startInEditMode: Boolean(options?.startInEditMode),
+      },
+    });
+  }, [navigate]);
 
   const openCustomerContextMenu = (event: MouseEvent<HTMLTableRowElement>, customer: Customer) => {
     event.preventDefault();
@@ -490,15 +417,6 @@ export default function CustomersPage() {
         </div>
       )}
 
-      {isModalOpen && (
-        <CustomerDetailModal
-          customer={selectedCustomer}
-          isNew={isNewCustomer}
-          startInEditMode={startInEditMode}
-          initialTab={initialTab}
-          onClose={handleModalClose}
-        />
-      )}
     </div>
   );
 }

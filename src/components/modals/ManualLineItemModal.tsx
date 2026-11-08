@@ -60,7 +60,7 @@ export default function ManualLineItemModal({
 
   return (
     <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[80]" aria-modal="true" role="dialog">
-      <div className="bg-background-panel rounded-xl w-[95vw] max-w-xl shadow-2xl border border-background-border overflow-hidden">
+      <div className="bg-background-panel rounded-xl w-[95vw] max-w-xl shadow-2xl border border-background-border max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-background-border shrink-0 bg-background-secondary/50">
           <h2 className="text-lg font-semibold text-text-primary">
             {mode === 'quote' ? 'Manuel Kalem Ekle (Teklif)' : 'Manuel Kalem Ekle (Sözleşme)'}

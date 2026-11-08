@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { CheckCircleIcon, MinusCircleIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
 import { Inventory } from '../../models';
 import ItemPickerPanel, { ItemDisplayMode, QuotePricingMode } from '../ItemPickerPanel';
@@ -79,6 +80,7 @@ export default function ProductPickerModal({
   onAddNewItem,
   zIndexClass = 'z-[60]',
 }: ProductPickerModalProps) {
+  const portalTarget = usePortalTarget();
   const [highlightedItemIds, setHighlightedItemIds] = useState<Set<number>>(() => new Set());
   const [toast, setToast] = useState<{ message: string; kind: 'added' | 'removed' } | null>(null);
   const flashTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -232,5 +234,5 @@ export default function ProductPickerModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }

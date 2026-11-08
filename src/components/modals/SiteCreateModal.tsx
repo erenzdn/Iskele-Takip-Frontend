@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import { ConstructionSite } from '../../models';
 import { siteService } from '../../services/siteService';
@@ -20,6 +21,7 @@ export default function SiteCreateModal({
   onClose,
   onCreated,
 }: SiteCreateModalProps) {
+  const portalTarget = usePortalTarget();
   const [siteName, setSiteName] = useState('');
   const [siteAddress, setSiteAddress] = useState('');
   const [responsiblePerson, setResponsiblePerson] = useState('');
@@ -135,6 +137,6 @@ export default function SiteCreateModal({
         </button>
       </div>
     </div>,
-    document.body
+    portalTarget
   );
 }

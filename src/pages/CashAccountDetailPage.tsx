@@ -16,6 +16,7 @@ import ConfirmModal from '../components/modals/ConfirmModal';
 import CashTransactionModal from '../components/modals/CashTransactionModal';
 import CashAccountModal from '../components/modals/CashAccountModal';
 import EmptyState from '../components/EmptyState';
+import { useTabTitle } from '../components/tabs/TabContext';
 import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
@@ -88,6 +89,7 @@ export default function CashAccountDetailPage() {
   const canDelete = permissions.includes('cash_delete');
 
   const [account, setAccount] = useState<CashAccount | null>(null);
+  useTabTitle(account?.name ? account.name : 'Hesap Hareketi');
   const [accountLoading, setAccountLoading] = useState(true);
   const [accountError, setAccountError] = useState<string | null>(null);
 

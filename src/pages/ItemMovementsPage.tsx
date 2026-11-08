@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowsClockwiseIcon, CaretDownIcon, CaretRightIcon, ListMagnifyingGlassIcon } from '@phosphor-icons/react';
 import EmptyState from '../components/EmptyState';
+import { useTabTitle } from '../components/tabs/TabContext';
 import { inventoryService } from '../services/inventoryService';
 import { warehouseService } from '../services/warehouseService';
 import type { InventoryItemMovementsResponse, InventoryItemMovementContractRow, Warehouse } from '../models';
@@ -113,6 +114,7 @@ export default function ItemMovementsPage() {
       code: item?.ItemCode || '-',
     };
   }, [data?.item, parsedItemId]);
+  useTabTitle(itemHeader.name);
 
   const summary = data?.summary;
   const contracts = data?.contracts ?? [];
@@ -129,21 +131,11 @@ export default function ItemMovementsPage() {
 
   const openContractDetail = (row: InventoryItemMovementContractRow) => {
     // Sözleşmeler sayfası modal tabanlı olduğu için state ile açtırıyoruz.
-    navigate('/contracts/rental', {
-      state: {
-        openContractId: row.ContractId,
-        initialTab: 'info',
-        preferTab: row.isCompleted ? 'completed' : 'active',
-      },
-    });
+    if (row.ContractId) navigate(`/contracts/${row.ContractId}`);
   };
 
   const openCustomerDetail = (row: InventoryItemMovementContractRow) => {
-    navigate('/customers', {
-      state: {
-        openCustomerId: row.customer?.CustomerId,
-      },
-    });
+    if (row.customer?.CustomerId) navigate(`/customers/${row.customer.CustomerId}`);
   };
 
   const renderStatusBadge = (row: InventoryItemMovementContractRow) => {

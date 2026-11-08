@@ -1,12 +1,18 @@
 import { useState, useEffect, useMemo } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import { InventoryContractLineItem, Inventory } from '../../models';
 import { contractService } from '../../services/contractService';
 import { inventoryService } from '../../services/inventoryService';
 import { toast } from '../../hooks/useToast';
 import { getApiErrorMessage } from '../../utils/apiError';
+import {
+  AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE,
+  isAmbiguousContractDetailError,
+} from '../../utils/contractReturn';
 import { formatMoney } from '../../utils/formatters';
+import { todayDateInput } from '../../utils/dateInput';
 
 interface SettleNonReturnModalProps {
   contractId: number;
@@ -30,10 +36,12 @@ export default function SettleNonReturnModal({
   onClose,
   onSuccess,
 }: SettleNonReturnModalProps) {
+  const portalTarget = usePortalTarget();
   const [quantity, setQuantity] = useState<string>('1');
   const [reason, setReason] = useState<'SALE' | 'DEFECT'>('SALE');
   const [priceBasis, setPriceBasis] = useState<'TRY' | 'USD' | 'EUR'>(currency);
   const [chargeOverride, setChargeOverride] = useState<string>('');
+  const [settlementDate, setSettlementDate] = useState<string>(todayDateInput);
   const [inventoryItem, setInventoryItem] = useState<Inventory | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -78,6 +86,11 @@ export default function SettleNonReturnModal({
       return;
     }
 
+    if (!settlementDate) {
+      toast.warning('Kapama tarihini girin.');
+      return;
+    }
+
     if (isDifferentCurrency && !chargeOverride.trim()) {
       toast.warning(`Sözleşme para birimi ${currency} olduğu için, ${priceBasis} bazlı bu işlemin sözleşmeye yansıtılacak ${currency} tutarını (Override) girmelisiniz.`);
       return;
@@ -102,11 +115,18 @@ export default function SettleNonReturnModal({
         settlementReason: reason,
         priceBasis: priceBasis,
         settlementChargeOverride: overrideValue,
+        // İade formuyla aynı biçim (gün başı); kira bu güne kadar hesaplanır, bu gün dahil değildir.
+        SettlementDate: new Date(settlementDate).toISOString(),
+        ...(item.DetailId != null && item.DetailId > 0 ? { DetailId: item.DetailId } : {}),
       });
       toast.success('Sanal iade işlemi başarıyla tamamlandı.');
       onSuccess();
     } catch (error) {
-      toast.error(getApiErrorMessage(error) || 'Sanal iade işlemi başarısız oldu.');
+      toast.error(
+        isAmbiguousContractDetailError(error)
+          ? AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE
+          : getApiErrorMessage(error) || 'Sanal iade işlemi başarısız oldu.'
+      );
     } finally {
       setIsSubmitting(false);
     }
@@ -145,6 +165,21 @@ export default function SettleNonReturnModal({
                 required
                 disabled={isSubmitting || isLoading}
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium mb-1">Kapama Tarihi</label>
+              <input
+                type="date"
+                className="input w-full"
+                value={settlementDate}
+                onChange={(e) => setSettlementDate(e.target.value)}
+                required
+                disabled={isSubmitting || isLoading}
+              />
+              <p className="text-xs text-text-secondary mt-1">
+                Bu adetlerin kirası kapama tarihine kadar hesaplanır (ilk 30 gün asgari); malzeme bedeli kiraya ek olarak yazılır.
+              </p>
             </div>
 
             <div>
@@ -232,6 +267,6 @@ export default function SettleNonReturnModal({
         </div>
       </div>
     </div>,
-    document.body
+    portalTarget
   );
 }

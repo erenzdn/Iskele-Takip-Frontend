@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import type { ContractQuoteType, Inventory, Warehouse, WarehouseStock } from '../../models';
 import { contractService, type AddContractDetailsRequestBody } from '../../services/contractService';
@@ -40,6 +41,7 @@ export default function ContractAddLineItemModal({
   onClose,
   onAdded,
 }: ContractAddLineItemModalProps) {
+  const portalTarget = usePortalTarget();
   const isRental = contractType === 'RENTAL';
   const isSale = contractType === 'SALE';
 
@@ -223,7 +225,7 @@ export default function ContractAddLineItemModal({
 
   const modalTree = (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-xl rounded-xl border border-background-border bg-background-panel shadow-xl">
+      <div className="w-full max-w-xl rounded-xl border border-background-border bg-background-panel shadow-xl max-h-[90vh] overflow-y-auto">
         <header className="flex items-center justify-between px-5 py-4 border-b border-background-border">
           <h2 className="text-lg font-semibold text-text-primary">Kalem Ekle</h2>
           <button
@@ -476,6 +478,6 @@ export default function ContractAddLineItemModal({
     </div>
   );
 
-  return typeof document !== 'undefined' ? createPortal(modalTree, document.body) : null;
+  return typeof document !== 'undefined' ? createPortal(modalTree, portalTarget) : null;
 }
 

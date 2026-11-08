@@ -385,6 +385,7 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       icon: <TrashIcon size={iconSize} />,
       intent: 'danger',
       handlerKey: 'quote.delete',
+      requiredPermissions: ['quotes_delete'],
       enabledWhen: (target) =>
         Boolean(isQuoteTarget(target) && !target.rawData.ConvertedContractId),
       confirm: {

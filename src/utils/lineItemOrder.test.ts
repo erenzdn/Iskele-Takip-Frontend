@@ -4,6 +4,7 @@ import {
   extractContractDetails,
   extractQuoteDetails,
   lineIdentity,
+  resolveContractDisplayOrder,
   sortByQuoteLineOrder,
   sortByStoredLineOrder,
   withContractDetails,
@@ -79,6 +80,28 @@ describe('sortByQuoteLineOrder', () => {
     ];
     expect(sortByQuoteLineOrder(contractLines, quoteLines).map((row) => row.ItemId)).toEqual([
       1, 2, 99,
+    ]);
+  });
+});
+
+describe('resolveContractDisplayOrder', () => {
+  it('kayıtlı sıra varsa teklif sırasının yerine onu kullanır', () => {
+    const quoteLines = [{ ItemId: 1 }, { ItemId: 2 }, { ItemId: 3 }];
+    const contractLines = [
+      { ItemId: 1, LineOrder: 3 },
+      { ItemId: 2, LineOrder: 1 },
+      { ItemId: 3, LineOrder: 2 },
+    ];
+    expect(resolveContractDisplayOrder(contractLines, quoteLines).map((row) => row.ItemId)).toEqual([
+      2, 3, 1,
+    ]);
+  });
+
+  it('kayıtlı sıra yoksa teklif sırasını başlangıç kabul eder', () => {
+    const quoteLines = [{ ItemId: 3 }, { ItemId: 1 }];
+    const contractLines = [{ ItemId: 1 }, { ItemId: 3 }];
+    expect(resolveContractDisplayOrder(contractLines, quoteLines).map((row) => row.ItemId)).toEqual([
+      3, 1,
     ]);
   });
 });

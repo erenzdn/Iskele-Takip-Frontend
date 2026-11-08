@@ -18,6 +18,9 @@ const __dirname = dirname(__filename);
 
 const isDev = process.env.NODE_ENV === 'development' || !app.isPackaged;
 
+/** Güncelleme kurulurken kapanış onayı sorulmaz. */
+let isUpdating = false;
+
 type LiveExchangeRatesOk = {
   ok: true;
   usdSelling: number;
@@ -137,6 +140,28 @@ function createWindow() {
     titleBarStyle: 'default',
   });
 
+  // Renderer, düzenleme modunda sekme varken kapanışı (beforeunload) durdurur.
+  // Burada kullanıcıya sorulur; onaylarsa kapanışa izin verilir.
+  mainWindow.webContents.on('will-prevent-unload', (event) => {
+    if (isUpdating) {
+      event.preventDefault();
+      return;
+    }
+    const choice = dialog.showMessageBoxSync(mainWindow, {
+      type: 'warning',
+      buttons: ['Kapat', 'Vazgeç'],
+      defaultId: 1,
+      cancelId: 1,
+      noLink: true,
+      title: 'Uygulamayı kapat',
+      message: 'Düzenleme modunda olan sayfalar var.',
+      detail: 'Kaydedilmemiş değişiklikler kaybolacak. Kapatmak istediğinize emin misiniz?',
+    });
+    if (choice === 0) {
+      event.preventDefault();
+    }
+  });
+
   // Zero-Trust: Token artık localStorage'da tutulmuyor, RAM'de tutuluyor.
   // Uygulama kapandığında otomatik olarak silinir, manuel temizlik gereksiz.
 
@@ -223,6 +248,17 @@ app.whenReady().then(() => {
 
   // --- Auto-updater Section ---
   autoUpdater.autoDownload = false; // Kullanıcı onayı olmadan indirme yapmasın
+  autoUpdater.autoInstallOnAppQuit = true;
+  
+  // GitHub API kullanımını zorla (atom feed yerine)
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'erenzdn',
+    repo: 'Iskele-Takip-Frontend',
+    private: false,
+    // GitHub releases API'yi kullan
+    useMultipleRangeRequest: false,
+  });
 
   // ÖNEMLİ: Dinleyicileri (on) kontrolü başlatmadan ÖNCE tanımla
   autoUpdater.on('checking-for-update', () => {
@@ -251,9 +287,23 @@ app.whenReady().then(() => {
 
   autoUpdater.on('error', (err: Error) => {
     log.error('Güncelleme sırasında hata oluştu:', err);
-    BrowserWindow.getAllWindows().forEach(win => {
-      win.webContents.send('update-error', err.message);
-    });
+    
+    // 503 gibi geçici hatalar için daha az agresif yaklaşım
+    const errorMsg = err.message || String(err);
+    const isTemporaryError = errorMsg.includes('503') || 
+                            errorMsg.includes('Service Unavailable') ||
+                            errorMsg.includes('ENOTFOUND') ||
+                            errorMsg.includes('ETIMEDOUT');
+    
+    if (isTemporaryError) {
+      log.warn('Geçici bir ağ hatası tespit edildi. Kullanıcı bilgilendirilmiyor.');
+      // Geçici hatalarda kullanıcıyı rahatsız etmeyelim
+      // Uygulama kapanıp açıldığında tekrar deneyecek
+    } else {
+      BrowserWindow.getAllWindows().forEach(win => {
+        win.webContents.send('update-error', errorMsg);
+      });
+    }
   });
 
   autoUpdater.on('download-progress', (progressObj: any) => {
@@ -273,7 +323,13 @@ app.whenReady().then(() => {
   // Dinleyiciler hazır olduktan sonra kontrolü başlat
   if (!isDev) {
     log.info('Uygulama paketlenmiş modda, güncelleme kontrolü başlatılıyor...');
-    autoUpdater.checkForUpdates();
+    // Güncelleme kontrolünü güvenli şekilde başlat
+    setTimeout(() => {
+      autoUpdater.checkForUpdates().catch((err: Error) => {
+        log.error('İlk güncelleme kontrolü başarısız:', err);
+        // Hata durumunda uygulamayı çökertme, sadece logla
+      });
+    }, 3000); // Uygulama tamamen yüklendikten 3 saniye sonra kontrol et
   } else {
     log.info('Uygulama geliştirme modunda, güncelleme kontrolü atlandı.');
   }
@@ -285,8 +341,6 @@ app.whenReady().then(() => {
     log.info('Renderer: İndirme başlatılıyor...');
     autoUpdater.downloadUpdate();
   });
-
-  let isUpdating = false;
 
   ipcMain.on('install-update', () => {
     log.info('Renderer: Güncelleme yükleniyor ve yeniden başlatılıyor...');

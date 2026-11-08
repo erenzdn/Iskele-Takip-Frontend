@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon } from '@phosphor-icons/react';
 import { Document, Page, pdfjs } from 'react-pdf';
 
@@ -32,6 +33,7 @@ export default function PdfPreviewModal({
   downloadFileName = 'belge.pdf',
   onClose,
 }: PdfPreviewModalProps) {
+  const portalTarget = usePortalTarget();
   const [numPages, setNumPages] = useState(0);
   const [pageWidth, setPageWidth] = useState(794);
   const [pdfBuffer, setPdfBuffer] = useState<ArrayBuffer | null>(null);
@@ -168,5 +170,5 @@ export default function PdfPreviewModal({
     </div>
   );
 
-  return createPortal(modalContent, document.body);
+  return createPortal(modalContent, portalTarget);
 }
