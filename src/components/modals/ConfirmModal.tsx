@@ -39,7 +39,7 @@ export default function ConfirmModal({
       aria-labelledby="confirm-modal-title"
       onMouseDown={(event) => event.stopPropagation()}
     >
-      <div className="bg-background-panel rounded-panel w-full max-w-md p-6 shadow-xl">
+      <div className="bg-background-panel rounded-panel w-full max-w-md p-6 shadow-xl max-h-[90vh] overflow-y-auto">
         <h3 id="confirm-modal-title" className="text-xl font-bold mb-3">
           {title}
         </h3>

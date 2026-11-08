@@ -3233,7 +3233,7 @@ export default function ContractDetailModal({
       )}
 
       {activeTab === 'extensions' && !isNew && contract?.ContractId && isRentalContract && (canViewContracts || canExtendContract) && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <ContractExtensionsPanel
             contractId={contract.ContractId}
             contractCode={contract.ContractCode}
@@ -3252,7 +3252,7 @@ export default function ContractDetailModal({
       )}
 
       {activeTab === 'invoices' && !isNew && contract?.ContractId && (canViewContracts || canManageInvoices) && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <div className="min-h-0 flex-1 overflow-y-auto">
           <ContractInvoicesPanel
             contractId={contract.ContractId}
             contractCode={contract.ContractCode}

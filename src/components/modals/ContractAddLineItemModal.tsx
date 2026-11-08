@@ -225,7 +225,7 @@ export default function ContractAddLineItemModal({
 
   const modalTree = (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
-      <div className="w-full max-w-xl rounded-xl border border-background-border bg-background-panel shadow-xl">
+      <div className="w-full max-w-xl rounded-xl border border-background-border bg-background-panel shadow-xl max-h-[90vh] overflow-y-auto">
         <header className="flex items-center justify-between px-5 py-4 border-b border-background-border">
           <h2 className="text-lg font-semibold text-text-primary">Kalem Ekle</h2>
           <button

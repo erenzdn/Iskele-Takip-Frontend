@@ -882,7 +882,7 @@ export default function AddendumDetailModal({
 
       {showRejectModal && (
         <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-4">
-          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 shadow-xl space-y-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 shadow-xl space-y-4 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold">Zeyilnameyi reddet</h3>
             <p className="text-sm text-text-secondary">Red gerekçesi zorunludur.</p>
             <textarea

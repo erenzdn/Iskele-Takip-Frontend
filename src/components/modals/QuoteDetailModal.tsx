@@ -4178,7 +4178,7 @@ export default function QuoteDetailModal({
 
       {/* Sözleşmeye Dönüştür - Depo Atama Modal */}
       {showConvertModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60]">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
           <div className="bg-background-panel rounded-panel w-full max-w-2xl p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-xl font-bold mb-4">Sözleşmeye Dönüştür – Stok / Depo</h3>
             <p className="text-sm text-text-secondary mb-4">
@@ -4556,7 +4556,7 @@ export default function QuoteDetailModal({
       {showCreateContactModal &&
         createPortal(
           <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[9999] p-4 backdrop-blur-sm">
-            <div className="bg-background-panel rounded-panel shadow-xl w-full max-w-md border border-background-border">
+            <div className="bg-background-panel rounded-panel shadow-xl w-full max-w-md border border-background-border max-h-[90vh] overflow-y-auto">
               <div className="flex items-center justify-between p-4 border-b border-background-border">
                 <h3 className="text-sm font-medium text-text-primary">Yeni Merkez Yetkilisi Ekle</h3>
                 <button
@@ -4678,8 +4678,8 @@ export default function QuoteDetailModal({
         onClose={closePdfPreview}
       />
       {showCreatePackageModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70]">
-          <div className="bg-background-panel rounded-panel w-full max-w-lg p-6">
+        <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-lg p-6 max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-semibold mb-3">Tekliften Yeni Paket Oluştur</h3>
             <div className="space-y-3">
               <div>

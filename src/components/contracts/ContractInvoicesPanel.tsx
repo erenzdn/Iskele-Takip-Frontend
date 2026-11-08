@@ -390,7 +390,7 @@ export default function ContractInvoicesPanel({
   const hasRentalInfo = isRentalContract && contractStartDate && rentalDays != null;
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div>
       <div className="p-4 space-y-4">
       {/* Fatura Durumu Kartı */}
       {(contractTotalAmount != null || rentalPlanTotalLoading) && (
