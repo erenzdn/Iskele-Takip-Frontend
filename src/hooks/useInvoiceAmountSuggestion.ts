@@ -1,10 +1,10 @@
 /**
  * Kiralama faturası tutarı otomatik hesaplama hook'u.
  * 
- * Dönem tarihleri girilince debounce ile billing-plan çeker ve
- * gün bazlı orantılı tutar hesaplar. İki adımlı istek stratejisi:
- * 1. asOf=bitiş ile plan çek
- * 2. Açık dönem ay ortasında kesilmişse ay sonu ile tekrar çek
+ * Dönem tarihleri girilince debounce ile iki billing-plan çeker:
+ * 1. asOf = fatura bitiş gününün ertesi (bitiş günü dahil)
+ * 2. asOf = fatura başlangıç günü
+ * Tutar = iki birikmiş tahakkukun farkı (ilk 30 gün asgari, sonrası aylık / 30 günlük).
  * 
  * Önbellekleme ve stale yanıt koruması ile performans optimize edilir.
  */
@@ -14,14 +14,18 @@ import { useDebouncedValue } from './useDebouncedValue';
 import { contractService } from '../services/contractService';
 import type { BillingPeriod } from '../models';
 import {
-  computeInvoiceAmountForRange,
-  nextBillingPlanAsOfKey,
+  accrualBoundaryIso,
+  computeInvoiceAmountFromAccrual,
+  isoToLocalDateKey,
+  sumPlanAccrual,
   type InvoiceAmountCalculation,
 } from '../utils/invoiceAmountCalc';
-import { asOfDateInputToIso } from '../utils/billingPlan';
+import { addCalendarDays, todayDateInput } from '../utils/dateInput';
 
 interface UseInvoiceAmountSuggestionParams {
   contractId: number;
+  /** Sözleşme başlangıcı (ISO); tahakkuk sınırları bu saate hizalanır */
+  contractStartDate: string | null | undefined;
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   enabled: boolean; // Kiralama sözleşmesi ve aynı para birimi
@@ -63,6 +67,14 @@ function getCachedPlan(contractId: number, asOf: string): BillingPeriod[] | null
   return entry.plan;
 }
 
+/** Sözleşmenin önbellekteki planlarını siler (zeyilname/iade/uzatma sonrası bayat tutar önerilmesin). */
+export function clearInvoicePlanCache(contractId: number): void {
+  const prefix = `${contractId}:`;
+  for (const key of Array.from(planCache.keys())) {
+    if (key.startsWith(prefix)) planCache.delete(key);
+  }
+}
+
 function setCachedPlan(contractId: number, asOf: string, plan: BillingPeriod[]): void {
   const key = getCacheKey(contractId, asOf);
   planCache.set(key, {
@@ -78,7 +90,7 @@ function setCachedPlan(contractId: number, asOf: string, plan: BillingPeriod[]):
 export function useInvoiceAmountSuggestion(
   params: UseInvoiceAmountSuggestionParams
 ): UseInvoiceAmountSuggestionResult {
-  const { contractId, startDate, endDate, enabled } = params;
+  const { contractId, contractStartDate, startDate, endDate, enabled } = params;
 
   // 400ms debounce - kullanıcı tarih değiştirirken gereksiz istek atılmasın
   const debouncedStartDate = useDebouncedValue(startDate, 400);
@@ -98,7 +110,7 @@ export function useInvoiceAmountSuggestion(
 
   useEffect(() => {
     // Etkin değilse veya tarihler eksikse hesaplama
-    if (!enabled || !debouncedStartDate || !debouncedEndDate) {
+    if (!enabled || !contractStartDate || !debouncedStartDate || !debouncedEndDate) {
       setCalculation(null);
       setLoading(false);
       setError(null);
@@ -121,46 +133,40 @@ export function useInvoiceAmountSuggestion(
         setLoading(true);
         setError(null);
 
-        // 1. asOf=bitiş ile plan çek
-        const endDateIso = asOfDateInputToIso(debouncedEndDate);
-        if (!endDateIso) {
-          throw new Error('Geçersiz bitiş tarihi');
+        const contractStartKey = isoToLocalDateKey(contractStartDate);
+        const endBoundary = accrualBoundaryIso(contractStartDate, addCalendarDays(debouncedEndDate, 1));
+        const startBoundary = accrualBoundaryIso(contractStartDate, debouncedStartDate);
+        if (!contractStartKey || !endBoundary || !startBoundary) {
+          throw new Error('Geçersiz tarih');
         }
 
-        // Önbellekten kontrol
-        let plan = getCachedPlan(contractId, endDateIso);
-        
-        if (!plan) {
-          // API çağrısı
-          plan = await contractService.getBillingPlanAsync(contractId, endDateIso);
-          setCachedPlan(contractId, endDateIso, plan);
-        }
+        const loadPlan = async (asOf: string): Promise<BillingPeriod[]> => {
+          const cached = getCachedPlan(contractId, asOf);
+          if (cached) return cached;
+          const fetched = await contractService.getBillingPlanAsync(contractId, asOf);
+          setCachedPlan(contractId, asOf, fetched);
+          return fetched;
+        };
+
+        // Başlangıç sözleşmeden önce/aynı gündeyse birikmiş tahakkuk 0'dır; istek gerekmez.
+        const needsStartPlan = debouncedStartDate > contractStartKey;
+        const [planAtEnd, planAtStart] = await Promise.all([
+          loadPlan(endBoundary),
+          needsStartPlan ? loadPlan(startBoundary) : Promise.resolve([] as BillingPeriod[]),
+        ]);
 
         if (cancelled || currentRequestId !== requestIdRef.current) {
           return; // Stale yanıt, kullanma
         }
 
-        // 2. Açık ay kesik döndüyse gerçek ay sonuna kadar planı yeniden çek
-        const refetchKey = nextBillingPlanAsOfKey(plan, debouncedEndDate);
-        const refetchIso = refetchKey ? asOfDateInputToIso(refetchKey) : undefined;
-
-        if (refetchIso && refetchIso !== endDateIso) {
-          let extendedPlan = getCachedPlan(contractId, refetchIso);
-
-          if (!extendedPlan) {
-            extendedPlan = await contractService.getBillingPlanAsync(contractId, refetchIso);
-            setCachedPlan(contractId, refetchIso, extendedPlan);
-          }
-
-          if (cancelled || currentRequestId !== requestIdRef.current) {
-            return;
-          }
-
-          plan = extendedPlan;
-        }
-
-        // 3. Hesaplama yap
-        const result = computeInvoiceAmountForRange(plan, debouncedStartDate, debouncedEndDate);
+        const result = computeInvoiceAmountFromAccrual({
+          planAtEnd,
+          accruedAtStart: sumPlanAccrual(planAtStart),
+          startKey: debouncedStartDate,
+          endKey: debouncedEndDate,
+          contractStartKey,
+          todayKey: todayDateInput(),
+        });
 
         if (!cancelled && currentRequestId === requestIdRef.current) {
           setCalculation(result);
@@ -186,7 +192,7 @@ export function useInvoiceAmountSuggestion(
     return () => {
       cancelled = true;
     };
-  }, [contractId, debouncedStartDate, debouncedEndDate, enabled, retryTrigger]);
+  }, [contractId, contractStartDate, debouncedStartDate, debouncedEndDate, enabled, retryTrigger]);
 
   return {
     calculation,

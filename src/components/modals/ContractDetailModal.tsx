@@ -204,7 +204,7 @@ export default function ContractDetailModal({
   const [returnWarehouseId, setReturnWarehouseId] = useState<number | ''>('');
   /** İade miktarı inputu – sadece rakam */
   const [returnQuantityStr, setReturnQuantityStr] = useState<string>('1');
-  const [returnDate, setReturnDate] = useState<string>(new Date().toISOString().split('T')[0]);
+  const [returnDate, setReturnDate] = useState<string>(todayDateInput);
   const [isReturning, setIsReturning] = useState(false);
 
   // Sanal İade İşlemi state'leri
@@ -2172,7 +2172,7 @@ export default function ContractDetailModal({
       setShowReturnConfirm(false);
       setReturnDetailKey(null);
       setReturnQuantityStr('1');
-      setReturnDate(new Date().toISOString().split('T')[0]);
+      setReturnDate(todayDateInput());
       setReturnWarehouseId('');
 
       // İade geçmişini yenile
@@ -3237,13 +3237,12 @@ export default function ContractDetailModal({
           <ContractExtensionsPanel
             contractId={contract.ContractId}
             contractCode={contract.ContractCode}
-            currentPlannedEndDate={contract.PlannedEndDate}
+            currentPlannedEndDate={(fullContract ?? contract).PlannedEndDate}
             onExtensionCreated={async () => {
-              // Sözleşme detayını yenile (PlannedEndDate güncellenmiş olacak)
+              // Uzatma/iptal sonrası sözleşmeyi yenile (PlannedEndDate değişti).
+              // Bildirimi panel kendisi gösteriyor; iptalde "uzatıldı" yazmaması için burada toast yok.
               try {
-                const updated = await contractService.getByIdAsync(contract.ContractId);
-                setFullContract(updated);
-                toast.success('Sözleşme uzatıldı.');
+                await refreshContract();
               } catch (error) {
                 console.error('Refresh contract after extension error:', error);
               }
@@ -3258,9 +3257,10 @@ export default function ContractDetailModal({
             contractId={contract.ContractId}
             contractCode={contract.ContractCode}
             contractCurrency={currency}
-            contractTotalAmount={contract.InitialTotalPrice}
-            contractStartDate={contract.StartDate}
-            contractPlannedEndDate={contract.PlannedEndDate}
+            /* `contract` listeden gelen ilk kopyadır; uzatma/güncelleme sonrası güncel olan fullContract'tır. */
+            contractNetTotal={(fullContract ?? contract).NetTotal}
+            contractStartDate={(fullContract ?? contract).StartDate}
+            contractPlannedEndDate={(fullContract ?? contract).PlannedEndDate}
             isRentalContract={isRentalContract}
           />
         </div>

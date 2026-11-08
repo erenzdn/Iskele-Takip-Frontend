@@ -8,6 +8,8 @@ import { formatShortDateTime } from '../../utils/formatters';
 import { addCalendarDays, calendarDaysBetween, parseDateInput, todayDateInput } from '../../utils/dateInput';
 import { useAuthStore } from '../../store/authStore';
 
+const EXTENSION_BLOCK_DAYS = 30;
+
 function toDateKey(value: string | null | undefined): string {
   if (!value) return '';
   const day = value.split('T')[0];
@@ -39,6 +41,9 @@ export default function ContractExtensionsPanel({
   });
   const [submitting, setSubmitting] = useState(false);
   const [cancelling, setCancelling] = useState<number | null>(null);
+  const [cancelTargetId, setCancelTargetId] = useState<number | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelReasonError, setCancelReasonError] = useState<string | null>(null);
 
   const user = useAuthStore((state) => state.user);
   const canExtendContract = Boolean(user?.permissions?.includes('contracts_extend'));
@@ -64,11 +69,31 @@ export default function ContractExtensionsPanel({
   const currentEndKey = toDateKey(history?.currentPlannedEndDate) || toDateKey(currentPlannedEndDate);
   const dayCount = calendarDaysBetween(startDate, endDate);
 
+  // Backend listeyi hangi sırayla dönerse dönsün, iptal edilebilir olan en yeni aktif uzatmadır.
+  const latestActiveExtensionId = (history?.extensions ?? [])
+    .filter((e) => e.status === 'active')
+    .reduce<{ id: number; time: number } | null>((best, e) => {
+      const time = new Date(e.createdAt).getTime() || 0;
+      if (!best || time > best.time || (time === best.time && e.extensionId > best.id)) {
+        return { id: e.extensionId, time };
+      }
+      return best;
+    }, null)?.id ?? null;
+
   const resetCreateForm = () => {
     setShowCreateForm(false);
     setStartDate(todayDateInput());
     setEndDate('');
     setFormData({ newPlannedEndDate: '', reason: '', notes: '' });
+  };
+
+  /** Kira 30 günlük bloklarla uzatılır: uzatma güncel bitişten başlar, varsayılan 30 gün. */
+  const openCreateForm = () => {
+    const from = currentEndKey || todayDateInput();
+    setStartDate(from);
+    setEndDate(addCalendarDays(from, EXTENSION_BLOCK_DAYS));
+    setFormData({ newPlannedEndDate: '', reason: '', notes: '' });
+    setShowCreateForm(true);
   };
 
   const handleStartDateChange = (nextStart: string) => {
@@ -118,16 +143,34 @@ export default function ContractExtensionsPanel({
     }
   };
 
-  const handleCancel = async (extensionId: number) => {
-    const reason = prompt('İptal sebebini yazın:');
-    if (!reason || reason.trim().length < 3) {
-      toast.warning('İptal sebebi en az 3 karakter olmalıdır.');
+  // Electron window.prompt() desteklemez (hata fırlatır) — gerekçe modal ile alınır.
+  const handleCancel = (extensionId: number) => {
+    setCancelTargetId(extensionId);
+    setCancelReason('');
+    setCancelReasonError(null);
+  };
+
+  const closeCancelModal = () => {
+    if (cancelling !== null) return;
+    setCancelTargetId(null);
+    setCancelReason('');
+    setCancelReasonError(null);
+  };
+
+  const confirmCancel = async () => {
+    const extensionId = cancelTargetId;
+    if (extensionId === null) return;
+    const reason = cancelReason.trim();
+    if (reason.length < 3) {
+      setCancelReasonError('İptal sebebi en az 3 karakter olmalıdır.');
       return;
     }
 
     try {
       setCancelling(extensionId);
       await contractService.cancelExtensionAsync(contractId, extensionId, { reason });
+      setCancelTargetId(null);
+      setCancelReason('');
       toast.success('Uzatma iptal edildi.');
       await loadHistory();
       onExtensionCreated?.();
@@ -189,12 +232,7 @@ export default function ContractExtensionsPanel({
       {/* Yeni Uzatma Butonu */}
       {!showCreateForm && canExtendContract && (
         <button
-          onClick={() => {
-            setStartDate(todayDateInput());
-            setEndDate('');
-            setFormData({ newPlannedEndDate: '', reason: '', notes: '' });
-            setShowCreateForm(true);
-          }}
+          onClick={openCreateForm}
           className="btn-primary w-full py-2"
         >
           + Yeni Uzatma Ekle
@@ -221,7 +259,7 @@ export default function ContractExtensionsPanel({
                 onChange={(e) => handleStartDateChange(e.target.value)}
                 className="input w-full"
                 disabled={submitting}
-                title="Varsayılan bugünün tarihi. İsterseniz değiştirebilirsiniz."
+                title="Varsayılan: güncel bitiş tarihi (uzatma kaldığı yerden devam eder)."
               />
             </div>
             <div>
@@ -256,6 +294,25 @@ export default function ContractExtensionsPanel({
               />
             </div>
           </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {[1, 2, 3, 6].map((months) => (
+              <button
+                key={months}
+                type="button"
+                className="btn-secondary text-xs px-2 py-1"
+                disabled={submitting || !startDate}
+                onClick={() => setEndDate(addCalendarDays(startDate, months * EXTENSION_BLOCK_DAYS))}
+              >
+                +{months * EXTENSION_BLOCK_DAYS} gün ({months} ay)
+              </button>
+            ))}
+          </div>
+          {Number.isFinite(dayCount) && dayCount >= 1 && dayCount % EXTENSION_BLOCK_DAYS !== 0 && (
+            <p className="text-xs text-amber-300">
+              Uzatma süresi 30 günün katı değil ({dayCount} gün).
+            </p>
+          )}
 
           <p className="text-xs text-text-secondary">
             Gün yazınca bitiş tarihi hesaplanır. Bitiş tarihini elle girerseniz gün sayısı güncellenir.
@@ -344,7 +401,7 @@ export default function ContractExtensionsPanel({
                       </span>
                     )}
                   </div>
-                  {ext.status === 'active' && canExtendContract && history.extensions.findIndex(e => e.extensionId === ext.extensionId) === history.extensions.length - 1 && (
+                  {ext.status === 'active' && canExtendContract && ext.extensionId === latestActiveExtensionId && (
                     <button
                       type="button"
                       onClick={() => handleCancel(ext.extensionId)}
@@ -390,6 +447,50 @@ export default function ContractExtensionsPanel({
           </div>
         )}
       </div>
+
+      {cancelTargetId !== null && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[60] p-4">
+          <div className="bg-background-panel rounded-panel w-full max-w-md p-6 max-h-[90vh] overflow-y-auto shadow-xl">
+            <h3 className="text-xl font-bold mb-2">Uzatmayı İptal Et</h3>
+            <p className="text-sm text-text-secondary mb-4">
+              Uzatmayı iptal etmek için lütfen gerekçeyi belirtin.
+            </p>
+            <textarea
+              value={cancelReason}
+              onChange={(e) => {
+                setCancelReason(e.target.value);
+                setCancelReasonError(null);
+              }}
+              autoFocus
+              className="input w-full h-24 resize-none py-2 px-3 text-sm"
+              placeholder="Örn: Müşteri talebi / Yanlış kayıt"
+            />
+            {cancelReasonError && (
+              <div className="mt-2 text-xs text-red-400 border border-red-700 rounded-md px-2 py-1">
+                {cancelReasonError}
+              </div>
+            )}
+            <div className="flex gap-3 justify-end mt-4">
+              <button
+                type="button"
+                onClick={closeCancelModal}
+                disabled={cancelling !== null}
+                className="btn-secondary flex-1"
+              >
+                Vazgeç
+              </button>
+              <button
+                type="button"
+                onClick={() => void confirmCancel()}
+                disabled={cancelling !== null}
+                className="btn-primary flex-1"
+              >
+                {cancelling !== null ? 'İptal ediliyor...' : 'İptal Et'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

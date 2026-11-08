@@ -6,22 +6,27 @@ import { toast } from '../../hooks/useToast';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { formatShortDateTime } from '../../utils/formatters';
 import { useAuthStore } from '../../store/authStore';
-import { useInvoiceAmountSuggestion } from '../../hooks/useInvoiceAmountSuggestion';
+import { clearInvoicePlanCache, useInvoiceAmountSuggestion } from '../../hooks/useInvoiceAmountSuggestion';
+import { addCalendarDays, calendarDaysBetween } from '../../utils/dateInput';
+import { roundTo } from '../../utils/lineDiscount';
 import {
   invoiceAmountReducer,
   createInitialInvoiceAmountState,
   parseAmountInput,
   findOverlappingInvoices,
   isoToLocalDateKey,
+  accrualBoundaryIso,
+  sumPlanAccrual,
 } from '../../utils/invoiceAmountCalc';
 
 interface ContractInvoicesPanelProps {
   contractId: number;
   contractCode?: string; // Şu an kullanılmıyor ama gelecekte başlıkta gösterilebilir
   contractCurrency?: 'TRY' | 'EUR' | 'USD';
-  contractTotalAmount?: number; // Sözleşmenin toplam tutarı
+  /** Backend NetTotal (iskontolu, KDV dahil). Satış sözleşmesinde sözleşme tutarı olarak kullanılır. */
+  contractNetTotal?: number;
   contractStartDate?: string | null; // Sözleşme başlangıç tarihi
-  contractPlannedEndDate?: string | null; // Sözleşme planlanan bitiş tarihi
+  contractPlannedEndDate?: string | null; // Sözleşme planlanan bitiş tarihi (uzatmalar dahil güncel)
   isRentalContract?: boolean; // Kiralama sözleşmesi mi?
 }
 
@@ -29,7 +34,7 @@ export default function ContractInvoicesPanel({
   contractId,
   contractCode: _contractCode,
   contractCurrency = 'TRY',
-  contractTotalAmount,
+  contractNetTotal,
   contractStartDate,
   contractPlannedEndDate,
   isRentalContract = false,
@@ -71,6 +76,7 @@ export default function ContractInvoicesPanel({
 
   const suggestion = useInvoiceAmountSuggestion({
     contractId,
+    contractStartDate,
     startDate: formData.periodStart,
     endDate: formData.periodEnd,
     enabled: autoCalcEnabled,
@@ -100,9 +106,53 @@ export default function ContractInvoicesPanel({
   };
 
   useEffect(() => {
+    // Zeyilname/iade/uzatma sonrası eski planla tutar önerilmesin.
+    clearInvoicePlanCache(contractId);
     void loadInvoices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
+
+  // Kiralamada sözleşme tutarı = başlangıçtan planlanan bitişe kadar tahakkuk (iskontolu, KDV dahil;
+  // ilk 30 gün asgari, sonrası aylık / 30). Fatura önerisi de aynı tahakkuktan geldiği için ardışık
+  // faturaların toplamı bu tutara birebir eşit olur. Erken iade/kapanışta backend planı gerçek bitişte keser.
+  // Sözleşmedeki InitialTotalPrice brüt (iskonto ve KDV hariç) olduğu ve uzatmada güncellenmediği için kullanılmaz.
+  const [rentalPlanTotal, setRentalPlanTotal] = useState<number | null>(null);
+  const [rentalPlanTotalLoading, setRentalPlanTotalLoading] = useState(false);
+  const plannedEndKeyForTotal = contractPlannedEndDate ? isoToLocalDateKey(contractPlannedEndDate) : '';
+  const planAsOf =
+    contractStartDate && plannedEndKeyForTotal
+      ? accrualBoundaryIso(contractStartDate, plannedEndKeyForTotal)
+      : null;
+
+  useEffect(() => {
+    if (!isRentalContract || !planAsOf) {
+      setRentalPlanTotal(null);
+      setRentalPlanTotalLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setRentalPlanTotalLoading(true);
+    contractService
+      .getBillingPlanAsync(contractId, planAsOf)
+      .then((plan) => {
+        if (cancelled) return;
+        setRentalPlanTotal(roundTo(sumPlanAccrual(plan), 2));
+      })
+      .catch((error) => {
+        console.error('Load contract planned total error:', error);
+        if (!cancelled) setRentalPlanTotal(null);
+      })
+      .finally(() => {
+        if (!cancelled) setRentalPlanTotalLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [contractId, isRentalContract, planAsOf]);
+
+  const contractTotalAmount: number | null = isRentalContract
+    ? rentalPlanTotal
+    : contractNetTotal ?? null;
 
   // Hesaplama sonuçlarını reducer'a gönder
   useEffect(() => {
@@ -256,44 +306,27 @@ export default function ContractInvoicesPanel({
 
   // Fatura durumu hesaplamaları
   const totalInvoiced = invoices.reduce((sum, inv) => sum + inv.amount, 0);
-  const remainingAmount = contractTotalAmount != null ? contractTotalAmount - totalInvoiced : null;
+  const remainingAmount = contractTotalAmount != null ? roundTo(contractTotalAmount - totalInvoiced, 2) : null;
   const invoicingPercentage = contractTotalAmount && contractTotalAmount > 0 
     ? (totalInvoiced / contractTotalAmount) * 100 
     : null;
 
-  // Kiralama süresi hesaplama (ay cinsinden)
-  const calculateMonthDifference = (start?: string | null, end?: string | null): number | null => {
-    if (!start || !end) return null;
-    try {
-      const startDate = new Date(start);
-      const endDate = new Date(end);
-      if (isNaN(startDate.getTime()) || isNaN(endDate.getTime())) return null;
-      
-      const yearDiff = endDate.getFullYear() - startDate.getFullYear();
-      const monthDiff = endDate.getMonth() - startDate.getMonth();
-      const dayDiff = endDate.getDate() - startDate.getDate();
-      
-      let totalMonths = yearDiff * 12 + monthDiff;
-      
-      // Eğer bitiş günü başlangıç gününden küçükse bir ay eksilt
-      if (dayDiff < 0) {
-        totalMonths -= 1;
-      }
-      
-      return totalMonths > 0 ? totalMonths : 0;
-    } catch {
-      return null;
-    }
-  };
-
-  const rentalMonths = calculateMonthDifference(contractStartDate, contractPlannedEndDate);
-  const hasRentalInfo = isRentalContract && contractStartDate && rentalMonths != null;
+  // Kiralama süresi: fiyatlamayla aynı kural (bitiş - başlangıç gün, 1 ay = 30 gün)
+  const startKey = contractStartDate ? isoToLocalDateKey(contractStartDate) : '';
+  const plannedEndKey = contractPlannedEndDate ? isoToLocalDateKey(contractPlannedEndDate) : '';
+  const rentalDaysRaw = startKey && plannedEndKey ? calendarDaysBetween(startKey, plannedEndKey) : NaN;
+  const rentalDays = Number.isFinite(rentalDaysRaw) && rentalDaysRaw > 0 ? rentalDaysRaw : null;
+  const rentalMonthsLabel =
+    rentalDays != null
+      ? (rentalDays / 30).toLocaleString('tr-TR', { maximumFractionDigits: 1 })
+      : null;
+  const hasRentalInfo = isRentalContract && contractStartDate && rentalDays != null;
 
   return (
     <div className="h-full overflow-y-auto">
       <div className="p-4 space-y-4">
       {/* Fatura Durumu Kartı */}
-      {contractTotalAmount != null && (
+      {(contractTotalAmount != null || rentalPlanTotalLoading) && (
         <div className="p-4 bg-background-elevated rounded-lg border border-background-border">
           <h4 className="text-sm font-semibold mb-3">Fatura Durumu</h4>
           
@@ -306,12 +339,20 @@ export default function ContractInvoicesPanel({
               </div>
               <div className="flex items-center gap-2">
                 <span className="text-text-secondary">⏱️ Süre:</span>
-                <span className="font-medium text-primary">{rentalMonths} ay</span>
+                <span className="font-medium text-primary">{rentalDays} gün (≈ {rentalMonthsLabel} ay)</span>
               </div>
               {contractPlannedEndDate && (
                 <div className="flex items-center gap-2">
                   <span className="text-text-secondary">🏁 Bitiş:</span>
                   <span className="font-medium">{formatDate(contractPlannedEndDate)}</span>
+                  {plannedEndKeyForTotal && (
+                    <span
+                      className="text-text-secondary"
+                      title="Fatura dönem bitişi dahil sayılır; son faturanın bitiş günü budur."
+                    >
+                      (son fatura günü {formatDate(addCalendarDays(plannedEndKeyForTotal, -1))})
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -319,9 +360,20 @@ export default function ContractInvoicesPanel({
 
           <div className="grid grid-cols-4 gap-4">
             <div>
-              <div className="text-xs text-text-secondary mb-1">Sözleşme Tutarı</div>
+              <div
+                className="text-xs text-text-secondary mb-1"
+                title={
+                  isRentalContract
+                    ? 'Başlangıçtan planlanan bitişe kadar tahakkuk (iskontolu, KDV dahil). Uzatma, zeyilname ve iadeler dahildir.'
+                    : 'İskontolu, KDV dahil sözleşme tutarı.'
+                }
+              >
+                Sözleşme Tutarı <span className="opacity-70">(KDV dahil)</span>
+              </div>
               <div className="text-base font-bold text-text-primary">
-                {getCurrencySymbol(contractCurrency)}{contractTotalAmount.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}
+                {contractTotalAmount != null
+                  ? `${getCurrencySymbol(contractCurrency)}${contractTotalAmount.toLocaleString('tr-TR', { minimumFractionDigits: 2 })}`
+                  : '…'}
               </div>
             </div>
             <div>
@@ -633,15 +685,10 @@ export default function ContractInvoicesPanel({
                 </div>
               )}
               
-              {/* Orantılama */}
-              {amountState.calculation.hasCommercialProration && (
+              {/* Asgari kira süresi */}
+              {amountState.calculation.includesMinimumRental && (
                 <div className="p-2 bg-sky-900/30 border border-sky-700/50 rounded text-xs text-sky-200">
-                  ℹ️ Kısmi günler aylık tahakkuk / 30 gün olarak hesaplandı. Dönemin tamamı seçilirse tahakkuk aynen yazılır.
-                </div>
-              )}
-              {amountState.calculation.hasProration && !amountState.calculation.hasCommercialProration && (
-                <div className="p-2 bg-sky-900/30 border border-sky-700/50 rounded text-xs text-sky-200">
-                  ℹ️ Dönem ortasında kalan günler orantılandı; iade/zeyilname tarihleri tam yansımayabilir
+                  ℹ️ İlk 30 gün asgari kira bedeli olarak tam ücretlendirildi ({amountState.calculation.coveredDays} gün seçili olsa da).
                 </div>
               )}
               

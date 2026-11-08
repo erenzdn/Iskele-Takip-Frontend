@@ -623,6 +623,8 @@ export interface SettleNonReturnRequest {
   priceBasis: 'TRY' | 'USD' | 'EUR';
   warehouseId?: number;
   settlementChargeOverride?: number | string;
+  /** Kapama tarihi (ISO). Kapatılan adetlerin kirası bu tarihe kadar hesaplanır; boşsa backend "şimdi" kullanır. */
+  SettlementDate?: string;
   /** Aynı ItemId için birden fazla sözleşme satırı varsa zorunlu */
   DetailId?: number | null;
 }
