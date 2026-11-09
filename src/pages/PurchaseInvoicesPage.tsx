@@ -5,10 +5,9 @@ import { PurchaseInvoice } from '../models';
 import EmptyState from '../components/EmptyState';
 import PurchaseInvoiceDetailModal from '../components/modals/PurchaseInvoiceDetailModal';
 import { formatCurrency, formatDate, formatShortDateTime } from '../utils/formatters';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 
 export default function PurchaseInvoicesPage() {
-  const { setActions } = useHeaderActions();
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
   const [searchText, setSearchText] = useState('');
   const [loading, setLoading] = useState(true);
@@ -58,21 +57,16 @@ export default function PurchaseInvoicesPage() {
   const headerActions = useMemo(
     () => (
       <>
-        <button onClick={() => void loadInvoices()} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => void loadInvoices()} className="btn-secondary py-1.5 px-3 text-sm">
           Yenile
         </button>
-        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+        <button onClick={handleAddNew} className="btn-primary py-1.5 px-3 text-sm">
           + Yeni Fatura
         </button>
       </>
     ),
     [loadInvoices, handleAddNew]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   const handleOpenDetail = (invoice: PurchaseInvoice) => {
     setSelectedInvoice(invoice);
@@ -128,6 +122,7 @@ export default function PurchaseInvoicesPage() {
             </span>
           </>
         )}
+        <PageActions>{headerActions}</PageActions>
       </div>
 
       {invoices.length === 0 ? (

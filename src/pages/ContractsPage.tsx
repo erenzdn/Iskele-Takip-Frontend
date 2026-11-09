@@ -31,7 +31,7 @@ import { useInvalidation } from '../store/dataInvalidationStore';
 import { contractPath, newContractPath, newQuotePath, quotePath } from '../utils/entityNavigation';
 import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import { toast } from '../hooks/useToast';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 import {
   useContextMenu,
   useContextMenuHandlers,
@@ -62,7 +62,6 @@ interface ContractsPageProps {
 
 export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const navigate = useNavigate();
-  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const canArchiveContract = Boolean(
     user?.permissions?.includes('contracts_archive') ||
@@ -479,10 +478,10 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const headerActions = useMemo(
     () => (
       <>
-        <button onClick={() => void loadData()} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => void loadData()} className="btn-secondary py-1.5 px-3 text-sm">
           Yenile
         </button>
-        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+        <button onClick={handleAddNew} className="btn-primary py-1.5 px-3 text-sm">
           {getAddButtonLabel()}
         </button>
       </>
@@ -491,11 +490,6 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [activeTab, loadData]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   const openConvertedContractFromQuote = useCallback(
     (quote: Quote, event?: MouseEvent) => {
@@ -1055,6 +1049,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           Arşiv
           {activeTab === 'archived' && <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-primary" />}
         </button>
+        <PageActions className="ml-auto pb-1">{headerActions}</PageActions>
       </div>
 
       {/* Sözleşme arama ve filtreleme alanı (sadece sözleşme tablarında) */}

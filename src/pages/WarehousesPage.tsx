@@ -7,7 +7,7 @@ import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import WarehouseDetailModal from '../components/modals/WarehouseDetailModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 import { useAuthStore } from '../store/authStore';
 import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 import { canDeleteWarehouse } from '../utils/warehousePermissions';
@@ -21,7 +21,6 @@ export default function WarehousesPage() {
   const user = useAuthStore((state) => state.user);
   const canDelete = canDeleteWarehouse(user);
   const showArchivedWarehouses = useArchivePreferencesStore((s) => s.showArchivedWarehouses);
-  const { setActions } = useHeaderActions();
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedWarehouse, setSelectedWarehouse] = useState<Warehouse | null>(null);
@@ -156,21 +155,16 @@ export default function WarehousesPage() {
   const headerActions = useMemo(
     () => (
       <>
-        <button onClick={() => { void loadData(); }} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => { void loadData(); }} className="btn-secondary py-1.5 px-3 text-sm">
           Yenile
         </button>
-        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+        <button onClick={handleAddNew} className="btn-primary py-1.5 px-3 text-sm">
           + Yeni Depo
         </button>
       </>
     ),
     [handleAddNew, loadData]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   if (loading) {
     return (
@@ -204,6 +198,7 @@ export default function WarehousesPage() {
             Temizle
           </button>
         )}
+        <PageActions>{headerActions}</PageActions>
       </div>
 
       {warehouses.length === 0 ? (

@@ -4,7 +4,6 @@ import { CaretDownIcon, ListIcon, MagnifyingGlassIcon, SignOutIcon } from '@phos
 import { useAuthStore } from '../store/authStore';
 import { isAdminUser } from '../utils/authHelpers';
 import { normalizeText } from '../utils/validation';
-import { useTabHeaderActions } from './HeaderActionsContext';
 import { useUpdateStore } from '../store/updateStore';
 import { tabDisplayTitle, useTabStore } from '../store/tabStore';
 import { appRoutes, type AppSection, type RouteIcon } from '../routes';
@@ -190,8 +189,6 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
     }
   });
   const activeTab = useTabStore((state) => state.tabs.find((tab) => tab.id === state.activeTabId) ?? null);
-  // Aktif sekmenin header aksiyonları
-  const currentHeaderActions = useTabHeaderActions(activeTab?.id);
   const user = useAuthStore((state) => state.user);
   const logout = useAuthStore((state) => state.logout);
   const permissions = user?.permissions ?? [];
@@ -397,12 +394,11 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
 
       {/* Main Content */}
       <main className="flex-1 min-w-0 flex flex-col overflow-hidden bg-background-main">
-        {/* Üst çubuk: sekmeler + aktif sayfanın aksiyonları + kullanıcı (tek satır) */}
-        <header className="h-11 shrink-0 flex items-stretch border-b border-background-border bg-background-panel">
+        {/* Üst çubuk yalnızca sekmelere ayrılmıştır; sayfa aksiyonları sayfanın kendi araç çubuğundadır */}
+        <header className="h-9 shrink-0 flex items-stretch border-b border-background-border bg-background-panel">
           <TabBar />
           <div className="flex shrink-0 items-center gap-2 border-l border-background-border px-3">
             <UpdateHeaderIndicator />
-            {currentHeaderActions ? <div className="flex items-center gap-2">{currentHeaderActions}</div> : null}
             <div
               className="hidden text-right leading-tight lg:block"
               title={`${displayName} · ${user?.roleName || 'Kullanıcı'}`}
@@ -413,7 +409,7 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
           </div>
         </header>
 
-        <div className="flex-1 min-h-0 px-4 py-3">
+        <div className="flex-1 min-h-0 px-3 py-2">
           {children || <TabHost />}
         </div>
       </main>
@@ -429,7 +425,7 @@ function UpdateHeaderIndicator() {
   return (
     <Link
       to="/system-settings"
-      className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold transition-all border shadow-sm ${
+      className={`flex items-center gap-2 px-2.5 py-1 rounded-full text-xs font-semibold transition-all border shadow-sm ${
         isDownloaded
           ? 'bg-success/10 text-success border-success/30 hover:bg-success/20'
           : isDownloading

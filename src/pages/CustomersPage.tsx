@@ -20,7 +20,7 @@ import {
   type CustomerColumnKey,
 } from '../constants/tableColumns';
 import { useContextMenu, useContextMenuHandlers, type CustomerModalInitialTab, type CustomerRowTarget } from '../context-menu';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -49,7 +49,6 @@ export default function CustomersPage() {
   const [hadFirstLoad, setHadFirstLoad] = useState(false);
   const hadFirstLoadRef = useRef(false);
   const { openContextMenu } = useContextMenu();
-  const { setActions } = useHeaderActions();
 
   const fetchCustomers = useCallback(async () => {
     const q = debouncedSearch.trim() || undefined;
@@ -202,22 +201,17 @@ export default function CustomersPage() {
   const headerActions = useMemo(
     () => (
       <>
-        <button onClick={() => loadCustomers()} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => loadCustomers()} className="btn-secondary py-1.5 px-3 text-sm">
           Yenile
         </button>
         <ExcelManager type="customers" onImportSuccess={() => void fetchCustomers()} />
-        <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+        <button onClick={handleAddNew} className="btn-primary py-1.5 px-3 text-sm">
           + Yeni Müşteri
         </button>
       </>
     ),
     [fetchCustomers, handleAddNew, loadCustomers]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   if (loading && !hadFirstLoad) {
     return (
@@ -236,8 +230,9 @@ export default function CustomersPage() {
           value={searchText}
           onChange={(e) => setSearchText(e.target.value)}
           placeholder="Müşteri adı veya vergi no (sunucu araması, 300ms gecikme)…"
-          className="input flex-1 min-w-[200px] py-2 px-3 text-sm"
+          className="input flex-1 min-w-[200px] py-1.5 px-3 text-sm"
         />
+        <PageActions>{headerActions}</PageActions>
       </div>
 
       {displayedCustomers.length === 0 ? (

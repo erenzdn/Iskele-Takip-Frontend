@@ -16,7 +16,7 @@ import EmptyState from '../components/EmptyState';
 import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 
 const LIMIT = 20;
 
@@ -76,7 +76,6 @@ function getStatusBadgeClass(status: CashTransaction['status']) {
 
 export default function CashPage() {
   const navigate = useNavigate();
-  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const permissions = user?.permissions ?? [];
 
@@ -304,7 +303,7 @@ export default function CashPage() {
             void loadAccounts();
             void loadData();
           }}
-          className="btn-secondary py-2 px-3 text-sm"
+          className="btn-secondary py-1.5 px-3 text-sm"
         >
           Yenile
         </button>
@@ -316,7 +315,7 @@ export default function CashPage() {
               setIsNewAccount(true);
               setIsAccountModalOpen(true);
             }}
-            className="btn-secondary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+            className="btn-secondary py-1.5 px-3 text-sm inline-flex items-center gap-1.5"
           >
             <PlusIcon size={16} weight="bold" />
             Yeni Hesap
@@ -326,7 +325,7 @@ export default function CashPage() {
           <button
             type="button"
             onClick={() => setIsCreateModalOpen(true)}
-            className="btn-primary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+            className="btn-primary py-1.5 px-3 text-sm inline-flex items-center gap-1.5"
           >
             <PlusIcon size={16} weight="bold" />
             Yeni İşlem
@@ -336,11 +335,6 @@ export default function CashPage() {
     ),
     [canCreateAccount, canCreate, loadAccounts, loadData]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   if (loading && transactions.length === 0) {
     return (
@@ -357,6 +351,7 @@ export default function CashPage() {
           <FileTextIcon size={14} className="text-text-secondary" />
           <span>Hesaplar (Kasa / Banka)</span>
           {accountsLoading ? <span className="text-text-secondary/70">yükleniyor…</span> : null}
+          <PageActions>{headerActions}</PageActions>
         </div>
 
         {accountsError && (

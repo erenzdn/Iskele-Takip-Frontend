@@ -12,7 +12,7 @@ import { formatShortDateTime } from '../utils/formatters';
 import { toast } from '../hooks/useToast';
 import { getStockReceiptDeleteErrorMessage } from '../utils/apiError';
 import { canDeleteStockReceipt, isStockReceiptCancelled } from '../utils/stockReceiptPermissions';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 
 const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {
   IN: 'Giriş',
@@ -27,7 +27,6 @@ const STATUS_LABELS: Record<StockReceiptStatus, string> = {
 };
 
 export default function StockReceiptsPage() {
-  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const canView = user?.permissions?.includes('stockReceipts_view');
   const canCreate = user?.permissions?.includes('stockReceipts_create');
@@ -104,12 +103,12 @@ export default function StockReceiptsPage() {
     () =>
       canView ? (
         <>
-          <button onClick={() => void loadReceipts()} className="btn-secondary py-2 px-3 text-sm">
+          <button onClick={() => void loadReceipts()} className="btn-secondary py-1.5 px-3 text-sm">
             Yenile
           </button>
           <ExcelManager type="stockReceipts" onImportSuccess={() => void loadReceipts()} />
           {canCreate ? (
-            <button onClick={handleAddNew} className="btn-primary py-2 px-3 text-sm">
+            <button onClick={handleAddNew} className="btn-primary py-1.5 px-3 text-sm">
               + Yeni Fiş
             </button>
           ) : null}
@@ -117,11 +116,6 @@ export default function StockReceiptsPage() {
       ) : null,
     [canView, canCreate, loadReceipts, handleAddNew]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   const handleOpenDetail = (receipt: StockReceipt) => {
     setSelectedReceipt(receipt);
@@ -228,6 +222,7 @@ export default function StockReceiptsPage() {
         <button onClick={handleClearFilters} className="btn-secondary py-1.5 px-3 text-sm">
           Temizle
         </button>
+        <PageActions>{headerActions}</PageActions>
       </div>
 
       {receipts.length === 0 ? (

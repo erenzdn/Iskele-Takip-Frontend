@@ -9,7 +9,7 @@ import ConfirmModal from '../components/modals/ConfirmModal';
 import { customerService } from '../services/customerService';
 import CheckDetailModal from '../components/modals/CheckDetailModal';
 import ExcelManager from '../components/ExcelManager';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 
 type DateRange = {
   from: string | null;
@@ -24,7 +24,6 @@ const STATUS_LABELS: Record<CheckStatus, string> = {
 };
 
 export default function ChecksPage() {
-  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const permissions = user?.permissions ?? [];
 
@@ -99,7 +98,7 @@ export default function ChecksPage() {
   const headerActions = useMemo(
     () => (
       <>
-        <button type="button" onClick={() => void loadData()} className="btn-secondary py-2 px-3 text-sm">
+        <button type="button" onClick={() => void loadData()} className="btn-secondary py-1.5 px-3 text-sm">
           Yenile
         </button>
         <ExcelManager type="checks" onImportSuccess={() => void loadData()} />
@@ -107,7 +106,7 @@ export default function ChecksPage() {
           <button
             type="button"
             onClick={handleNewCheck}
-            className="btn-primary py-2 px-3 text-sm inline-flex items-center gap-1.5"
+            className="btn-primary py-1.5 px-3 text-sm inline-flex items-center gap-1.5"
           >
             <PlusIcon size={16} weight="bold" />
             Yeni Çek
@@ -117,11 +116,6 @@ export default function ChecksPage() {
     ),
     [canCreate, loadData, handleNewCheck]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   const handleEditCheck = (check: Check) => {
     setEditingCheck(check);
@@ -293,6 +287,7 @@ export default function ChecksPage() {
         <button type="button" onClick={() => handleQuickDateRange('clear')} className="btn-secondary py-1 px-2 text-[11px]">
           Temizle
         </button>
+        <PageActions>{headerActions}</PageActions>
       </div>
 
       {error && (

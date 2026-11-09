@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ListIcon, PushPinIcon, XIcon } from '@phosphor-icons/react';
+import { CaretLeftIcon, CaretRightIcon, ListIcon, PushPinIcon, XIcon } from '@phosphor-icons/react';
 import ConfirmModal from './modals/ConfirmModal';
 import { matchAppRoute } from '../routes';
 import { tabDisplayTitle, useTabStore, type Tab } from '../store/tabStore';
@@ -33,6 +33,44 @@ export function TabBar() {
   const [overflowQuery, setOverflowQuery] = useState('');
   const tabBarRef = useRef<HTMLDivElement>(null);
   const overflowRef = useRef<HTMLDivElement>(null);
+  const [scrollState, setScrollState] = useState({ left: false, right: false });
+
+  const updateScrollState = useCallback(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    const left = el.scrollLeft > 1;
+    const right = el.scrollLeft + el.clientWidth < el.scrollWidth - 1;
+    setScrollState((prev) => (prev.left === left && prev.right === right ? prev : { left, right }));
+  }, []);
+
+  // Sekme şeridi taştığında okların durumu (kaydırma, yeniden boyutlanma, sekme ekleme/çıkarma)
+  useEffect(() => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    updateScrollState();
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(el);
+    Array.from(el.children).forEach((child) => observer.observe(child));
+    el.addEventListener('scroll', updateScrollState, { passive: true });
+    // Dikey fare tekerleği sekmeleri yana kaydırır
+    const handleWheel = (event: WheelEvent) => {
+      if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+      event.preventDefault();
+      el.scrollLeft += event.deltaY;
+    };
+    el.addEventListener('wheel', handleWheel, { passive: false });
+    return () => {
+      observer.disconnect();
+      el.removeEventListener('scroll', updateScrollState);
+      el.removeEventListener('wheel', handleWheel);
+    };
+  }, [tabs, updateScrollState]);
+
+  const scrollTabs = useCallback((direction: 1 | -1) => {
+    const el = tabBarRef.current;
+    if (!el) return;
+    el.scrollBy({ left: direction * Math.max(160, el.clientWidth * 0.6), behavior: 'smooth' });
+  }, []);
 
   const handleTabClose = useCallback(
     (tabId: string, event: React.MouseEvent) => {
@@ -114,8 +152,8 @@ export function TabBar() {
       <div className="flex-1 min-w-0 h-full flex items-stretch">
         <div
           ref={tabBarRef}
-          className="flex-1 flex items-stretch overflow-x-auto overflow-y-hidden"
-          style={{ scrollbarWidth: 'thin' }}
+          className="flex-1 min-w-0 flex items-stretch overflow-x-auto overflow-y-hidden [&::-webkit-scrollbar]:hidden"
+          style={{ scrollbarWidth: 'none' }}
         >
           {tabs.map((tab) => (
             <TabButton
@@ -139,6 +177,28 @@ export function TabBar() {
             />
           ))}
         </div>
+        {(scrollState.left || scrollState.right) && (
+          <div className="flex shrink-0 items-stretch border-l border-background-border">
+            <button
+              type="button"
+              className="w-7 flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-background-hover disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-default"
+              title="Sola kaydır"
+              disabled={!scrollState.left}
+              onClick={() => scrollTabs(-1)}
+            >
+              <CaretLeftIcon size={14} weight="bold" />
+            </button>
+            <button
+              type="button"
+              className="w-7 flex items-center justify-center text-text-secondary hover:text-text-primary hover:bg-background-hover disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-default"
+              title="Sağa kaydır"
+              disabled={!scrollState.right}
+              onClick={() => scrollTabs(1)}
+            >
+              <CaretRightIcon size={14} weight="bold" />
+            </button>
+          </div>
+        )}
         <div className="relative shrink-0 border-l border-background-border" ref={overflowRef}>
           <button
             type="button"
@@ -297,7 +357,7 @@ function TabIcon({ tab }: { tab: Tab }) {
   const matched = matchAppRoute(tab.location.pathname);
   const Icon = matched?.route.meta?.icon;
   if (!Icon) return null;
-  return <Icon size={14} weight="regular" />;
+  return <Icon size={14} weight="regular" className="shrink-0" />;
 }
 
 function TabButton({
@@ -343,14 +403,14 @@ function TabButton({
         if (event.button === 1) event.preventDefault();
       }}
       className={`relative flex items-center gap-1.5 h-full border-r border-background-border shrink-0 group ${
-        tab.pinned ? 'px-2' : 'px-3 max-w-[220px]'
+        tab.pinned ? 'px-2' : 'px-3 w-[180px] justify-between'
       } ${
         isActive
           ? 'bg-background-main text-text-primary'
           : 'bg-background-panel text-text-secondary hover:bg-background-hover hover:text-text-primary'
       }`}
     >
-      <button type="button" onClick={onActivate} className="flex min-w-0 items-center gap-1.5 h-full" title={title}>
+      <button type="button" onClick={onActivate} className="flex flex-1 min-w-0 items-center gap-1.5 h-full" title={title}>
         {tab.pinned ? <PushPinIcon size={12} weight="fill" className="shrink-0 text-primary" /> : <TabIcon tab={tab} />}
         <span className={`text-sm font-medium truncate ${tab.pinned ? 'max-w-[140px]' : ''}`}>{title}</span>
         {tab.dirty && <span className="h-2 w-2 rounded-full bg-warning shrink-0" title="Kaydedilmemiş değişiklik" />}
@@ -359,7 +419,7 @@ function TabButton({
         <button
           type="button"
           onClick={onClose}
-          className={`h-5 w-5 rounded flex items-center justify-center transition-colors ${
+          className={`h-5 w-5 shrink-0 rounded flex items-center justify-center transition-colors ${
             isActive ? 'hover:bg-background-hover' : 'opacity-0 group-hover:opacity-100 hover:bg-background-hover'
           }`}
           title="Kapat"

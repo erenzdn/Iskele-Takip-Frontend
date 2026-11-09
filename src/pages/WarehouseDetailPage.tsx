@@ -401,7 +401,7 @@ export default function WarehouseDetailPage() {
 
   if (loading) {
     return (
-      <div className="flex h-[calc(100vh-5rem)] items-center justify-center">
+      <div className="flex h-[calc(100vh-3.25rem)] items-center justify-center">
         <div className="text-text-secondary">Depo detayları yükleniyor...</div>
       </div>
     );
@@ -452,7 +452,7 @@ export default function WarehouseDetailPage() {
     !movementFilters.includeCompleted;
 
   return (
-    <div className="flex h-[calc(100vh-5rem)] min-h-0 flex-col gap-2 overflow-hidden">
+    <div className="flex h-[calc(100vh-3.25rem)] min-h-0 flex-col gap-2 overflow-hidden">
       <div className="flex shrink-0 flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">

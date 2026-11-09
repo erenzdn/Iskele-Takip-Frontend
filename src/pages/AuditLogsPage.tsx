@@ -6,7 +6,7 @@ import { AuditLog, AuditAction, User } from '../models';
 import { useAuthStore } from '../store/authStore';
 import { formatDateTime, buildAuditLogSummary } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 
 const ACTION_LABELS: Record<AuditAction, string> = {
   [AuditAction.Create]: 'Oluşturma',
@@ -36,7 +36,6 @@ function toDatetimeLocal(d: Date): string {
 }
 
 export default function AuditLogsPage() {
-  const { setActions } = useHeaderActions();
   const user = useAuthStore((state) => state.user);
   const hasPermission = user?.permissions?.includes('auditLogs_view');
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -146,21 +145,16 @@ export default function AuditLogsPage() {
     () =>
       hasPermission ? (
         <>
-          <button onClick={handleResetFilters} className="btn-secondary py-2 px-3 text-sm">
+          <button onClick={handleResetFilters} className="btn-secondary py-1.5 px-3 text-sm">
             Sıfırla
           </button>
-          <button onClick={() => void loadLogs()} className="btn-primary py-2 px-3 text-sm">
+          <button onClick={() => void loadLogs()} className="btn-primary py-1.5 px-3 text-sm">
             Uygula / Yenile
           </button>
         </>
       ) : null,
     [hasPermission, handleResetFilters, loadLogs]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   if (!hasPermission) {
     return (
@@ -223,6 +217,7 @@ export default function AuditLogsPage() {
             title="Limit (1-500)"
             aria-label="Kayıt limiti"
           />
+          <PageActions>{headerActions}</PageActions>
         </div>
 
         <div className="flex flex-wrap gap-x-3 gap-y-1 items-center">

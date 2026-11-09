@@ -3,7 +3,7 @@ import { MagnifyingGlassIcon, PackageIcon } from '@phosphor-icons/react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
-import { Inventory, MaterialCategory, isInventoryArchived } from '../models';
+import { Inventory, MaterialCategory, SubCategory, isInventoryArchived } from '../models';
 import { formatShortDateTime } from '../utils/formatters';
 import { getInventoryDeleteErrorMessage, getInventoryRestoreErrorResult } from '../utils/apiError';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
@@ -22,7 +22,7 @@ import {
   type InventoryColumnKey,
 } from '../constants/tableColumns';
 import { useContextMenu, useContextMenuHandlers, type ContextMenuActionHandlers, type ScaffoldRowTarget } from '../context-menu';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 
 type StockStatusFilter = 'all' | 'onRent' | 'available';
 
@@ -60,6 +60,7 @@ export default function InventoryPage() {
   const showArchived = useArchivePreferencesStore((s) => s.showArchivedInventory);
   const [categoriesReady, setCategoriesReady] = useState(false);
   const [subCategoryOptions, setSubCategoryOptions] = useState<string[]>([]);
+  const [subCategoryRows, setSubCategoryRows] = useState<SubCategory[]>([]);
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedItemIds, setSelectedItemIds] = useState<number[]>([]);
   const inventoryColumnWidths = useMemo(() => {
@@ -84,7 +85,6 @@ export default function InventoryPage() {
   const [isRestoring, setIsRestoring] = useState(false);
   const [restoreConflictMessage, setRestoreConflictMessage] = useState<string | null>(null);
   const { openContextMenu } = useContextMenu();
-  const { setActions } = useHeaderActions();
   const hadFirstListLoadRef = useRef(false);
 
   useEffect(() => {
@@ -192,11 +192,18 @@ export default function InventoryPage() {
   );
 
   const filteredInventory = useMemo(() => {
+    const activeSubCategories = selectedSubCategories.filter(Boolean);
+    // Liste endpoint'i alt kategorileri yalnızca SubCategoryIds olarak döndürür; seçili adları ID'ye çevir.
+    const activeSubCategoryIds = new Set(
+      subCategoryRows
+        .filter((sc) => activeSubCategories.includes(sc.SubCategoryName?.trim() ?? ''))
+        .map((sc) => sc.SubCategoryId)
+    );
     return allInventory.filter((item) => {
-      const activeSubCategories = selectedSubCategories.filter(Boolean);
       const matchesSubCategory =
         activeSubCategories.length === 0 ||
-        item.SubCategories?.some((sc) => activeSubCategories.includes(sc.SubCategoryName));
+        (item.SubCategoryIds ?? []).some((id) => activeSubCategoryIds.has(id)) ||
+        Boolean(item.SubCategories?.some((sc) => activeSubCategories.includes(sc.SubCategoryName)));
 
       const availableStock = item.TotalStock - item.OnRent - (item.Reserved ?? 0);
       const matchesMin = minAvailable === '' || availableStock >= minAvailable;
@@ -211,7 +218,7 @@ export default function InventoryPage() {
 
       return matchesSubCategory && matchesMin && matchesMax && matchesLanguage && matchesStockStatus;
     });
-  }, [allInventory, selectedSubCategories, minAvailable, maxAvailable, selectedLanguage, stockStatus]);
+  }, [allInventory, selectedSubCategories, subCategoryRows, minAvailable, maxAvailable, selectedLanguage, stockStatus]);
 
   const selectAllFiltered = useCallback(() => {
     setSelectionMode(true);
@@ -552,6 +559,7 @@ export default function InventoryPage() {
       .getAllAsync(selectedCategory?.CategoryId)
       .then((rows) => {
         if (cancelled) return;
+        setSubCategoryRows(rows);
         const names = Array.from(
           new Set(
             rows
@@ -562,7 +570,10 @@ export default function InventoryPage() {
         setSubCategoryOptions(names);
       })
       .catch(() => {
-        if (!cancelled) setSubCategoryOptions([]);
+        if (!cancelled) {
+          setSubCategoryOptions([]);
+          setSubCategoryRows([]);
+        }
       });
     return () => {
       cancelled = true;
@@ -574,13 +585,13 @@ export default function InventoryPage() {
       <>
         {selectedItemIds.length > 0 ? (
           <>
-            <button onClick={clearSelection} className="btn-secondary py-2 px-3 text-sm">
+            <button onClick={clearSelection} className="btn-secondary py-1.5 px-3 text-sm">
               Secimi Temizle ({selectedItemIds.length})
             </button>
             <button
               onClick={selectAllFiltered}
               disabled={filteredInventory.length === 0}
-              className="btn-secondary py-2 px-3 text-sm disabled:opacity-50"
+              className="btn-secondary py-1.5 px-3 text-sm disabled:opacity-50"
             >
               Tümünü Seç
             </button>
@@ -588,26 +599,26 @@ export default function InventoryPage() {
               <>
                 <button
                   onClick={() => void applyBulkStatus('active')}
-                  className="btn-secondary py-2 px-3 text-sm"
+                  className="btn-secondary py-1.5 px-3 text-sm"
                 >
                   Toplu Aktif
                 </button>
                 <button
                   onClick={() => void applyBulkStatus('passive')}
-                  className="btn-secondary py-2 px-3 text-sm"
+                  className="btn-secondary py-1.5 px-3 text-sm"
                 >
                   Toplu Pasif
                 </button>
                 <button
                   onClick={() => void applyBulkStatus('maintenance')}
-                  className="btn-secondary py-2 px-3 text-sm"
+                  className="btn-secondary py-1.5 px-3 text-sm"
                 >
                   Toplu Bakimda
                 </button>
               </>
             ) : null}
             {canDelete ? (
-              <button onClick={() => void applyBulkDelete()} className="btn-secondary py-2 px-3 text-sm">
+              <button onClick={() => void applyBulkDelete()} className="btn-secondary py-1.5 px-3 text-sm">
                 Toplu Listeden Kaldır
               </button>
             ) : null}
@@ -616,19 +627,19 @@ export default function InventoryPage() {
           <button
             onClick={selectAllFiltered}
             disabled={filteredInventory.length === 0}
-            className="btn-secondary py-2 px-3 text-sm disabled:opacity-50"
+            className="btn-secondary py-1.5 px-3 text-sm disabled:opacity-50"
           >
             Tümünü Seç
           </button>
         )}
-        <button onClick={() => void loadData(true)} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => void loadData(true)} className="btn-secondary py-1.5 px-3 text-sm">
           Yenile
         </button>
         <ExcelManager type="inventory" onImportSuccess={() => void loadData(true)} />
-        <button onClick={handleAddCategory} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={handleAddCategory} className="btn-secondary py-1.5 px-3 text-sm">
           + Kategori Ekle
         </button>
-        <button onClick={handleAddNewItem} className="btn-primary py-2 px-3 text-sm">
+        <button onClick={handleAddNewItem} className="btn-primary py-1.5 px-3 text-sm">
           + Yeni Malzeme
         </button>
       </>
@@ -649,11 +660,6 @@ export default function InventoryPage() {
   );
 
   useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
-
-  useEffect(() => {
     setSelectedItemIds((prev) => prev.filter((id) => allInventory.some((item) => item.ItemId === id)));
   }, [allInventory]);
 
@@ -668,7 +674,7 @@ export default function InventoryPage() {
   return (
     <div>
       <div className="mb-2 rounded border border-background-border bg-background-panel p-2">
-        <div className="mb-1.5 flex items-center justify-end gap-2">
+        <div className="mb-1.5 flex flex-wrap items-center justify-end gap-1.5">
           <button
             type="button"
             onClick={() => {
@@ -692,6 +698,8 @@ export default function InventoryPage() {
           >
             Kategori Yönet
           </button>
+          <div className="mx-1 h-5 w-px bg-background-border" />
+          <PageActions className="">{headerActions}</PageActions>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-1.5">

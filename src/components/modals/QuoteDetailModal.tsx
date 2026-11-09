@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { acknowledgeTabSaved } from '../../store/tabStore';
-import { invalidateData } from '../../store/dataInvalidationStore';
+import { invalidateData, useInvalidation } from '../../store/dataInvalidationStore';
 import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
 import { ClipboardIcon, CopySimpleIcon, DotsSixVerticalIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
@@ -1667,6 +1667,15 @@ export default function QuoteDetailModal({
     }
     setShowProductPickerModal(true);
   };
+
+  // Başka sekmede (örn. ürün seçicideki "Yeni Ürün Ekle") envanter değiştiyse, sekmeye dönüldüğünde
+  // ürün listesini tazele; yeni ürün kategorisiyle birlikte seçicide görünsün.
+  useInvalidation('inventory', () => {
+    void inventoryService
+      .getAllAsync(undefined, { forceRefresh: true })
+      .then(setAvailableItems)
+      .catch((error) => console.error('Refresh inventory after invalidation error:', error));
+  });
 
   const handleSave = async (forceStatus?: QuoteStatus) => {
     if (!forceStatus && !isNew && isQuoteDraftStatus(status)) {

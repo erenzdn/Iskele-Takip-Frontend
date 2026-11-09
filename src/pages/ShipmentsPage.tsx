@@ -5,7 +5,7 @@ import type { ContractAwaitingShipment, Shipment, ShipmentStatus, Warehouse } fr
 import { shipmentService } from '../services/shipmentService';
 import { warehouseService } from '../services/warehouseService';
 import { useAuthStore } from '../store/authStore';
-import { useHeaderActions } from '../layouts/HeaderActionsContext';
+import { PageActions } from '../components/PageActions';
 import EmptyState from '../components/EmptyState';
 import { formatDate } from '../utils/formatters';
 import { contractPath } from '../utils/entityNavigation';
@@ -25,7 +25,6 @@ const td = 'py-1 px-2 align-middle border-r border-background-border/60 last:bor
  */
 export default function ShipmentsPage() {
   const navigate = useNavigate();
-  const { setActions } = useHeaderActions();
   const user = useAuthStore((s) => s.user);
   const canView = Boolean(user?.permissions?.includes('shipments_view'));
 
@@ -77,17 +76,12 @@ export default function ShipmentsPage() {
   const headerActions = useMemo(
     () =>
       canView ? (
-        <button onClick={() => void load()} className="btn-secondary py-2 px-3 text-sm">
+        <button onClick={() => void load()} className="btn-secondary py-1.5 px-3 text-sm">
           Yenile
         </button>
       ) : null,
     [canView, load]
   );
-
-  useEffect(() => {
-    setActions(headerActions);
-    return () => setActions(null);
-  }, [headerActions, setActions]);
 
   const openContract = (contractId: number) => navigate(contractPath(contractId), { state: { initialTab: 'shipments' } });
 
@@ -162,6 +156,7 @@ export default function ShipmentsPage() {
             {awaiting.length} sözleşmede toplam {awaitingTotal} adet sevk bekliyor
           </span>
         )}
+        <PageActions className={view === 'awaiting' && awaiting.length > 0 ? '' : 'ml-auto'}>{headerActions}</PageActions>
       </div>
 
       {loading && (view === 'awaiting' ? awaiting.length === 0 : shipments.length === 0) ? (

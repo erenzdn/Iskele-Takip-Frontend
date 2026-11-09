@@ -8,7 +8,7 @@ import {
 import { Inventory, MaterialCategory, SubCategory } from '../models';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
-import { normalizeText } from '../utils/validation';
+import { hydrateInventoryCategories } from '../utils/inventoryCategories';
 
 type ItemRecord = Inventory & Record<string, unknown>;
 
@@ -183,7 +183,7 @@ export interface ItemPickerPanelProps {
 type SelectionType = 'all' | { categoryId: number } | { categoryId: number; subCategoryId: number };
 
 export default function ItemPickerPanel({
-  items,
+  items: rawItems,
   onItemSelect,
   displayMode = 'contract',
   quotePricing = 'rental',
@@ -203,6 +203,26 @@ export default function ItemPickerPanel({
   const rootRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement | null>>(new Map());
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+
+  // Ürün listesinde henüz bilinmeyen bir kategori/alt kategori varsa (örn. teklif ekranından
+  // "Yeni Ürün Ekle" ile yeni kategori açıldıysa) kategori listesini yeniden çek.
+  const [categoryReloadKey, setCategoryReloadKey] = useState(0);
+  const reloadedForRef = useRef<string>('');
+  useEffect(() => {
+    if (categoriesLoading) return;
+    const knownCats = new Set(categories.map((c) => c.CategoryId));
+    const knownSubs = new Set(allSubCategories.map((s) => s.SubCategoryId));
+    const missing: string[] = [];
+    for (const item of rawItems) {
+      for (const id of item.CategoryIds ?? []) if (!knownCats.has(id)) missing.push(`c${id}`);
+      for (const id of item.SubCategoryIds ?? []) if (!knownSubs.has(id)) missing.push(`s${id}`);
+    }
+    if (missing.length === 0) return;
+    const signature = missing.sort().join(',');
+    if (reloadedForRef.current === signature) return;
+    reloadedForRef.current = signature;
+    setCategoryReloadKey((k) => k + 1);
+  }, [rawItems, categories, allSubCategories, categoriesLoading]);
 
   useEffect(() => {
     let cancelled = false;
@@ -229,7 +249,13 @@ export default function ItemPickerPanel({
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [categoryReloadKey]);
+
+  // Liste endpoint'i kategorileri yalnızca ID olarak döndürür; ad/alt kategori bilgisini doldur.
+  const items = useMemo(
+    () => hydrateInventoryCategories(rawItems, categories, allSubCategories),
+    [rawItems, categories, allSubCategories]
+  );
 
   /** Kategori ID'ye göre gruplanmış alt kategoriler (API'nin categoryId filtresi olmasa da çalışır). */
   const subCategoriesByCategory = useMemo(() => {
@@ -558,7 +584,7 @@ export default function ItemPickerPanel({
               ref={searchInputRef}
               type="text"
               value={searchText}
-              onChange={(e) => setSearchText(normalizeText(e.target.value))}
+              onChange={(e) => setSearchText(e.target.value.replace(/\s+/g, ' ').trimStart())}
               autoFocus
               placeholder="Malzeme adı, kodu veya kategori ile ara..."
               className="input w-full pl-8 py-1.5 text-sm"
