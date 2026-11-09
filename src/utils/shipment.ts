@@ -1,4 +1,4 @@
-import type { Contract, ContractDetail, DeliveryMode } from '../models';
+import type { Contract, ContractDetail, DeliveryMode, InventoryContractLineItem } from '../models';
 
 /**
  * Sevkiyat (teslim) modu yardımcıları — backend src/utils/deliveryMode.js ile aynı kurallar.
@@ -132,4 +132,34 @@ export function getMaxReturnableQuantity(
   contract: ModeSource
 ): number {
   return getLineShipmentProgress(detail, contract).onSite;
+}
+
+/**
+ * GET /contracts/:id yanıtındaki ham detayları sevkiyat fişi penceresinin beklediği
+ * envanter satırlarına çevirir (manuel kalemler sevk edilmez, atlanır).
+ */
+export function contractDetailsToShipmentLines(contract: unknown): InventoryContractLineItem[] {
+  const src = (contract ?? {}) as Record<string, unknown>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const raw = (src.details ?? src.ContractDetails ?? src.contractDetails ?? []) as Record<string, any>[];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((d) => !(d.IsManual === true || d.is_manual === true || d.IsManual === 1 || d.is_manual === 1))
+    .map((d): InventoryContractLineItem => ({
+      kind: 'inventory',
+      DetailId: Number(d.DetailId ?? d.detailId),
+      ItemId: Number(d.ItemId ?? d.itemId),
+      WarehouseId: Number(d.WarehouseId ?? d.warehouseId ?? 0) || 0,
+      WarehouseName: d.WarehouseName ?? d.warehouseName ?? '',
+      RentedQuantity: Number(d.RentedQuantity ?? d.rentedQuantity ?? 0) || 0,
+      ReturnedQuantity: Number(d.ReturnedQuantity ?? d.returnedQuantity ?? 0) || 0,
+      ShippedQuantity: Number(d.ShippedQuantity ?? d.shippedQuantity ?? 0) || 0,
+      UnitPriceSnapshot: Number(d.UnitPriceSnapshot ?? d.unitPriceSnapshot ?? 0) || 0,
+      PriceUnit: d.PriceUnit ?? d.priceUnit ?? 'DAY',
+      PriceSource: d.PriceSource ?? d.priceSource ?? 'INVENTORY',
+      ItemName: d.ItemName ?? d.itemName ?? '',
+      ItemNameEn: d.ItemNameEn ?? d.itemNameEn ?? undefined,
+      ItemCode: d.ItemCode ?? d.itemCode ?? undefined,
+    }))
+    .filter((l) => Number.isFinite(l.DetailId) && l.DetailId > 0);
 }

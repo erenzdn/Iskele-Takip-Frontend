@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { FilePdfIcon, TruckIcon } from '@phosphor-icons/react';
-import type { ContractAwaitingShipment, Shipment, ShipmentStatus, Warehouse } from '../models';
+import type { Contract, ContractAwaitingShipment, InventoryContractLineItem, Shipment, ShipmentStatus, Warehouse } from '../models';
 import { shipmentService } from '../services/shipmentService';
 import { warehouseService } from '../services/warehouseService';
+import { contractService } from '../services/contractService';
+import CreateShipmentModal from '../components/modals/CreateShipmentModal';
+import { contractDetailsToShipmentLines } from '../utils/shipment';
 import { useAuthStore } from '../store/authStore';
 import { PageActions } from '../components/PageActions';
 import EmptyState from '../components/EmptyState';
@@ -21,12 +24,13 @@ const td = 'py-1 px-2 align-middle border-r border-background-border/60 last:bor
 
 /**
  * Sevkiyatlar: sevk bekleyen sözleşmeler (rezervasyonu olan) ve tüm sevkiyat fişleri.
- * Fiş, sözleşmenin "Sevkiyatlar" sekmesinden kesilir; bu sayfa operasyon takibi içindir.
+ * Sevk bekleyen satırdan doğrudan fiş kesilebilir; sözleşmenin "Sevkiyatlar" sekmesi de aynı pencereyi açar.
  */
 export default function ShipmentsPage() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const canView = Boolean(user?.permissions?.includes('shipments_view'));
+  const canCreate = Boolean(user?.permissions?.includes('shipments_create'));
 
   const [view, setView] = useState<ViewMode>('awaiting');
   const [search, setSearch] = useState('');
@@ -39,6 +43,8 @@ export default function ShipmentsPage() {
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [loading, setLoading] = useState(false);
   const { openPreview, loadingId, element: pdfPreviewElement } = useShipmentPdfPreview();
+  const [shipTarget, setShipTarget] = useState<{ contract: Contract; lines: InventoryContractLineItem[] } | null>(null);
+  const [preparingId, setPreparingId] = useState<number | null>(null);
 
   useEffect(() => {
     warehouseService.getAllAsync().then(setWarehouses).catch(() => setWarehouses([]));
@@ -82,6 +88,24 @@ export default function ShipmentsPage() {
       ) : null,
     [canView, load]
   );
+
+  const openCreateShipment = async (contractId: number) => {
+    if (preparingId != null) return;
+    try {
+      setPreparingId(contractId);
+      const contract = await contractService.getByIdAsync(contractId);
+      const lines = contractDetailsToShipmentLines(contract);
+      if (lines.length === 0) {
+        toast.error('Sözleşmede sevk edilecek kalem bulunamadı.');
+        return;
+      }
+      setShipTarget({ contract, lines });
+    } catch (err) {
+      toast.error(getApiErrorMessage(err) || 'Sözleşme yüklenemedi.');
+    } finally {
+      setPreparingId(null);
+    }
+  };
 
   const openContract = (contractId: number) => navigate(contractPath(contractId), { state: { initialTab: 'shipments' } });
 
@@ -182,6 +206,7 @@ export default function ShipmentsPage() {
                     <th className={`${th} text-right`}>Sözleşme</th>
                     <th className={`${th} text-right`}>Sevk edilen</th>
                     <th className={`${th} text-right`}>Bekleyen</th>
+                    {canCreate && <th className={`${th} text-center w-20`}>Fiş</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -190,7 +215,7 @@ export default function ShipmentsPage() {
                       key={a.ContractId}
                       className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
                       onClick={() => openContract(a.ContractId)}
-                      title="Sözleşmeyi aç (Sevkiyatlar sekmesinden fiş kesin)"
+                      title="Sözleşmeyi aç"
                     >
                       <td className={td}>
                         <span className="font-medium text-primary">{a.ContractCode || `#${a.ContractId}`}</span>
@@ -204,6 +229,20 @@ export default function ShipmentsPage() {
                       <td className={`${td} text-right`}>{a.ContractQuantity}</td>
                       <td className={`${td} text-right`}>{a.ShippedQuantity}</td>
                       <td className={`${td} text-right font-semibold text-amber-300`}>{a.PendingQuantity}</td>
+                      {canCreate && (
+                        <td className={`${td} text-center`} onClick={(e) => e.stopPropagation()}>
+                          <button
+                            type="button"
+                            className="btn-primary py-0.5 px-2 text-xs inline-flex items-center gap-1 disabled:opacity-60"
+                            onClick={() => void openCreateShipment(a.ContractId)}
+                            disabled={preparingId != null}
+                            title="Bu sözleşme için sevkiyat fişi kes"
+                          >
+                            <TruckIcon size={14} />
+                            {preparingId === a.ContractId ? '...' : 'Fiş kes'}
+                          </button>
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -215,7 +254,7 @@ export default function ShipmentsPage() {
         <EmptyState
           icon={<TruckIcon size={48} weight="duotone" />}
           title="Sevkiyat fişi bulunamadı"
-          description="Fişler sözleşmenin “Sevkiyatlar” sekmesinden kesilir."
+          description="Fişler “Sevk bekleyenler” listesinden veya sözleşmenin “Sevkiyatlar” sekmesinden kesilir."
         />
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel">
@@ -281,6 +320,17 @@ export default function ShipmentsPage() {
         </div>
       )}
       {pdfPreviewElement}
+      {shipTarget && (
+        <CreateShipmentModal
+          contract={shipTarget.contract}
+          lines={shipTarget.lines}
+          onClose={() => setShipTarget(null)}
+          onCreated={() => {
+            setShipTarget(null);
+            void load();
+          }}
+        />
+      )}
     </div>
   );
 }
