@@ -45,6 +45,34 @@ export function computePriceBreakdown(lines: PriceBreakdownLine[], vatRate: numb
   return { subtotal, discountAmount, discountedTotal, vatAmount, grandTotal };
 }
 
+/**
+ * Kiralama tam dönem özeti: her satırın kuruşa yuvarlanmış 1 aylık (ekrandaki) iskontolu
+ * tutarı gün oranıyla ölçeklenir. Böylece 1 ay 100.000,00 ise 2 ay 200.000,00 olur;
+ * 4 haneli iskonto yüzdesinin brüt × gün üzerinde ürettiği kuruş artığı (200.000,01) oluşmaz.
+ */
+export function computeRentalPeriodBreakdown(
+  monthlyLines: PriceBreakdownLine[],
+  days: number,
+  monthDays: number,
+  vatRate: number
+): PriceBreakdown {
+  const factor = monthDays > 0 && Number.isFinite(days) ? Math.max(0, days) / monthDays : 0;
+  let subtotal = 0;
+  let discountedTotal = 0;
+  for (const line of monthlyLines) {
+    const monthlyGross = roundTo(Math.max(0, line.gross), MONEY_DECIMALS);
+    const monthlyNet = roundTo(monthlyGross - lineDiscountAmount(line.gross, line.discountPercent), MONEY_DECIMALS);
+    subtotal += roundTo(monthlyGross * factor, MONEY_DECIMALS);
+    discountedTotal += roundTo(monthlyNet * factor, MONEY_DECIMALS);
+  }
+  subtotal = roundTo(subtotal, MONEY_DECIMALS);
+  discountedTotal = roundTo(discountedTotal, MONEY_DECIMALS);
+  const discountAmount = roundTo(subtotal - discountedTotal, MONEY_DECIMALS);
+  const vatAmount = roundTo(discountedTotal * (sanitizeVatRate(vatRate) / 100), MONEY_DECIMALS);
+  const grandTotal = roundTo(discountedTotal + vatAmount, MONEY_DECIMALS);
+  return { subtotal, discountAmount, discountedTotal, vatAmount, grandTotal };
+}
+
 export type TargetTotalKind = 'net' | 'grand';
 
 export type UniformDiscountReason =

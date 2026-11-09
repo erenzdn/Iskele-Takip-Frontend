@@ -41,7 +41,7 @@ import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
 import { clampDiscountRange, discountPercentFromNet, formatDiscountPercent, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
-import { solveUniformDiscountForTarget, type TargetTotalKind } from '../../utils/quoteTargetTotal';
+import { computeRentalPeriodBreakdown, solveUniformDiscountForTarget, type TargetTotalKind } from '../../utils/quoteTargetTotal';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -1231,7 +1231,18 @@ export default function ContractDetailModal({
   };
 
   const monthlyPriceBreakdown = buildPriceBreakdown(MONTHLY_PRICING_DAYS);
-  const fullContractPriceBreakdown = buildPriceBreakdown(billedDays);
+  const fullContractPriceBreakdown =
+    contractType === 'RENTAL'
+      ? computeRentalPeriodBreakdown(
+          contractItems.map((item) => ({
+            gross: getLineTotal(item, MONTHLY_PRICING_DAYS),
+            discountPercent: getRowDiscountPercent(item),
+          })),
+          billedDays,
+          MONTHLY_PRICING_DAYS,
+          vatRate
+        )
+      : buildPriceBreakdown(billedDays);
   const displayedPriceBreakdown =
     contractType === 'RENTAL' ? monthlyPriceBreakdown : fullContractPriceBreakdown;
 

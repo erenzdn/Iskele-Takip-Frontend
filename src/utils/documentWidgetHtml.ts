@@ -3,7 +3,10 @@
  * Değişikliklerde backend registry ile birlikte güncellenmelidir.
  */
 
+import { lineNetFromGross } from './lineDiscount';
+
 const EMPTY = '—';
+const RENTAL_MONTH_DAYS = 30;
 const MS_PER_DAY = 1000 * 60 * 60 * 24;
 
 type MaterialDetail = {
@@ -14,6 +17,7 @@ type MaterialDetail = {
   ReturnedQuantity?: number;
   Quantity?: number;
   UnitPriceSnapshot?: number;
+  MonthlyPriceOverride?: number | null;
   DailyPrice?: number;
   LineTotal?: number;
   UnitName?: string;
@@ -148,18 +152,45 @@ function formatUsageDaysCell(days: number | null): string {
   return `${days} gün`;
 }
 
+/** Kiralama envanter satırının günlük fiyatı: MonthlyPriceOverride / 30, yoksa snapshot (backend lineIskonto ile aynı). */
+function rentalDailyUnitPrice(detail: MaterialDetail | undefined): number {
+  const override = detail?.MonthlyPriceOverride;
+  if (override != null && Number.isFinite(Number(override)) && Number(override) >= 0) {
+    return Number(override) / RENTAL_MONTH_DAYS;
+  }
+  const daily = Number(detail?.UnitPriceSnapshot);
+  return Number.isFinite(daily) ? daily : 0;
+}
+
+/**
+ * Net katsayısı = kuruşa yuvarlanmış 1 aylık satır neti / aylık brüt (backend widgetRegistry ile aynı).
+ * Gün sayısıyla ölçeklenen tutar aylık netin tam katı olur (kuruş artığı yok).
+ */
+function detailNetFactor(
+  detail: MaterialDetail | undefined,
+  fallbackIskonto: unknown,
+  isRentalInventory: boolean
+): number {
+  const pct = resolveDetailDiscountPercent(detail, fallbackIskonto);
+  const base = isRentalInventory
+    ? rentalDailyUnitPrice(detail) * (Number(detail?.RentedQuantity ?? detail?.Quantity ?? 0) || 0) * RENTAL_MONTH_DAYS
+    : 0;
+  if (!(base > 0)) return 1 - pct / 100;
+  return lineNetFromGross(base, pct) / base;
+}
+
 export function computeLineAmounts(item: MaterialDetail, ctx: TableOptions = {}) {
   const isSale = ctx.contractType === 'SALE';
   const isManual = item?.IsManual === true;
-  const iskontoPct = resolveDetailDiscountPercent(item, ctx.iskonto);
-  const discountFactor =
-    Number.isFinite(iskontoPct) && iskontoPct > 0 ? Math.max(0, 1 - iskontoPct / 100) : 1;
+  const isRentalInventory = !isSale && !isManual;
+  const discountFactor = detailNetFactor(item, ctx.iskonto, isRentalInventory);
 
   const qty = Number(item?.RentedQuantity ?? 0);
   const returned = Number(item?.ReturnedQuantity ?? 0);
   const remaining = Math.max(0, (Number.isFinite(qty) ? qty : 0) - (Number.isFinite(returned) ? returned : 0));
   const priceRaw = item?.UnitPriceSnapshot;
-  const price = priceRaw == null || priceRaw === undefined ? NaN : Number(priceRaw);
+  const snapshotPrice = priceRaw == null || priceRaw === undefined ? NaN : Number(priceRaw);
+  const price = isRentalInventory && Number.isFinite(snapshotPrice) ? rentalDailyUnitPrice(item) : snapshotPrice;
 
   const lineStart = item?.EffectiveStartDate ?? ctx.startDate ?? null;
   const lineEnd = ctx.endDate ?? null;
@@ -518,10 +549,8 @@ export function computeReturnLineValues(
   const contractType = options.contractType ?? 'RENTAL';
   const isSale = contractType === 'SALE';
   const isManual = relatedDetail?.IsManual === true;
-  const discountFactor = (() => {
-    const pct = resolveDetailDiscountPercent(relatedDetail, options.iskonto);
-    return pct > 0 ? Math.max(0, 1 - pct / 100) : 1;
-  })();
+  const isRentalInventory = !isSale && !isManual;
+  const discountFactor = detailNetFactor(relatedDetail, options.iskonto, isRentalInventory);
 
   const typeLabel = getSettlementTypeLabel(
     ret.IsNonPhysicalSettlement === true,
@@ -544,7 +573,11 @@ export function computeReturnLineValues(
 
   const qty = Number(ret.ReturnQuantity ?? 0);
   const priceRaw = relatedDetail.UnitPriceSnapshot ?? ret.InventoryUnitPriceSnapshot;
-  const price = priceRaw == null || priceRaw === undefined ? NaN : Number(priceRaw);
+  const snapshotPrice = priceRaw == null || priceRaw === undefined ? NaN : Number(priceRaw);
+  const price =
+    isRentalInventory && Number.isFinite(snapshotPrice) && relatedDetail.UnitPriceSnapshot != null
+      ? rentalDailyUnitPrice(relatedDetail)
+      : snapshotPrice;
   const discountedUnitPrice = Number.isFinite(price) ? price * discountFactor : null;
 
   const lineStart = relatedDetail.EffectiveStartDate ?? options.contractStartDate ?? null;

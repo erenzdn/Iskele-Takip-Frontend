@@ -27,7 +27,7 @@ import { customerService } from '../../services/customerService';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, isConvertedQuoteApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
 import { clampDiscountRange, commitQuotePricingDrafts, discountPercentFromNet, formatDiscountPercent, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
-import { computePriceBreakdown, solveUniformDiscountForTarget, type PriceBreakdown, type TargetTotalKind } from '../../utils/quoteTargetTotal';
+import { computePriceBreakdown, computeRentalPeriodBreakdown, solveUniformDiscountForTarget, type PriceBreakdown, type TargetTotalKind } from '../../utils/quoteTargetTotal';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -1144,7 +1144,18 @@ export default function QuoteDetailModal({
     );
 
   const monthlyPriceBreakdown = buildPriceBreakdown(MONTHLY_PRICING_DAYS);
-  const fullQuotePriceBreakdown = buildPriceBreakdown(billedDays);
+  const fullQuotePriceBreakdown =
+    quoteType === 'RENTAL'
+      ? computeRentalPeriodBreakdown(
+          quoteItems.map((item) => ({
+            gross: getLineTotal(item, MONTHLY_PRICING_DAYS),
+            discountPercent: getRowDiscountPercent(item),
+          })),
+          billedDays,
+          MONTHLY_PRICING_DAYS,
+          vatRate
+        )
+      : buildPriceBreakdown(billedDays);
   const displayedPriceBreakdown =
     quoteType === 'RENTAL' ? monthlyPriceBreakdown : fullQuotePriceBreakdown;
 
@@ -1574,6 +1585,23 @@ export default function QuoteDetailModal({
     return requestBody;
   };
 
+  // Backend PATCH'te kalemleri silip yeniden ekler; QuoteDetailId'ler her kayıtta değişir.
+  // Ekran açık kalıyorsa eski ID'lerle tekrar kaydetmemek için kayıtlı teklifi yeniden yükle.
+  const syncSavedQuote = async (quoteId: number) => {
+    if (isNew) return;
+    try {
+      const fresh = await quoteService.getByIdAsync(quoteId);
+      skipDirtyRef.current = true;
+      setFullQuote(fresh);
+      setIsDirty(false);
+      window.setTimeout(() => {
+        skipDirtyRef.current = false;
+      }, 400);
+    } catch (error) {
+      console.error('Refresh quote after save error:', error);
+    }
+  };
+
   const persistDraft = async (options?: { silent?: boolean }): Promise<number | null> => {
     if (!hasDraftContent) return persistedQuoteId;
     try {
@@ -1610,6 +1638,7 @@ export default function QuoteDetailModal({
             resetNewSiteMode,
           });
         }
+        if (isPage) await syncSavedQuote(quoteId);
       }
       setStatus(QuoteStatus.Draft);
       setIsDirty(false);
@@ -1873,6 +1902,7 @@ export default function QuoteDetailModal({
             resetNewSiteMode,
           });
         }
+        if (isPage) await syncSavedQuote(existingId);
         toast.success('Teklif başarıyla güncellendi!');
         await onDataChanged?.();
         onClose();
@@ -2277,6 +2307,8 @@ export default function QuoteDetailModal({
         VatRate: vatRate,
         ...(details.length > 0 ? { details } : {}),
       });
+      // Dönüştürme başarısız olup ekran açık kalırsa yeniden denemede yeni kalem ID'leri kullanılsın.
+      await syncSavedQuote(activeQuote.QuoteId);
 
       const result = await quoteService.convertToContractAsync(activeQuote.QuoteId, {
         ...options,
