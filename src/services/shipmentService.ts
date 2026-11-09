@@ -1,5 +1,6 @@
 import { apiClient } from './apiClient';
 import type {
+  ConfirmShipmentDeliveryRequest,
   ContractAwaitingShipment,
   CreateShipmentRequest,
   Shipment,
@@ -12,6 +13,10 @@ export interface ShipmentListParams {
   warehouseId?: number;
   customerId?: number;
   status?: ShipmentStatus;
+  /** Türetilmiş teslim durumu (yalnızca aktif fişler) */
+  deliveryState?: 'pending' | 'delivered';
+  /** İmzalı irsaliye eki olmayan aktif fişler */
+  missingWaybill?: boolean;
   dateFrom?: string;
   dateTo?: string;
   search?: string;
@@ -40,7 +45,7 @@ export function buildShipmentQuery(params?: ShipmentListParams): string {
 
 /**
  * Sevkiyat fişi (teslim/sevk) API'si.
- * İzinler: shipments_view (liste/detay/PDF), shipments_create, shipments_cancel.
+ * İzinler: shipments_view (liste/detay/PDF), shipments_create, shipments_cancel, shipments_confirm_delivery.
  */
 export const shipmentService = {
   async listAsync(params?: ShipmentListParams): Promise<ShipmentListResponse> {
@@ -68,6 +73,16 @@ export const shipmentService = {
 
   async cancelAsync(id: number, reason: string): Promise<ShipmentMutationResult> {
     return apiClient.patch<ShipmentMutationResult>(`/shipments/${id}/cancel`, { reason });
+  },
+
+  /** Teslim onayı (yeniden çağrılırsa düzeltir). İzin: shipments_confirm_delivery */
+  async confirmDeliveryAsync(id: number, data: ConfirmShipmentDeliveryRequest): Promise<Shipment> {
+    return apiClient.post<Shipment>(`/shipments/${id}/confirm-delivery`, data);
+  },
+
+  /** Teslim onayını geri al. İzin: shipments_confirm_delivery */
+  async undoDeliveryAsync(id: number): Promise<Shipment> {
+    return apiClient.delete<Shipment>(`/shipments/${id}/delivery`);
   },
 
   /** templateId verilmezse yerleşik sevk fişi düzeni basılır. */

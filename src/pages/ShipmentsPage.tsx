@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { FilePdfIcon, TruckIcon } from '@phosphor-icons/react';
-import type { Contract, ContractAwaitingShipment, InventoryContractLineItem, Shipment, ShipmentStatus, Warehouse } from '../models';
+import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, TruckIcon } from '@phosphor-icons/react';
+import type { Contract, ContractAwaitingShipment, InventoryContractLineItem, Shipment, Warehouse } from '../models';
 import { shipmentService } from '../services/shipmentService';
 import { warehouseService } from '../services/warehouseService';
 import { contractService } from '../services/contractService';
 import CreateShipmentModal from '../components/modals/CreateShipmentModal';
+import ConfirmDeliveryModal from '../components/modals/ConfirmDeliveryModal';
+import DeliveryStatusBadge from '../components/shipments/DeliveryStatusBadge';
 import { contractDetailsToShipmentLines } from '../utils/shipment';
 import { useAuthStore } from '../store/authStore';
 import { PageActions } from '../components/PageActions';
@@ -17,6 +19,8 @@ import { toast } from '../hooks/useToast';
 import { useShipmentPdfPreview } from '../hooks/useShipmentPdfPreview';
 
 type ViewMode = 'awaiting' | 'shipments';
+/** Türetilmiş fiş durumu filtresi: teslim durumu yalnızca aktif fişler için anlamlı */
+type StateFilter = '' | 'pending' | 'delivered' | 'CANCELLED';
 
 const th =
   'text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover';
@@ -31,11 +35,14 @@ export default function ShipmentsPage() {
   const user = useAuthStore((s) => s.user);
   const canView = Boolean(user?.permissions?.includes('shipments_view'));
   const canCreate = Boolean(user?.permissions?.includes('shipments_create'));
+  const canConfirmDelivery = Boolean(user?.permissions?.includes('shipments_confirm_delivery'));
 
   const [view, setView] = useState<ViewMode>('awaiting');
   const [search, setSearch] = useState('');
   const [warehouseId, setWarehouseId] = useState<number | ''>('');
-  const [status, setStatus] = useState<ShipmentStatus | ''>('');
+  const [stateFilter, setStateFilter] = useState<StateFilter>('');
+  const [missingWaybill, setMissingWaybill] = useState(false);
+  const [deliveryTarget, setDeliveryTarget] = useState<Shipment | null>(null);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -60,7 +67,9 @@ export default function ShipmentsPage() {
         const res = await shipmentService.listAsync({
           search: search.trim() || undefined,
           warehouseId: warehouseId === '' ? undefined : warehouseId,
-          status: status || undefined,
+          status: stateFilter === 'CANCELLED' ? 'CANCELLED' : undefined,
+          deliveryState: stateFilter === 'pending' || stateFilter === 'delivered' ? stateFilter : undefined,
+          missingWaybill: missingWaybill || undefined,
           dateFrom: dateFrom ? new Date(`${dateFrom}T00:00:00`).toISOString() : undefined,
           dateTo: dateTo ? new Date(`${dateTo}T23:59:59`).toISOString() : undefined,
           limit: 500,
@@ -72,7 +81,7 @@ export default function ShipmentsPage() {
     } finally {
       setLoading(false);
     }
-  }, [canView, view, search, warehouseId, status, dateFrom, dateTo]);
+  }, [canView, view, search, warehouseId, stateFilter, missingWaybill, dateFrom, dateTo]);
 
   useEffect(() => {
     const t = window.setTimeout(() => void load(), 250);
@@ -161,15 +170,20 @@ export default function ShipmentsPage() {
               ))}
             </select>
             <select
-              value={status}
-              onChange={(e) => setStatus(e.target.value as ShipmentStatus | '')}
-              className="input py-1.5 px-2 text-sm min-w-[110px]"
+              value={stateFilter}
+              onChange={(e) => setStateFilter(e.target.value as StateFilter)}
+              className="input py-1.5 px-2 text-sm min-w-[130px]"
               title="Durum"
             >
               <option value="">Tüm durumlar</option>
-              <option value="ACTIVE">Aktif</option>
+              <option value="pending">Teslim bekleyen</option>
+              <option value="delivered">Teslim edildi</option>
               <option value="CANCELLED">İptal</option>
             </select>
+            <label className="flex items-center gap-1.5 text-xs text-text-secondary cursor-pointer select-none" title="İmzalı irsaliye eki olmayan aktif fişler">
+              <input type="checkbox" checked={missingWaybill} onChange={(e) => setMissingWaybill(e.target.checked)} />
+              İmzalı irsaliye eksik
+            </label>
             <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="input py-1.5 px-2 text-sm w-[130px]" title="Başlangıç" />
             <span className="text-text-secondary text-xs">–</span>
             <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="input py-1.5 px-2 text-sm w-[130px]" title="Bitiş" />
@@ -271,7 +285,8 @@ export default function ShipmentsPage() {
                   <th className={th}>Plaka</th>
                   <th className={th}>İrsaliye</th>
                   <th className={th}>Durum</th>
-                  <th className={`${th} text-center w-14`}>PDF</th>
+                  <th className={`${th} text-center w-12`} title="Dosya ekleri (imzalı irsaliye, fotoğraf)">Ek</th>
+                  <th className={`${th} text-center w-16`}>İşlem</th>
                 </tr>
               </thead>
               <tbody>
@@ -294,22 +309,40 @@ export default function ShipmentsPage() {
                       <td className={td}>{s.VehiclePlate || '—'}</td>
                       <td className={td}>{s.ExternalWaybillNo || '—'}</td>
                       <td className={td}>
-                        {cancelled ? (
-                          <span className="text-red-400" title={s.CancellationReason || undefined}>İptal</span>
+                        <DeliveryStatusBadge shipment={s} />
+                      </td>
+                      <td className={`${td} text-center`}>
+                        {(s.AttachmentCount ?? 0) > 0 ? (
+                          <span className="inline-flex items-center gap-0.5 text-text-secondary" title={`${s.AttachmentCount} dosya eki`}>
+                            <PaperclipIcon size={13} />
+                            {s.AttachmentCount}
+                          </span>
                         ) : (
-                          <span className="text-green-400">Aktif</span>
+                          <span className="text-text-secondary/50">—</span>
                         )}
                       </td>
-                      <td className={`${td} text-center`} onClick={(e) => e.stopPropagation()}>
+                      <td className={`${td} text-center whitespace-nowrap`} onClick={(e) => e.stopPropagation()}>
                         <button
                           type="button"
                           className="p-1 rounded hover:bg-background-secondary text-text-secondary hover:text-text-primary"
                           onClick={() => void openPreview(s)}
                           disabled={loadingId === s.ShipmentId}
+                          title="Sevk fişi PDF"
                           aria-label={`${s.ShipmentNo} PDF`}
                         >
                           <FilePdfIcon size={16} />
                         </button>
+                        {!cancelled && canConfirmDelivery && (
+                          <button
+                            type="button"
+                            className={`p-1 rounded hover:bg-background-secondary ${s.DeliveredAt ? 'text-text-secondary hover:text-text-primary' : 'text-green-400'}`}
+                            onClick={() => setDeliveryTarget(s)}
+                            title={s.DeliveredAt ? 'Teslim bilgisi / belgeler' : 'Teslimi onayla'}
+                            aria-label={`${s.ShipmentNo} teslim onayı`}
+                          >
+                            <CheckCircleIcon size={16} weight={s.DeliveredAt ? 'fill' : 'regular'} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -320,6 +353,20 @@ export default function ShipmentsPage() {
         </div>
       )}
       {pdfPreviewElement}
+      {deliveryTarget && (
+        <ConfirmDeliveryModal
+          shipment={deliveryTarget}
+          onClose={() => {
+            setDeliveryTarget(null);
+            // Modalda ek yüklenmiş olabilir: sayaçlar ve "irsaliye eksik" filtresi tazelensin
+            void load();
+          }}
+          onConfirmed={() => {
+            setDeliveryTarget(null);
+            void load();
+          }}
+        />
+      )}
       {shipTarget && (
         <CreateShipmentModal
           contract={shipTarget.contract}

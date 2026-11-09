@@ -1,4 +1,4 @@
-import type { Contract, ContractDetail, DeliveryMode, InventoryContractLineItem } from '../models';
+import type { Contract, ContractDetail, DeliveryMode, InventoryContractLineItem, Shipment } from '../models';
 
 /**
  * Sevkiyat (teslim) modu yardımcıları — backend src/utils/deliveryMode.js ile aynı kurallar.
@@ -89,6 +89,76 @@ export function shipmentDateInputToIso(dateInput: string, now: Date = new Date()
   if (!dateInput || dateInput === todayKey) return now.toISOString();
   const [y, m, d] = dateInput.split('-').map(Number);
   return new Date(y, (m || 1) - 1, d || 1, 12, 0, 0, 0).toISOString();
+}
+
+// ─── Teslim onayı ─────────────────────────────────────────────────────────
+
+/** Türetilmiş fiş durumu (backend Status yalnızca ACTIVE/CANCELLED tutar). */
+export type ShipmentDeliveryState = 'pending' | 'delivered' | 'cancelled';
+
+export const SHIPMENT_DELIVERY_STATE_LABELS: Record<ShipmentDeliveryState, string> = {
+  pending: 'Teslim bekliyor',
+  delivered: 'Teslim edildi',
+  cancelled: 'İptal',
+};
+
+/** Bu kadar günden uzun süredir teslim onayı bekleyen fiş uyarı rengiyle gösterilir. */
+export const DELIVERY_OVERDUE_DAYS = 2;
+
+const MS_PER_DAY = 24 * 60 * 60 * 1000;
+const BUSINESS_UTC_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+/** Takvim günü indeksi (Europe/Istanbul, sabit UTC+3) — backend businessDayIndex ile aynı. */
+export function businessDayIndex(date: string | Date): number {
+  return Math.floor((new Date(date).getTime() + BUSINESS_UTC_OFFSET_MS) / MS_PER_DAY);
+}
+
+export function getShipmentDeliveryState(shipment: Pick<Shipment, 'Status' | 'DeliveredAt'>): ShipmentDeliveryState {
+  if (shipment.Status === 'CANCELLED') return 'cancelled';
+  return shipment.DeliveredAt ? 'delivered' : 'pending';
+}
+
+/** Teslim bekleyen fişin sevkten bu yana geçen takvim günü; teslim bekliyor değilse null. */
+export function getPendingDeliveryDays(
+  shipment: Pick<Shipment, 'Status' | 'DeliveredAt' | 'ShipmentDate'>,
+  now: Date = new Date()
+): number | null {
+  if (getShipmentDeliveryState(shipment) !== 'pending') return null;
+  return Math.max(0, businessDayIndex(now) - businessDayIndex(shipment.ShipmentDate));
+}
+
+/** Date → `<input type="datetime-local">` değeri (yerel saat, dakika hassasiyeti). */
+export function toDateTimeLocalValue(date: string | Date): string {
+  const d = new Date(date);
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** `<input type="datetime-local">` değeri → ISO; boş/geçersizse null. */
+export function dateTimeLocalToIso(value: string): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+export type DeliveryDraftValidation = { ok: true; deliveredAtIso: string } | { ok: false; message: string };
+
+/** Backend confirmShipmentDelivery kurallarının istemci tarafı kopyası (erken ve anlaşılır hata için). */
+export function validateDeliveryDraft(
+  draft: { deliveredAt: string; receiverName: string },
+  shipmentDate: string,
+  now: Date = new Date()
+): DeliveryDraftValidation {
+  if (draft.receiverName.trim().length < 2) return { ok: false, message: 'Teslim alan kişinin adını girin.' };
+  const iso = dateTimeLocalToIso(draft.deliveredAt);
+  if (!iso) return { ok: false, message: 'Teslim tarihini girin.' };
+  if (new Date(iso).getTime() > now.getTime() + 10 * 60 * 1000) {
+    return { ok: false, message: 'Teslim tarihi ileri bir tarih olamaz.' };
+  }
+  if (businessDayIndex(iso) < businessDayIndex(shipmentDate)) {
+    return { ok: false, message: 'Teslim tarihi sevk tarihinden önce olamaz.' };
+  }
+  return { ok: true, deliveredAtIso: iso };
 }
 
 export interface ShipmentDraftLine {

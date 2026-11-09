@@ -389,7 +389,44 @@ export interface Shipment {
   CancellationReason?: string | null;
   TotalQuantity?: number;
   ItemCount?: number;
+  /** Silinmemiş dosya eki sayısı (imzalı irsaliye, teslim fotoğrafı…) */
+  AttachmentCount?: number;
+  /** "İmzalı irsaliye" kategorisinde en az bir ek var mı */
+  HasSignedWaybill?: boolean;
+  /** Teslim onayı — dolu ise fiş teslim edildi. Kira hesabını etkilemez (kira ShipmentDate'te başlar). */
+  DeliveredAt?: string | null;
+  DeliveredReceiverName?: string | null;
+  DeliveredReceiverTitle?: string | null;
+  DeliveryNotes?: string | null;
+  DeliveryConfirmedBy?: number | null;
+  DeliveryConfirmedByName?: string | null;
+  DeliveryConfirmedAt?: string | null;
   items?: ShipmentItem[];
+}
+
+export interface ConfirmShipmentDeliveryRequest {
+  DeliveredAt?: string | null;
+  ReceiverName: string;
+  ReceiverTitle?: string | null;
+  Notes?: string | null;
+}
+
+export type AttachmentEntityType = 'SHIPMENT' | 'CONTRACT' | 'RETURN_SLIP';
+
+export type AttachmentCategory = 'SIGNED_WAYBILL' | 'DELIVERY_PHOTO' | 'DAMAGE_PHOTO' | 'SIGNED_CONTRACT' | 'OTHER';
+
+export interface Attachment {
+  AttachmentId: number;
+  EntityType: AttachmentEntityType;
+  EntityId: number;
+  Category: AttachmentCategory;
+  FileName: string;
+  MimeType: string;
+  FileSize: number;
+  Description?: string | null;
+  UploadedBy: number;
+  UploadedByName?: string | null;
+  UploadedAt: string;
 }
 
 export interface CreateShipmentRequest {
@@ -717,6 +754,81 @@ export interface ContractReturn {
   SettlementCharge?: number;
   InventoryUnitPriceSnapshot?: number | null;
   PriceBasis?: string | null;
+  /** İade fişinden geldiyse kalem durumu ve fiş bilgisi (eski tek kalemlik iadelerde null) */
+  Condition?: ReturnCondition | null;
+  ReturnSlipId?: number | null;
+  ReturnSlipNo?: string | null;
+}
+
+/** İade fişi kalem durumu: sağlam iade ya da müşteriye satışa çevrilen (hasarlı/kayıp/satış) */
+export type ReturnCondition = 'SOUND' | 'DAMAGED' | 'LOST' | 'SOLD';
+
+export interface ReturnSlipItem {
+  ReturnSlipItemId: number;
+  ReturnSlipId: number;
+  DetailId: number;
+  ItemId: number;
+  Quantity: number;
+  Condition: ReturnCondition;
+  UnitPrice?: number | null;
+  ChargeAmount?: number | null;
+  PriceBasis?: string | null;
+  Notes?: string | null;
+  ItemCode?: string | null;
+  ItemName?: string | null;
+  UnitName?: string | null;
+}
+
+export interface ReturnSlip {
+  ReturnSlipId: number;
+  ReturnSlipNo: string;
+  ContractId: number;
+  ContractCode?: string | null;
+  CustomerId?: number;
+  CustomerName?: string | null;
+  SiteName?: string | null;
+  Currency?: string | null;
+  ReturnDate: string;
+  WarehouseId?: number | null;
+  WarehouseName?: string | null;
+  Status: 'ACTIVE' | 'CANCELLED';
+  DriverName?: string | null;
+  VehiclePlate?: string | null;
+  DeliveredByName?: string | null;
+  ExternalWaybillNo?: string | null;
+  Notes?: string | null;
+  CreatedByName?: string | null;
+  CreatedAt?: string;
+  CancelledAt?: string | null;
+  CancelledByName?: string | null;
+  CancellationReason?: string | null;
+  TotalQuantity: number;
+  SoundQuantity: number;
+  DamagedQuantity: number;
+  LostQuantity: number;
+  SoldQuantity: number;
+  TotalCharge: number;
+  ItemCount: number;
+  AttachmentCount?: number;
+  items?: ReturnSlipItem[];
+}
+
+export interface CreateReturnSlipRequest {
+  ReturnDate?: string;
+  WarehouseId?: number | null;
+  DriverName?: string | null;
+  VehiclePlate?: string | null;
+  DeliveredByName?: string | null;
+  ExternalWaybillNo?: string | null;
+  Notes?: string | null;
+  items: Array<{ DetailId: number; Quantity: number; Condition: ReturnCondition; ChargeOverride?: number | null }>;
+}
+
+export interface ReturnSlipMutationResult {
+  returnSlip: ReturnSlip;
+  warnings: string[];
+  contractCompleted?: boolean;
+  contractReopened?: boolean;
 }
 
 export interface SettleNonReturnRequest {

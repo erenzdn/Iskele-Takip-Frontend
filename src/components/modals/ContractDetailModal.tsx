@@ -13,8 +13,8 @@ import {
   ContractLineItem,
   InventoryContractLineItem,
   ConstructionSite,
-  ReturnItemResponse,
   ContractReturn,
+  ReturnCondition,
   ContractPriceCalculation,
   ContractTemplate,
   DeliveryMode,
@@ -45,10 +45,6 @@ import { computeRentalPeriodBreakdown, solveUniformDiscountForTarget, type Targe
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
-import {
-  AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE,
-  isAmbiguousContractDetailError,
-} from '../../utils/contractReturn';
 import StockErrorPanel from '../StockErrorPanel';
 import { useAuthStore } from '../../store/authStore';
 import { acknowledgeTabSaved } from '../../store/tabStore';
@@ -57,7 +53,8 @@ import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
-import SettleNonReturnModal from './SettleNonReturnModal';
+import CreateReturnSlipModal, { type ReturnableLine } from './CreateReturnSlipModal';
+import ContractReturnSlipsPanel from '../contracts/ContractReturnSlipsPanel';
 import ContractAddendaPanel from '../contracts/ContractAddendaPanel';
 import ContractBillingPlanPanel from '../contracts/ContractBillingPlanPanel';
 import ContractExtensionsPanel from '../contracts/ContractExtensionsPanel';
@@ -100,33 +97,6 @@ function inventoryLineRowKey(item: InventoryLineItem, rowIndex: number): string 
   return item.DetailId != null && item.DetailId > 0
     ? `d-${item.DetailId}`
     : `${item.ItemId}-${item.WarehouseId}-r${rowIndex}`;
-}
-
-function findInventoryLineByReturnKey(
-  items: ContractLineItem[],
-  key: string
-): InventoryLineItem | undefined {
-  if (key.startsWith('d-')) {
-    const detailId = Number(key.slice(2));
-    if (Number.isFinite(detailId)) {
-      const byDetail = items.find(
-        (i): i is InventoryLineItem => i.kind === 'inventory' && i.DetailId === detailId
-      );
-      if (byDetail) return byDetail;
-    }
-  }
-  const parts = key.split('-');
-  if (parts.length >= 2) {
-    const itemId = Number(parts[0]);
-    const warehouseId = Number(parts[1]);
-    if (Number.isFinite(itemId) && Number.isFinite(warehouseId)) {
-      return items.find(
-        (i): i is InventoryLineItem =>
-          i.kind === 'inventory' && i.ItemId === itemId && i.WarehouseId === warehouseId
-      );
-    }
-  }
-  return undefined;
 }
 
 type ContractDetailTab = NonNullable<ContractTabState['initialTab']> | 'addendum-extras';
@@ -212,16 +182,11 @@ export default function ContractDetailModal({
   const [selectedWarehouseId, setSelectedWarehouseId] = useState<number | ''>('');
   const [isBusy, setIsBusy] = useState(false);
 
-  // İade işlemi state'leri - returnDetailKey: inventoryLineRowKey (DetailId veya itemId-warehouseId-rN)
-  const [returnDetailKey, setReturnDetailKey] = useState<string | null>(null);
-  const [returnWarehouseId, setReturnWarehouseId] = useState<number | ''>('');
-  /** İade miktarı inputu – sadece rakam */
-  const [returnQuantityStr, setReturnQuantityStr] = useState<string>('1');
-  const [returnDate, setReturnDate] = useState<string>(todayDateInput);
-  const [isReturning, setIsReturning] = useState(false);
-
-  // Sanal İade İşlemi state'leri
-  const [settleItem, setSettleItem] = useState<{ item: InventoryContractLineItem, remainingOnRent: number } | null>(null);
+  // İade fişi penceresi: satırdaki "İade"/"Zayi" butonları kalemi ve durumu ön seçer
+  const [returnSlipTarget, setReturnSlipTarget] = useState<{
+    preset: { DetailId: number; condition: ReturnCondition } | null;
+  } | null>(null);
+  const [returnSlipsRefreshKey, setReturnSlipsRefreshKey] = useState(0);
 
   // İade geçmişi state'leri
   const [contractReturns, setContractReturns] = useState<ContractReturn[]>([]);
@@ -252,7 +217,6 @@ export default function ContractDetailModal({
   const [showCancelConfirm, setShowCancelConfirm] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
   const [cancelReasonError, setCancelReasonError] = useState<string | null>(null);
-  const [showReturnConfirm, setShowReturnConfirm] = useState(false);
   const [showCompleteConfirm, setShowCompleteConfirm] = useState(false);
   const [showRevertConfirm, setShowRevertConfirm] = useState(false);
   const [showRevertRetryConfirm, setShowRevertRetryConfirm] = useState(false);
@@ -2141,117 +2105,34 @@ export default function ContractDetailModal({
     }
   };
 
-  const handleReturnClick = () => {
-    if (!isRentalContract) return;
-    const effectiveContractForReturn = fullContract ?? contract;
-    if (!contract || !effectiveContractForReturn || !active || !returnDetailKey) return;
-    const item = findInventoryLineByReturnKey(contractItems, returnDetailKey);
-    if (!item) return;
-    const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
-    const remainingOnRent = onSiteQty(item);
-    if (qty <= 0 || qty > remainingOnRent) {
-      toast.warning(`İade miktarı 1 ile ${remainingOnRent} arasında olmalıdır`);
-      return;
-    }
-    setShowReturnConfirm(true);
+  const openReturnSlip = (item?: InventoryLineItem, condition: ReturnCondition = 'SOUND') => {
+    if (!isRentalContract || !active) return;
+    const preset =
+      item && item.DetailId != null && item.DetailId > 0 ? { DetailId: item.DetailId, condition } : null;
+    setReturnSlipTarget({ preset });
   };
 
-  const handleReturnItem = async () => {
-    if (!isRentalContract) return;
-    const effectiveContractForReturn = fullContract ?? contract;
-    if (!contract || !effectiveContractForReturn || !active || !returnDetailKey) return;
-
-    const item = findInventoryLineByReturnKey(contractItems, returnDetailKey);
-    if (!item) return;
-    const itemId = item.ItemId;
-    const warehouseId = item.WarehouseId;
-
-    const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
-    const remainingOnRent = onSiteQty(item);
-    if (qty <= 0 || qty > remainingOnRent) {
-      toast.warning(`İade miktarı 1 ile ${remainingOnRent} arasında olmalıdır`);
-      return;
-    }
-
-    try {
-      setIsReturning(true);
-      const options: { returnDate?: string; returnWarehouseId?: number; detailId?: number | null } = {};
-      if (returnDate) options.returnDate = new Date(returnDate).toISOString();
-      if (returnWarehouseId) options.returnWarehouseId = Number(returnWarehouseId);
-      if (item.DetailId != null && item.DetailId > 0) options.detailId = item.DetailId;
-
-      const result: ReturnItemResponse = await contractService.returnItemAsync(
-        contract.ContractId,
-        itemId,
-        warehouseId,
-        qty,
-        options
-      );
-
-      // Başarılı iade sonrası contract items güncelle (DetailId varsa yalnızca o satır)
-      setContractItems((prevItems) =>
-        prevItems.map((i) => {
-          if (i.kind !== 'inventory') return i;
-          if (item.DetailId != null && item.DetailId > 0) {
-            return i.DetailId === item.DetailId ? { ...i, ReturnedQuantity: result.ReturnedQuantity } : i;
-          }
-          return i.ItemId === itemId && i.WarehouseId === warehouseId
-            ? { ...i, ReturnedQuantity: result.ReturnedQuantity }
-            : i;
-        })
-      );
-
-      // İade formunu kapat ve onay modal'ını kapat
-      setShowReturnConfirm(false);
-      setReturnDetailKey(null);
-      setReturnQuantityStr('1');
-      setReturnDate(todayDateInput());
-      setReturnWarehouseId('');
-
-      // İade geçmişini yenile
-      loadContractReturns();
-
-      let message = `İade başarılı!\nİade edilen: ${qty} adet\nKirada kalan: ${result.RemainingOnRent} adet`;
-      if (result.LateDays > 0) {
-        const lateFmt = result.LateFee.toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-        message += `\n\nGecikme: ${result.LateDays} gün`;
-        message += `\nGecikme ücreti: ${currency === 'EUR' ? '€' : currency === 'USD' ? '$' : '₺'}${lateFmt}`;
-      }
-      if (result.ContractCompleted) {
-        message += '\n\nTüm ürünler iade edildi. Sözleşme otomatik olarak tamamlandı.';
-      }
-
-      toast.success(message);
-      bumpBillingRefresh();
-      if (result.ContractCompleted) onClose();
-    } catch (error: unknown) {
-      console.error('Return item error:', error);
-      toast.error(
-        isAmbiguousContractDetailError(error)
-          ? AMBIGUOUS_CONTRACT_DETAIL_USER_MESSAGE
-          : getApiErrorMessage(error) || 'İade işlemi başarısız'
-      );
-    } finally {
-      setIsReturning(false);
-    }
-  };
-
-  const openReturnForm = (item: InventoryLineItem, rowIndex: number) => {
-    if (!isRentalContract) return;
-    const remainingOnRent = onSiteQty(item);
-    if (remainingOnRent > 0) {
-      setIsReturning(false); // Önceki istek takılı kaldıysa input disabled kalmasın
-      setReturnDetailKey(inventoryLineRowKey(item, rowIndex));
-      setReturnQuantityStr('1');
-      setReturnWarehouseId(item.WarehouseId); // Varsayılan: aynı depoya iade
-    }
-  };
-
-  const closeReturnForm = () => {
-    setReturnDetailKey(null);
-    setReturnQuantityStr('1');
-    setReturnWarehouseId('');
-  };
+  /** İade fişine girebilecek kalemler: kaydedilmiş, sahada malzemesi olan envanter satırları */
+  const returnableLines: ReturnableLine[] = contractItems
+    .filter((i): i is InventoryLineItem => i.kind === 'inventory')
+    .filter((i) => i.DetailId != null && i.DetailId > 0 && onSiteQty(i) > 0)
+    .map((i) => {
+      const inv = availableItems.find((a) => a.ItemId === i.ItemId) ?? i.Item ?? null;
+      const unit =
+        currency === 'EUR' ? inv?.UnitPriceEur : currency === 'USD' ? inv?.UnitPriceUsd : inv?.UnitPrice;
+      const name =
+        language === 'EN'
+          ? i.ItemNameOverride ?? inv?.ItemNameEn ?? inv?.ItemName ?? i.ItemName
+          : i.ItemNameOverride ?? inv?.ItemName ?? i.ItemName;
+      return {
+        DetailId: i.DetailId as number,
+        ItemCode: i.ItemCode ?? i.ItemCodeOverride ?? inv?.ItemCode ?? null,
+        ItemName: name || `#${i.ItemId}`,
+        OnSite: onSiteQty(i),
+        WarehouseId: i.WarehouseId ?? null,
+        UnitPrice: unit != null && Number(unit) > 0 ? Number(unit) : null,
+      };
+    });
 
   useEffect(() => {
     if (!isRentalContract && (activeTab === 'return' || activeTab === 'returns')) {
@@ -2261,12 +2142,6 @@ export default function ContractDetailModal({
       setActiveTab('info');
     }
   }, [isRentalContract, canViewContracts, activeTab]);
-
-  /** Sadece rakam girişine izin ver (miktar / iade miktarı); tam genişlik Unicode rakamları NFKC ile normalize edilir */
-  const handleNumericInput = (setter: (v: string) => void, e: React.ChangeEvent<HTMLInputElement>) => {
-    const raw = e.target.value.normalize('NFKC').replace(/\D/g, '');
-    setter(raw);
-  };
 
   const formatCurrency = (amount: number | null | undefined) => {
     const n = typeof amount === 'number' && Number.isFinite(amount) ? amount : Number(amount);
@@ -2691,10 +2566,7 @@ export default function ContractDetailModal({
           {isRentalContract && active && (fullContract ?? contract) && (
             <button
               type="button"
-              onClick={() => {
-                setIsReturning(false);
-                setActiveTab('return');
-              }}
+              onClick={() => setActiveTab('return')}
               className={tabBtn(activeTab === 'return')}
             >
               İade Al
@@ -2790,9 +2662,17 @@ export default function ContractDetailModal({
 
       {isRentalContract && activeTab === 'return' && !isNew && (
         <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
-          <p className="mb-2 shrink-0 text-xs text-text-secondary">
-            Kirada bekleyen ürünleri seçin; miktar, tarih ve hedef depoyu girerek iade alın.
-          </p>
+          <div className="mb-2 flex shrink-0 flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-text-secondary">
+              Dönen malzeme iade fişiyle alınır: bir fişte birden çok kalem; her kalem sağlam, hasarlı veya kayıp
+              olarak ayrılır. Hasarlı ve kayıp malzeme müşteriye envanter fiyatından satılır.
+            </p>
+            {active && canUpdateContracts && returnableLines.length > 0 && (
+              <button type="button" onClick={() => openReturnSlip()} className={`btn-primary ${compactBtn}`}>
+                İade fişi kes
+              </button>
+            )}
+          </div>
           {contractItems.length === 0 ? (
             <div className="py-8 text-center text-sm text-text-secondary">
               Bu sözleşmede kiralanan malzeme bulunmuyor veya yükleniyor...
@@ -2826,7 +2706,6 @@ export default function ContractDetailModal({
                   {contractItems.filter((i) => i.kind === 'inventory').map((item, rowIndex) => {
                     const remainingOnRent = onSiteQty(item);
                     const rowKey = inventoryLineRowKey(item, rowIndex);
-                    const isReturnFormOpen = returnDetailKey === rowKey;
                     const invItem = availableItems.find((i) => i.ItemId === item.ItemId) ?? item.Item ?? null;
                     const displayItemCode =
                       (item.ItemCode ?? item.ItemCodeOverride ?? invItem?.ItemCode) || '—';
@@ -2840,9 +2719,7 @@ export default function ContractDetailModal({
                     return (
                       <Fragment key={rowKey}>
                         <tr
-                          className={`${
-                            isReturnFormOpen ? 'ring-2 ring-inset ring-primary/60 bg-primary/15' : ''
-                          } ${rowIndex % 2 === 0 ? 'bg-background-panel' : 'bg-background-secondary/35'}`}
+                          className={rowIndex % 2 === 0 ? 'bg-background-panel' : 'bg-background-secondary/35'}
                         >
                           <td className="text-text-secondary">
                             {displayItemCode !== '—' ? (
@@ -2889,18 +2766,19 @@ export default function ContractDetailModal({
                               <div className="inline-flex items-center justify-center gap-0.5">
                                 <button
                                   type="button"
-                                  onClick={() => setSettleItem({ item, remainingOnRent })}
+                                  onClick={() => openReturnSlip(item, 'DAMAGED')}
                                   className="btn-secondary text-[10px] px-1 py-0 leading-none h-[1.125rem] min-h-0 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/30"
-                                  disabled={isReturning}
-                                  title="Zayi / Satış (Sanal İade)"
+                                  disabled={!active || !canUpdateContracts}
+                                  title="Hasarlı / kayıp: iade fişinde müşteriye satışa çevrilir"
                                 >
                                   Zayi
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => openReturnForm(item, rowIndex)}
+                                  onClick={() => openReturnSlip(item, 'SOUND')}
                                   className="btn-success text-[10px] px-1 py-0 leading-none h-[1.125rem] min-h-0"
-                                  disabled={isReturning}
+                                  disabled={!active || !canUpdateContracts}
+                                  title="İade fişi kes (bu kalem seçili)"
                                 >
                                   İade
                                 </button>
@@ -2910,66 +2788,6 @@ export default function ContractDetailModal({
                             )}
                           </td>
                         </tr>
-                        {isReturnFormOpen && remainingOnRent > 0 && (
-                          <tr className="bg-background-surface">
-                            <td colSpan={6} className="px-2 py-1.5 border-b border-background-border">
-                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                                <label className="text-[11px] text-text-secondary">Miktar</label>
-                                <input
-                                  type="text"
-                                  inputMode="numeric"
-                                  autoComplete="off"
-                                  value={returnQuantityStr}
-                                  onChange={(e) => handleNumericInput(setReturnQuantityStr, e)}
-                                  className="input w-14 py-0.5 text-xs"
-                                  placeholder="1"
-                                  disabled={isReturning}
-                                  aria-label="İade miktarı"
-                                />
-                                <span className="text-[11px] text-text-secondary">/ {remainingOnRent}</span>
-                                <label className="text-[11px] text-text-secondary">Tarih</label>
-                                <input
-                                  type="date"
-                                  value={returnDate}
-                                  onChange={(e) => setReturnDate(e.target.value)}
-                                  className="input w-28 py-0.5 text-xs"
-                                  disabled={isReturning}
-                                />
-                                <label className="text-[11px] text-text-secondary">Hedef Depo</label>
-                                <select
-                                  value={returnWarehouseId}
-                                  onChange={(e) => setReturnWarehouseId(Number(e.target.value) || '')}
-                                  className="input min-w-[120px] py-0.5 text-xs"
-                                  disabled={isReturning}
-                                >
-                                  <option value="">Kaynak depo</option>
-                                  {warehouses.map((wh) => (
-                                    <option key={wh.WarehouseId} value={wh.WarehouseId}>
-                                      {wh.WarehouseName}
-                                    </option>
-                                  ))}
-                                </select>
-                                <div className="flex-1" />
-                                <button
-                                  type="button"
-                                  onClick={closeReturnForm}
-                                  className={`btn-secondary ${compactBtn}`}
-                                  disabled={isReturning}
-                                >
-                                  İptal
-                                </button>
-                                <button
-                                  type="button"
-                                  onClick={handleReturnClick}
-                                  className={`btn-success ${compactBtn}`}
-                                  disabled={isReturning}
-                                >
-                                  {isReturning ? 'İşleniyor...' : 'Onayla'}
-                                </button>
-                              </div>
-                            </td>
-                          </tr>
-                        )}
                       </Fragment>
                     );
                   })}
@@ -2986,7 +2804,24 @@ export default function ContractDetailModal({
       )}
 
       {isRentalContract && activeTab === 'returns' && !isNew && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden p-3 gap-3">
+          {contract?.ContractId && (
+            <div className="max-h-[45%] shrink-0 overflow-auto">
+              <ContractReturnSlipsPanel
+                contractId={contract.ContractId}
+                currency={currency}
+                canCreate={active && canUpdateContracts && returnableLines.length > 0}
+                onCreateClick={() => openReturnSlip()}
+                refreshKey={returnSlipsRefreshKey}
+                onChanged={async () => {
+                  await refreshContract();
+                  await loadContractReturns();
+                  bumpBillingRefresh();
+                }}
+              />
+            </div>
+          )}
+          <h4 className="shrink-0 text-xs font-semibold text-text-secondary">İade hareketleri</h4>
           {returnsLoading ? (
             <div className="py-8 text-center text-sm text-text-secondary">Yükleniyor...</div>
           ) : contractReturns.length === 0 ? (
@@ -3058,11 +2893,16 @@ export default function ContractDetailModal({
                           <td>
                             {ret.IsNonPhysicalSettlement ? (
                               <span className="addendum-badge bg-red-500/20 text-red-300 border-red-500/30">
-                                Zayi
+                                {ret.SettlementReason === 'LOST' ? 'Kayıp' : ret.SettlementReason === 'SALE' ? 'Satış' : 'Zayi'}
                               </span>
                             ) : (
                               <span className="addendum-badge bg-green-500/20 text-green-400 border-green-500/30">
                                 Normal
+                              </span>
+                            )}
+                            {ret.ReturnSlipNo && (
+                              <span className="ml-1 text-[10px] text-text-secondary" title="İade fişi">
+                                {ret.ReturnSlipNo}
                               </span>
                             )}
                           </td>
@@ -3074,8 +2914,10 @@ export default function ContractDetailModal({
                                     ret.SettlementReason === 'SALE'
                                       ? 'Satış'
                                       : ret.SettlementReason === 'DEFECT'
-                                        ? 'Hurda / Defo'
-                                        : ret.SettlementReason,
+                                        ? 'Hasarlı / Defo'
+                                        : ret.SettlementReason === 'LOST'
+                                          ? 'Kayıp'
+                                          : ret.SettlementReason,
                                     ret.SettlementCharge != null
                                       ? `Bedel: ${formatMoney(ret.SettlementCharge, currency)}`
                                       : null,
@@ -3087,8 +2929,10 @@ export default function ContractDetailModal({
                                 {ret.SettlementReason === 'SALE'
                                   ? 'Satış'
                                   : ret.SettlementReason === 'DEFECT'
-                                    ? 'Hurda / Defo'
-                                    : ret.SettlementReason ?? '—'}
+                                    ? 'Hasarlı / Defo'
+                                    : ret.SettlementReason === 'LOST'
+                                      ? 'Kayıp'
+                                      : ret.SettlementReason ?? '—'}
                                 {ret.SettlementCharge != null ? (
                                   <span className="text-red-300">
                                     {' '}
@@ -3912,8 +3756,6 @@ export default function ContractDetailModal({
                       const historyBadgeLabel = getLineAddendumBadgeLabel(lineHistoryEvents);
                       const hasLineHistory = Boolean(historyBadgeLabel);
                       const showAddendumHighlight = hasLineHistory || isAddendumRow;
-                      const isReturnFormOpen =
-                        item.kind === 'inventory' ? returnDetailKey === rowKey : false;
                       const invItem =
                         item.kind === 'inventory'
                           ? availableItems.find((i) => i.ItemId === item.ItemId)
@@ -4485,9 +4327,9 @@ export default function ContractDetailModal({
                               {isRentalContract && !isNew && item.kind === 'inventory' && active && remainingOnRent > 0 && isReadOnly ? (
                                 <button
                                   type="button"
-                                  onClick={() => openReturnForm(item, rowIndex)}
+                                  onClick={() => openReturnSlip(item)}
                                   className="btn-secondary text-[10px] px-1 py-0 leading-none h-[1.125rem] min-h-0"
-                                  disabled={isReturning}
+                                  disabled={!canUpdateContracts}
                                   title={
                                     item.ReturnedQuantity > 0
                                       ? `İade: ${item.ReturnedQuantity}, Kirada: ${remainingOnRent}`
@@ -4523,27 +4365,6 @@ export default function ContractDetailModal({
                               ) : null}
                             </td>
                           </tr>
-                          {isRentalContract && item.kind === 'inventory' && isReturnFormOpen && (
-                            <tr className="bg-background-surface">
-                              <td colSpan={isReadOnly ? LINE_ITEM_COL_SPAN.contract.readOnly : LINE_ITEM_COL_SPAN.contract.editable} className="px-3 py-3 border-b border-background-border">
-                                <div className="flex flex-wrap items-center gap-3">
-                                  <label className="text-sm">İade Miktarı:</label>
-                                  <input type="text" inputMode="numeric" autoComplete="off" value={returnQuantityStr} onChange={(e) => handleNumericInput(setReturnQuantityStr, e)} className="input w-24" placeholder="1" disabled={isReturning} aria-label="İade miktarı" />
-                                  <span className="text-sm text-text-secondary">/ {remainingOnRent} adet</span>
-                                  <label className="text-sm ml-2">İade Tarihi:</label>
-                                  <input type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} className="input w-40" disabled={isReturning} />
-                                  <label className="text-sm ml-2">Hedef Depo:</label>
-                                  <select value={returnWarehouseId} onChange={(e) => setReturnWarehouseId(Number(e.target.value) || '')} className="input w-40" disabled={isReturning}>
-                                    <option value="">Kaynak depoya iade</option>
-                                    {warehouses.map((wh) => (<option key={wh.WarehouseId} value={wh.WarehouseId}>{wh.WarehouseName}</option>))}
-                                  </select>
-                                  <div className="flex-1" />
-                                  <button onClick={closeReturnForm} className="btn-secondary text-sm px-3 py-1" disabled={isReturning}>İptal</button>
-                                  <button onClick={handleReturnClick} className="btn-success text-sm px-3 py-1" disabled={isReturning}>{isReturning ? 'İşleniyor...' : 'Onayla'}</button>
-                                </div>
-                              </td>
-                            </tr>
-                          )}
                         </Fragment>
                       );
                     })
@@ -4843,22 +4664,6 @@ export default function ContractDetailModal({
         />
       )}
 
-      {isRentalContract && (
-        <ConfirmModal
-          open={showReturnConfirm}
-          title="Onaylıyor musunuz?"
-          message={returnDetailKey ? (() => {
-            const item = findInventoryLineByReturnKey(contractItems, returnDetailKey);
-            const qty = Math.max(0, parseInt(returnQuantityStr, 10) || 0);
-            return item
-              ? `Bu iadeyi onaylıyor musunuz? (${qty} adet, ${formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)})`
-              : 'Bu iadeyi onaylıyor musunuz?';
-          })() : 'Bu iadeyi onaylıyor musunuz?'}
-          loading={isReturning}
-          onConfirm={handleReturnItem}
-          onCancel={() => setShowReturnConfirm(false)}
-        />
-      )}
       {/* Şablon Editör Modal */}
       {isTemplateEditorOpen && (
         <ContractTemplateEditorModal
@@ -4909,18 +4714,24 @@ export default function ContractDetailModal({
           setItemIskonto((prev) => ({ ...prev, [`man-${clientId}`]: iskonto }));
         }}
       />
-      {settleItem && contract && (
-        <SettleNonReturnModal
+      {returnSlipTarget && contract && (
+        <CreateReturnSlipModal
           contractId={contract.ContractId}
-          item={settleItem.item}
-          remainingOnRent={settleItem.remainingOnRent}
+          contractLabel={[effectiveContract?.ContractCode || `#${contract.ContractId}`, effectiveContract?.CustomerName]
+            .filter(Boolean)
+            .join(' · ')}
           currency={currency}
-          onClose={() => setSettleItem(null)}
-          onSuccess={() => {
-            setSettleItem(null);
-            refreshContract();
-            loadContractReturns();
+          lines={returnableLines}
+          warehouses={warehouses}
+          preset={returnSlipTarget.preset}
+          onClose={() => setReturnSlipTarget(null)}
+          onCreated={(result) => {
+            setReturnSlipTarget(null);
+            setReturnSlipsRefreshKey((n) => n + 1);
+            void refreshContract();
+            void loadContractReturns();
             bumpBillingRefresh();
+            if (result.contractCompleted) onClose();
           }}
         />
       )}

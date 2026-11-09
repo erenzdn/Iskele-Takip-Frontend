@@ -1,12 +1,12 @@
 import { useState } from 'react';
 import { createPortal } from 'react-dom';
-import { XIcon } from '@phosphor-icons/react';
+import { WarningIcon, XIcon } from '@phosphor-icons/react';
 import { usePortalTarget } from '../tabs/TabContext';
 import type { Shipment, ShipmentMutationResult } from '../../models';
 import { shipmentService } from '../../services/shipmentService';
 import { toast } from '../../hooks/useToast';
 import { getApiErrorMessage } from '../../utils/apiError';
-import { formatDate } from '../../utils/formatters';
+import { formatDate, formatDateTime } from '../../utils/formatters';
 
 interface CancelShipmentModalProps {
   shipment: Shipment;
@@ -73,6 +73,21 @@ export default function CancelShipmentModal({ shipment, onClose, onCancelled }: 
             {shipment.TotalQuantity ?? 0} adet) iptal edilecek. Malzeme depoya geri alınır ve bu partinin kirası silinir.
             Fiş kayıtlarda “iptal” olarak kalır.
           </p>
+          {shipment.DeliveredAt && (
+            <div className="rounded border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-200 flex gap-2" role="alert">
+              <WarningIcon size={18} className="shrink-0 mt-0.5 text-amber-300" />
+              <div>
+                <p className="font-medium text-amber-300">Bu fiş teslim edildi olarak onaylanmış.</p>
+                <p className="mt-1">
+                  {formatDateTime(shipment.DeliveredAt)} tarihinde{' '}
+                  <span className="font-medium">{shipment.DeliveredReceiverName || 'müşteri'}</span> teslim aldı
+                  {shipment.HasSignedWaybill ? ' ve imzalı irsaliyesi ekli' : ''}. İptal edilirse malzeme sistemde depoya geri
+                  alınır ve bu partinin kirası silinir; malzeme fiilen şantiyedeyse stok ve kira hatalı olur. Malzeme sahadan
+                  döndüyse iptal yerine iade kaydı girin.
+                </p>
+              </div>
+            </div>
+          )}
           <div>
             <label className="block text-sm font-medium mb-1" htmlFor="cancel-shipment-reason">
               İptal gerekçesi *
@@ -98,7 +113,7 @@ export default function CancelShipmentModal({ shipment, onClose, onCancelled }: 
             Vazgeç
           </button>
           <button type="submit" form="cancel-shipment-form" className="btn-danger" disabled={isSubmitting}>
-            {isSubmitting ? 'İptal ediliyor...' : 'Fişi iptal et'}
+            {isSubmitting ? 'İptal ediliyor...' : shipment.DeliveredAt ? 'Yine de iptal et' : 'Fişi iptal et'}
           </button>
         </div>
       </div>
