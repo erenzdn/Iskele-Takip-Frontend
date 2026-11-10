@@ -84,6 +84,19 @@ export function TabBar() {
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       const key = event.key.toLowerCase();
+      // Tam ekran şablon editörü açıkken sekme kısayolları (Ctrl+W/Tab/R/1-9, Ctrl+Shift+T)
+      // arkadaki sekmeyi kapatıp/yenileyip kaydedilmemiş düzenlemeyi kaybettirmesin.
+      if (event.ctrlKey && document.querySelector('[data-blocks-app-tab-shortcuts]')) {
+        const isTabShortcut =
+          (key === 'w' && !event.shiftKey) ||
+          (event.shiftKey && key === 't') ||
+          event.key === 'Tab' ||
+          (key === 'r' && !event.shiftKey) ||
+          (!event.altKey && /^[1-9]$/.test(event.key));
+        // Electron varsayılan menüsü (yenile / pencereyi kapat) de çalışmasın
+        if (isTabShortcut) event.preventDefault();
+        return;
+      }
       if (event.ctrlKey && key === 'w' && !event.shiftKey) {
         event.preventDefault();
         if (activeTabId) requestClose(activeTabId);

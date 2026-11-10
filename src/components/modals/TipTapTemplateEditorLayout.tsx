@@ -8,6 +8,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react';
+import { createPortal } from 'react-dom';
 import type { Editor } from '@tiptap/react';
 import { EditorContent } from '@tiptap/react';
 import {
@@ -33,6 +34,12 @@ import {
   TextHTwoIcon,
   GridFourIcon,
   SquareSplitHorizontalIcon,
+  ArrowLineLeftIcon,
+  ArrowLineRightIcon,
+  ArrowsOutLineHorizontalIcon,
+  MinusIcon,
+  PlusIcon,
+  TrashIcon,
 } from '@phosphor-icons/react';
 import type { TemplateImage } from '../../models';
 import {
@@ -49,6 +56,193 @@ import { useDocumentTheme } from '../../hooks/useDocumentTheme';
 import { editorPaginationPluginKey } from './EditorPaginationExtension';
 import { getPageMarginsPaperStyle, type PageMargins } from './PageMargins';
 import { LayoutInsertMenu, TableContextBar, ToolbarButton, ToolbarDivider } from './LayoutTools';
+import {
+  IMAGE_SIZE_STEP_PX,
+  canMoveSelectedImageToCell,
+  getSelectedImage,
+  getSelectedImageDisplayWidth,
+  getSelectedImageMaxWidth,
+  moveSelectedImageToCell,
+  resizeSelectedImageBy,
+  setSelectedImageAlign,
+  setSelectedImageWidth,
+} from './CustomImageExtension';
+import { resolveImageExportAlignment } from './CustomTableExtensions';
+import ConfirmModal from './ConfirmModal';
+
+/** Ctrl+S ile kaydet (editör açıkken tarayıcı/Electron "sayfayı kaydet" yerine). */
+export function useEditorSaveShortcut(onSave: () => void, disabled: boolean) {
+  const onSaveRef = useRef(onSave);
+  onSaveRef.current = onSave;
+  const disabledRef = useRef(disabled);
+  disabledRef.current = disabled;
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        if (!disabledRef.current) onSaveRef.current();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
+  }, []);
+}
+
+const IMAGE_SIZE_PRESETS = [
+  { label: 'S', width: 80, title: 'Küçük (80 px)' },
+  { label: 'M', width: 150, title: 'Orta (150 px)' },
+  { label: 'L', width: 240, title: 'Büyük (240 px)' },
+];
+
+function ImageContextBar({ editor }: { editor: Editor }) {
+  const selected = getSelectedImage(editor.state);
+  const displayWidth = getSelectedImageDisplayWidth(editor);
+  const [widthInput, setWidthInput] = useState('');
+  const widthFocused = useRef(false);
+
+  useEffect(() => {
+    if (!widthFocused.current) setWidthInput(displayWidth != null ? String(displayWidth) : '');
+  }, [displayWidth]);
+
+  if (!selected) {
+    return (
+      <div className="flex flex-wrap items-center gap-1 border-t border-background-border bg-primary/5 px-3 py-1.5 text-[11px] text-text-secondary md:px-4">
+        <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-primary">Görsel</span>
+        Boyut ve konum ayarları için görselin üzerine tıklayın.
+      </div>
+    );
+  }
+
+  const align = resolveImageExportAlignment(selected.node.attrs);
+  const canPrev = canMoveSelectedImageToCell(editor.state, -1);
+  const canNext = canMoveSelectedImageToCell(editor.state, 1);
+  const inTable = canPrev || canNext;
+
+  const applyWidthInput = () => {
+    const value = Number(widthInput.replace(',', '.'));
+    if (Number.isFinite(value) && value > 0) {
+      setSelectedImageWidth(editor, value);
+    } else {
+      setWidthInput(displayWidth != null ? String(displayWidth) : '');
+    }
+  };
+
+  return (
+    <div className="flex flex-wrap items-center gap-1 border-t border-background-border bg-primary/5 px-3 py-1.5 md:px-4">
+      <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-primary">Görsel</span>
+
+      <div className="flex items-center rounded-lg border border-background-border bg-background-surface/60 p-0.5">
+        <ToolbarButton title="Sola yasla" active={align === 'left'} onClick={() => setSelectedImageAlign(editor, 'left')}>
+          <TextAlignLeftIcon size={14} />
+        </ToolbarButton>
+        <ToolbarButton title="Ortala" active={align === 'center'} onClick={() => setSelectedImageAlign(editor, 'center')}>
+          <TextAlignCenterIcon size={14} />
+        </ToolbarButton>
+        <ToolbarButton title="Sağa yasla" active={align === 'right'} onClick={() => setSelectedImageAlign(editor, 'right')}>
+          <TextAlignRightIcon size={14} />
+        </ToolbarButton>
+        <ToolbarButton title="Hizayı sıfırla" active={align === 'none'} onClick={() => setSelectedImageAlign(editor, 'none')}>
+          Sıfırla
+        </ToolbarButton>
+      </div>
+
+      <div className="flex items-center rounded-lg border border-background-border bg-background-surface/60 p-0.5">
+        <ToolbarButton
+          title={`Küçült (${IMAGE_SIZE_STEP_PX} px) — Alt+↓`}
+          onClick={() => resizeSelectedImageBy(editor, -IMAGE_SIZE_STEP_PX)}
+        >
+          <MinusIcon size={13} />
+        </ToolbarButton>
+        <label
+          className="flex h-8 items-center gap-0.5 px-1 text-[11px] text-text-secondary"
+          title="Görsel genişliği (px) — yükseklik orantılı değişir"
+        >
+          <input
+            type="number"
+            min="16"
+            step="1"
+            value={widthInput}
+            onFocus={() => {
+              widthFocused.current = true;
+            }}
+            onChange={(e) => setWidthInput(e.target.value)}
+            onBlur={() => {
+              widthFocused.current = false;
+              applyWidthInput();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                e.currentTarget.blur();
+              }
+            }}
+            className="w-12 bg-transparent text-center text-xs text-text-primary outline-none"
+            aria-label="Görsel genişliği (px)"
+          />
+          px
+        </label>
+        <ToolbarButton
+          title={`Büyüt (${IMAGE_SIZE_STEP_PX} px) — Alt+↑`}
+          onClick={() => resizeSelectedImageBy(editor, IMAGE_SIZE_STEP_PX)}
+        >
+          <PlusIcon size={13} />
+        </ToolbarButton>
+      </div>
+
+      <div className="flex items-center rounded-lg border border-background-border bg-background-surface/60 p-0.5">
+        {IMAGE_SIZE_PRESETS.map((preset) => (
+          <ToolbarButton
+            key={preset.label}
+            title={preset.title}
+            active={displayWidth === preset.width}
+            onClick={() => setSelectedImageWidth(editor, preset.width)}
+          >
+            {preset.label}
+          </ToolbarButton>
+        ))}
+        <ToolbarButton
+          title={inTable ? 'Hücre genişliğine sığdır' : 'Sayfa genişliğine sığdır'}
+          onClick={() => {
+            const max = getSelectedImageMaxWidth(editor);
+            if (max) setSelectedImageWidth(editor, max);
+          }}
+        >
+          <ArrowsOutLineHorizontalIcon size={14} />
+          <span className="hidden xl:inline">Sığdır</span>
+        </ToolbarButton>
+      </div>
+
+      {inTable && (
+        <div className="flex items-center rounded-lg border border-background-border bg-background-surface/60 p-0.5">
+          <ToolbarButton
+            title="Önceki hücreye taşı — Alt+←"
+            disabled={!canPrev}
+            onClick={() => moveSelectedImageToCell(editor, -1)}
+          >
+            <ArrowLineLeftIcon size={14} />
+            <span className="hidden xl:inline">Önceki hücre</span>
+          </ToolbarButton>
+          <ToolbarButton
+            title="Sonraki hücreye taşı — Alt+→"
+            disabled={!canNext}
+            onClick={() => moveSelectedImageToCell(editor, 1)}
+          >
+            <span className="hidden xl:inline">Sonraki hücre</span>
+            <ArrowLineRightIcon size={14} />
+          </ToolbarButton>
+        </div>
+      )}
+
+      <ToolbarButton title="Görseli sil" danger onClick={() => editor.chain().focus().deleteSelection().run()}>
+        <TrashIcon size={14} />
+      </ToolbarButton>
+
+      <span className="ml-1 hidden text-[10px] text-text-secondary 2xl:inline">
+        Sürükleyerek taşıyın · köşelerden boyutlandırın
+      </span>
+    </div>
+  );
+}
 
 export type TipTapPlaceholderItem = {
   key: string;
@@ -130,8 +324,27 @@ export default function TipTapTemplateEditorLayout({
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>(() =>
     Object.fromEntries(placeholderGroups.map((g, i) => [g.id, i < 2]))
   );
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
+  const [tipsOpen, setTipsOpen] = useState(false);
+  /** İlk kullanıcı etkileşimindeki içerik (şablon yüklenmiş hâli); kapatırken değişiklik kontrolü için */
+  const baselineRef = useRef<string | null>(null);
+  const snapshot = useCallback(
+    () => JSON.stringify({ name: templateName, doc: editor.getJSON(), margins: pageMargins }),
+    [editor, templateName, pageMargins]
+  );
+  const captureBaseline = () => {
+    if (baselineRef.current === null) baselineRef.current = snapshot();
+  };
+  const requestClose = () => {
+    if (baselineRef.current !== null && baselineRef.current !== snapshot()) {
+      setConfirmCloseOpen(true);
+      return;
+    }
+    onClose();
+  };
 
   useDocumentTheme();
+  useEditorSaveShortcut(onSave, isBusy);
 
   useEffect(() => {
     if (!editor?.view) return;
@@ -161,8 +374,6 @@ export default function TipTapTemplateEditorLayout({
     [editor]
   );
 
-  const imageNodeType = editor.isActive('imageResize') ? 'imageResize' : 'image';
-  const imageAlign = editor.getAttributes(imageNodeType).align || 'none';
   const activeFontSize = getActiveFontSize(editor);
   const activeFont = findDocumentFont(editor.getAttributes('textStyle').fontFamily as string | undefined);
 
@@ -181,14 +392,21 @@ export default function TipTapTemplateEditorLayout({
       .filter((group) => group.items.length > 0);
   }, [fieldSearch, placeholderGroups]);
 
-  return (
-    <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-background-main">
+  // Sekme içeriğinin içinde değil, doğrudan body'de çizilir: üst öğelerin stilleri (transform,
+  // backdrop-filter, taşma) fixed katmanı daraltıp üstteki sekme çubuğunu yarım göstermesin.
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-background-main"
+      data-blocks-app-tab-shortcuts=""
+      onPointerDownCapture={captureBaseline}
+      onKeyDownCapture={captureBaseline}
+    >
       {/* Header */}
       <header className="shrink-0 border-b border-background-border bg-background-panel/95 backdrop-blur-sm">
         <div className="flex items-center gap-3 px-3 py-2.5 md:px-4">
           <button
             type="button"
-            onClick={onClose}
+            onClick={requestClose}
             className="inline-flex h-9 items-center gap-1.5 rounded-lg px-2.5 text-xs font-medium text-text-secondary transition-colors hover:bg-background-hover hover:text-text-primary"
             title="Kapat"
           >
@@ -238,6 +456,7 @@ export default function TipTapTemplateEditorLayout({
               type="button"
               onClick={onSave}
               disabled={isBusy}
+              title="Kaydet (Ctrl+S)"
               className="btn-primary !py-2 !px-4 text-xs flex items-center gap-1.5"
             >
               <FloppyDiskIcon size={16} />
@@ -565,41 +784,7 @@ export default function TipTapTemplateEditorLayout({
         </div>
 
         {/* Contextual: image */}
-        {isImageActive && (
-          <div className="flex flex-wrap items-center gap-1 border-t border-background-border bg-primary/5 px-3 py-1.5 md:px-4">
-            <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-primary">
-              Görsel
-            </span>
-            <ToolbarButton
-              title="Sola yasla"
-              active={imageAlign === 'left'}
-              onClick={() => editor.commands.updateAttributes(imageNodeType, { align: 'left' })}
-            >
-              <TextAlignLeftIcon size={14} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Ortala"
-              active={imageAlign === 'center'}
-              onClick={() => editor.commands.updateAttributes(imageNodeType, { align: 'center' })}
-            >
-              <TextAlignCenterIcon size={14} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Sağa yasla"
-              active={imageAlign === 'right'}
-              onClick={() => editor.commands.updateAttributes(imageNodeType, { align: 'right' })}
-            >
-              <TextAlignRightIcon size={14} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Hizayı sıfırla"
-              active={imageAlign === 'none'}
-              onClick={() => editor.commands.updateAttributes(imageNodeType, { align: 'none' })}
-            >
-              Sıfırla
-            </ToolbarButton>
-          </div>
-        )}
+        {isImageActive && <ImageContextBar editor={editor} />}
 
         {/* Contextual: table / sütun düzeni */}
         {isTableActive && <TableContextBar editor={editor} />}
@@ -722,22 +907,52 @@ export default function TipTapTemplateEditorLayout({
             </div>
 
             <div className="shrink-0 border-t border-background-border bg-background-surface px-3 py-3">
-              <div className="flex gap-2 text-[10px] leading-relaxed text-text-secondary">
-                <InfoIcon size={14} className="mt-0.5 shrink-0 text-info" />
-                <p>
-                  Logo, başlık ve yan yana içerikler için araç çubuğundaki <strong>Düzen</strong> menüsünden
-                  hazır bir sayfa başı seçin (logo otomatik eklenir). Düzenin içine tıklayınca açılan
-                  <strong> Sütun düzeni</strong> çubuğundan genişlikleri sürükleyerek ayarlayabilir, sütunu
-                  sola/sağa taşıyabilir, hücreyi dikeyde ortalayabilir ve tablonun üstüne/altına satır ekleyebilirsiniz.
-                  Yeni sayfa başlatmak için araç çubuğundaki <strong>Sayfa Sonu</strong> düğmesini veya{' '}
-                  <strong>Ctrl+Enter</strong> kısayolunu kullanın.
-                  Her beyaz sayfa tam <strong>A4 (21×29,7 cm)</strong> boyutundadır; sayfa bittiğinde beyaz
-                  alan biter, ardından yalnızca çalışma alanı görünür.
-                  Kenar boşlukları (Ü/A, Y/S, S/Y) PDF ile aynı şekilde her sayfada uygulanır.
-                  Araç çubuğundaki <strong>Kılavuz</strong> yalnızca A4 içerik sınırını mavi ince çizgiyle
-                  gösterir; sayfa sonu değildir ve PDF&apos;te çıkmaz.
-                </p>
-              </div>
+              <button
+                type="button"
+                onClick={() => setTipsOpen((v) => !v)}
+                className="flex w-full items-center gap-2 text-left text-[11px] font-semibold text-text-primary"
+              >
+                <InfoIcon size={14} className="shrink-0 text-info" />
+                <span className="flex-1">İpuçları ve kısayollar</span>
+                {tipsOpen ? <CaretDownIcon size={12} /> : <CaretRightIcon size={12} />}
+              </button>
+              {tipsOpen && (
+                <div className="mt-2 space-y-2 text-[10px] leading-relaxed text-text-secondary">
+                  <ul className="list-disc space-y-1 pl-4">
+                    <li>
+                      Logo + başlık için <strong>Düzen</strong> menüsünden hazır sayfa başı seçin.
+                    </li>
+                    <li>
+                      Görsele tıklayın: köşelerden boyutlandırın, sürükleyerek başka hücreye taşıyın.
+                    </li>
+                    <li>
+                      Sütun genişliği ve hücre hizası, düzenin içine tıklayınca açılan çubuktadır.
+                    </li>
+                    <li>
+                      <strong>Kılavuz</strong> yalnızca A4 içerik sınırını gösterir; PDF&apos;te çıkmaz.
+                    </li>
+                  </ul>
+                  <dl className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
+                    {[
+                      ['Ctrl+S', 'Kaydet'],
+                      ['Ctrl+Enter', 'Sayfa sonu'],
+                      ['Tab', 'Sonraki hücre / girinti'],
+                      ['Shift+Tab', 'Önceki hücre / girintiyi kaldır'],
+                      ['Alt+← / →', 'Görseli önceki / sonraki hücreye taşı'],
+                      ['Alt+↑ / ↓', 'Görseli büyüt / küçült'],
+                    ].map(([keys, label]) => (
+                      <div key={keys} className="contents">
+                        <dt>
+                          <kbd className="rounded border border-background-border bg-background-panel px-1 font-mono text-[9px] text-text-primary">
+                            {keys}
+                          </kbd>
+                        </dt>
+                        <dd>{label}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              )}
             </div>
           </aside>
         )}
@@ -760,6 +975,21 @@ export default function TipTapTemplateEditorLayout({
       </div>
 
       {previewModal}
-    </div>
+      <ConfirmModal
+        open={confirmCloseOpen}
+        title="Kaydedilmemiş değişiklikler"
+        message="Şablonda kaydedilmemiş değişiklikler var. Kaydetmeden çıkmak istiyor musunuz?"
+        confirmLabel="Kaydetmeden çık"
+        cancelLabel="Düzenlemeye dön"
+        variant="danger"
+        zIndexClass="z-[120]"
+        onConfirm={() => {
+          setConfirmCloseOpen(false);
+          onClose();
+        }}
+        onCancel={() => setConfirmCloseOpen(false)}
+      />
+    </div>,
+    document.body
   );
 }

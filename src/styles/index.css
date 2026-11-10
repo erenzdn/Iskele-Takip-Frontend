@@ -669,3 +669,66 @@ button.addendum-badge {
   background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-panel));
 }
 
+
+/* Şablon editörü — görsel seçimi, boyutlandırma tutamaçları (yalnızca editörde; akışa girmez) */
+.template-editor-paper .ProseMirror .template-image img {
+  cursor: grab;
+}
+
+.template-editor-paper .ProseMirror .template-image:not(.is-selected) img:hover {
+  outline: 1px dashed color-mix(in srgb, var(--color-primary) 60%, transparent);
+  outline-offset: 1px;
+}
+
+.template-editor-paper .ProseMirror .template-image__overlay {
+  position: absolute;
+  display: none;
+  box-sizing: border-box;
+  border: 1.5px solid var(--color-primary);
+  pointer-events: none;
+  z-index: 5;
+}
+
+.template-editor-paper .ProseMirror .template-image.is-selected .template-image__overlay {
+  display: block;
+}
+
+.template-editor-paper .ProseMirror .template-image__handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  background: #fff;
+  border: 1.5px solid var(--color-primary);
+  pointer-events: auto;
+  touch-action: none;
+}
+
+.template-editor-paper .ProseMirror .template-image__handle--nw { top: -6px; left: -6px; cursor: nwse-resize; }
+.template-editor-paper .ProseMirror .template-image__handle--ne { top: -6px; right: -6px; cursor: nesw-resize; }
+.template-editor-paper .ProseMirror .template-image__handle--sw { bottom: -6px; left: -6px; cursor: nesw-resize; }
+.template-editor-paper .ProseMirror .template-image__handle--se { bottom: -6px; right: -6px; cursor: nwse-resize; }
+
+.template-editor-paper .ProseMirror .template-image__badge {
+  position: absolute;
+  left: 50%;
+  bottom: -22px;
+  transform: translateX(-50%);
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-primary);
+  color: #fff;
+  font: 600 10px/16px system-ui, sans-serif;
+  white-space: nowrap;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.template-editor-paper .ProseMirror .template-image.is-resizing .template-image__badge,
+.template-editor-paper .ProseMirror .template-image.is-selected:hover .template-image__badge {
+  opacity: 1;
+}
+
+.template-editor-paper .ProseMirror .template-image.is-resizing img {
+  cursor: inherit;
+}

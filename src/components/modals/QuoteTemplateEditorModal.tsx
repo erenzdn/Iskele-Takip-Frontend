@@ -24,6 +24,7 @@ import {
 import { PageBreak } from './PageBreakExtension';
 import { EditorPagination } from './EditorPaginationExtension';
 import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
+import { EditorTabKey } from './EditorTabKeyExtension';
 import TipTapTemplateEditorLayout, {
   type TipTapPlaceholderGroup,
 } from './TipTapTemplateEditorLayout';
@@ -94,6 +95,7 @@ export default function QuoteTemplateEditorModal({
       PageBreak,
       EditorPagination,
       EditorWidgetPreview.configure({ context: 'quote' }),
+      EditorTabKey,
     ],
     content: {
       type: 'doc',

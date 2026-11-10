@@ -24,6 +24,7 @@ import {
 import { PageBreak } from './PageBreakExtension';
 import { EditorPagination } from './EditorPaginationExtension';
 import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
+import { EditorTabKey } from './EditorTabKeyExtension';
 import TipTapTemplateEditorLayout, {
   type TipTapPlaceholderGroup,
 } from './TipTapTemplateEditorLayout';
@@ -98,6 +99,7 @@ export default function ContractTemplateEditorModal({
       PageBreak,
       EditorPagination,
       EditorWidgetPreview.configure({ context: 'contract' }),
+      EditorTabKey,
     ],
     content: {
       type: 'doc',

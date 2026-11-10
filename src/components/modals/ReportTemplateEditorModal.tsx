@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useEditor, EditorContent } from '@tiptap/react';
 import StarterKit from '@tiptap/starter-kit';
 import { Table } from '@tiptap/extension-table';
@@ -20,6 +21,8 @@ import {
 } from './LineHeightExtension';
 import { EditorPagination, editorPaginationPluginKey } from './EditorPaginationExtension';
 import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
+import { EditorTabKey } from './EditorTabKeyExtension';
+import { useEditorSaveShortcut } from './TipTapTemplateEditorLayout';
 import { useDocumentTheme } from '../../hooks/useDocumentTheme';
 import {
   DEFAULT_PAGE_MARGINS,
@@ -68,6 +71,8 @@ export default function ReportTemplateEditorModal({
   const [, setToolbarTick] = useState(0);
 
   useDocumentTheme();
+  // handleSave aşağıda tanımlı; yalnızca tuşa basıldığında çağrılır
+  useEditorSaveShortcut(() => void handleSave(), isBusy);
 
   const editor = useEditor({
     extensions: [
@@ -85,6 +90,7 @@ export default function ReportTemplateEditorModal({
       LineHeight,
       EditorPagination,
       EditorWidgetPreview.configure({ context: 'report' }),
+      EditorTabKey,
     ],
     content: template?.Content || {
       type: 'doc',
@@ -239,8 +245,13 @@ export default function ReportTemplateEditorModal({
     return null;
   }
 
-  return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]">
+  // Sekme içeriğinin içinde değil, doğrudan body'de çizilir: üst öğelerin stilleri (transform,
+  // backdrop-filter, taşma) fixed katmanı daraltıp üstteki sekme çubuğunu yarım göstermesin.
+  return createPortal(
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[100]"
+      data-blocks-app-tab-shortcuts=""
+    >
       <div className="bg-background-panel rounded-panel w-full max-w-6xl flex flex-col max-h-[95vh] overflow-hidden">
         <div className="px-6 pt-6 pb-4 shrink-0">
           <h2 className="text-2xl font-bold mb-4">
@@ -452,6 +463,7 @@ export default function ReportTemplateEditorModal({
         downloadFileName="rapor_sablon_onizleme.pdf"
         onClose={closePdfPreview}
       />
-    </div>
+    </div>,
+    document.body
   );
 }
