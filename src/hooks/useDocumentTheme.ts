@@ -13,7 +13,9 @@ let fetchPromise: Promise<void> | null = null;
 function fetchAndInjectDocumentTheme(): Promise<void> {
   if (fetchPromise) return fetchPromise;
 
-  fetchPromise = fetch(`${BASE_URL}/document-styles.css`)
+  // cache: 'no-cache' — tarayıcı önbelleğindeki kopya her açılışta sunucuyla doğrulanır.
+  // Aksi halde backend güncellendikten sonra editör saatlerce eski CSS'le çizip PDF'ten ayrışabiliyordu.
+  fetchPromise = fetch(`${BASE_URL}/document-styles.css`, { cache: 'no-cache' })
     .then((res) => {
       if (!res.ok) throw new Error(`document-styles.css ${res.status}`);
       return res.text();

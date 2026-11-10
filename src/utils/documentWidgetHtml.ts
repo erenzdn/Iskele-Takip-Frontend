@@ -711,11 +711,74 @@ function createReturnTableHTML(returns: ReturnDetail[], options: ReturnTableOpti
   return html;
 }
 
+type ShipmentItem = {
+  ItemCode?: string;
+  ItemName?: string;
+  UnitName?: string;
+  Quantity?: number;
+  ContractQuantity?: number;
+  TotalShippedQuantity?: number;
+};
+
+const formatQty = (n: unknown) => new Intl.NumberFormat('tr-TR').format(Number(n) || 0);
+
+/** Backend shipmentDocument.createShipmentTableHTML ile aynı çıktı */
+export function createShipmentTableHTML(items: ShipmentItem[] = []): string {
+  if (!items.length) return '<p>Sevkiyat kalemi bulunmuyor</p>';
+  const th = 'border:1px solid #cfd6df;padding:7px 6px;background:#1a3c5e;color:#fff;font-weight:600;';
+  const td = 'border:1px solid #dfe4ea;padding:6px;';
+  const total = items.reduce((sum, i) => sum + (Number(i.Quantity) || 0), 0);
+
+  let html = `
+    <table style="width:100%;border-collapse:collapse;margin:8px 0;font-size:11px;">
+      <thead>
+        <tr>
+          <th style="${th}text-align:center;width:28px;">#</th>
+          <th style="${th}text-align:left;width:90px;">Kod</th>
+          <th style="${th}text-align:left;">Malzeme</th>
+          <th style="${th}text-align:center;width:50px;">Birim</th>
+          <th style="${th}text-align:right;width:70px;">Bu Sevk</th>
+          <th style="${th}text-align:right;width:70px;">Sözleşme</th>
+          <th style="${th}text-align:right;width:70px;">Top. Sevk</th>
+          <th style="${th}text-align:right;width:60px;">Kalan</th>
+        </tr>
+      </thead>
+      <tbody>`;
+  items.forEach((item, idx) => {
+    const contractQty = Number(item.ContractQuantity) || 0;
+    const shippedTotal = Number(item.TotalShippedQuantity) || 0;
+    const bg = idx % 2 === 1 ? 'background:#f6f8fb;' : '';
+    html += `
+        <tr style="${bg}">
+          <td style="${td}text-align:center;">${idx + 1}</td>
+          <td style="${td}">${escapeHtml(item.ItemCode || '')}</td>
+          <td style="${td}">${escapeHtml(item.ItemName || '')}</td>
+          <td style="${td}text-align:center;">${escapeHtml(item.UnitName || '')}</td>
+          <td style="${td}text-align:right;font-weight:600;">${formatQty(item.Quantity)}</td>
+          <td style="${td}text-align:right;">${formatQty(contractQty)}</td>
+          <td style="${td}text-align:right;">${formatQty(shippedTotal)}</td>
+          <td style="${td}text-align:right;">${formatQty(Math.max(contractQty - shippedTotal, 0))}</td>
+        </tr>`;
+  });
+  html += `
+      </tbody>
+      <tfoot>
+        <tr style="background:#eef2f7;font-weight:700;">
+          <td colspan="4" style="${td}text-align:right;border-top:2px solid #1a3c5e;">Bu sevkiyat toplamı</td>
+          <td style="${td}text-align:right;border-top:2px solid #1a3c5e;">${formatQty(total)}</td>
+          <td colspan="3" style="${td}border-top:2px solid #1a3c5e;"></td>
+        </tr>
+      </tfoot>
+    </table>`;
+  return html;
+}
+
 export const DOCUMENT_WIDGET_KEYS = [
   'malzemeTablosu',
   'gecikmeTablosu',
   'iadeTablosu',
   'hareketTablosu',
+  'sevkTablosu',
 ] as const;
 
 export type DocumentWidgetKey = (typeof DOCUMENT_WIDGET_KEYS)[number];
@@ -761,8 +824,14 @@ export function renderDocumentWidgetHtml(
         contractStartDate: (doc?.StartDate as string) ?? null,
       });
     }
-    case 'hareketTablosu':
-      return createMovementTableHTML((raw.items as MovementItem[]) || []);
+    case 'hareketTablosu': {
+      // Backend: boş liste stok fişi tablosuna düşer ve bu metni yazar
+      const items = (raw.items as MovementItem[]) || [];
+      if (!items.length) return '<p>Fiziksel kalem bulunmuyor</p>';
+      return createMovementTableHTML(items);
+    }
+    case 'sevkTablosu':
+      return createShipmentTableHTML((raw.items as ShipmentItem[]) || []);
     default:
       return `<p>{{${widgetKey}}}</p>`;
   }
