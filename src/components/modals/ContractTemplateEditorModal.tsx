@@ -4,7 +4,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TextAlign } from '@tiptap/extension-text-align';
 import { Underline } from '@tiptap/extension-underline';
-import { TextStyle } from '@tiptap/extension-text-style';
+import { FontFamily, TextStyle } from '@tiptap/extension-text-style';
 import { ContractTemplate, TemplateImage } from '../../models';
 import { contractTemplateService } from '../../services/contractTemplateService';
 import { templateImageService } from '../../services/templateImageService';
@@ -93,6 +93,7 @@ export default function ContractTemplateEditorModal({
       Underline,
       TextStyle,
       FontSize,
+      FontFamily,
       LineHeight,
       PageBreak,
       EditorPagination,

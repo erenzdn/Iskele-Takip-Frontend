@@ -9,6 +9,8 @@ import '@fontsource/arimo/400.css';
 import '@fontsource/arimo/700.css';
 import '@fontsource/arimo/400-italic.css';
 import '@fontsource/arimo/700-italic.css';
+// Şablon editöründe seçilebilen ek belge fontları (latin + latin-ext)
+import './styles/documentFonts';
 import { applyInitialTheme } from './store/themeStore';
 import { apiClient } from './services/apiClient';
 

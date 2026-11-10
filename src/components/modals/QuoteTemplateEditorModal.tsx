@@ -4,7 +4,7 @@ import StarterKit from '@tiptap/starter-kit';
 import { TableRow } from '@tiptap/extension-table-row';
 import { TextAlign } from '@tiptap/extension-text-align';
 import { Underline } from '@tiptap/extension-underline';
-import { TextStyle } from '@tiptap/extension-text-style';
+import { FontFamily, TextStyle } from '@tiptap/extension-text-style';
 import { QuoteTemplate, TemplateImage } from '../../models';
 import { quoteTemplateService } from '../../services/quoteTemplateService';
 import { templateImageService } from '../../services/templateImageService';
@@ -89,6 +89,7 @@ export default function QuoteTemplateEditorModal({
       Underline,
       TextStyle,
       FontSize,
+      FontFamily,
       LineHeight,
       PageBreak,
       EditorPagination,

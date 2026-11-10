@@ -40,6 +40,11 @@ import {
   getActiveLineHeight,
 } from './LineHeightExtension';
 import { FONT_SIZE_OPTIONS, getActiveFontSize } from './FontSizeExtension';
+import {
+  DEFAULT_DOCUMENT_FONT_LABEL,
+  DOCUMENT_FONTS,
+  findDocumentFont,
+} from './DocumentFonts';
 import { useDocumentTheme } from '../../hooks/useDocumentTheme';
 import { editorPaginationPluginKey } from './EditorPaginationExtension';
 import { getPageMarginsPaperStyle, type PageMargins } from './PageMargins';
@@ -159,6 +164,7 @@ export default function TipTapTemplateEditorLayout({
   const imageNodeType = editor.isActive('imageResize') ? 'imageResize' : 'image';
   const imageAlign = editor.getAttributes(imageNodeType).align || 'none';
   const activeFontSize = getActiveFontSize(editor);
+  const activeFont = findDocumentFont(editor.getAttributes('textStyle').fontFamily as string | undefined);
 
   const filteredGroups = useMemo(() => {
     const q = fieldSearch.trim().toLowerCase();
@@ -334,6 +340,31 @@ export default function TipTapTemplateEditorLayout({
               <TextAlignRightIcon size={15} />
             </ToolbarButton>
           </div>
+
+          <select
+            value={activeFont?.value ?? ''}
+            onChange={(e) => {
+              const value = e.target.value;
+              if (value) {
+                editor.chain().focus().setFontFamily(value).run();
+              } else {
+                editor.chain().focus().unsetFontFamily().run();
+              }
+            }}
+            className="h-8 w-[150px] rounded-lg border border-background-border bg-background-surface/60 px-2 text-xs text-text-primary outline-none focus:ring-2 focus:ring-primary/40"
+            style={{ fontFamily: activeFont?.value ?? "'Arimo', Arial, sans-serif" }}
+            title={activeFont ? `Yazı tipi: ${activeFont.hint}` : 'Yazı tipi (PDF ile birebir aynı gömülü fontlar)'}
+            aria-label="Yazı tipi"
+          >
+            <option value="" style={{ fontFamily: "'Arimo', Arial, sans-serif" }}>
+              {DEFAULT_DOCUMENT_FONT_LABEL}
+            </option>
+            {DOCUMENT_FONTS.map((font) => (
+              <option key={font.family} value={font.value} style={{ fontFamily: font.value }} title={font.hint}>
+                {font.label}
+              </option>
+            ))}
+          </select>
 
           <div className="relative flex h-8 items-center rounded-lg border border-background-border bg-background-surface/60">
             <input
