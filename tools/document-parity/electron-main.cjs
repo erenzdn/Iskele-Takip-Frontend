@@ -11,11 +11,12 @@ const path = require('path');
 const baseUrl = process.env.PARITY_URL;
 const outDir = process.env.PARITY_OUT;
 const marginList = process.env.PARITY_MARGINS || '15,15,15,15';
+const templates = (process.env.PARITY_TEMPLATES || 'stress').split(',');
 // Ekran ölçeği: "1" = PDF ile aynı (katı karşılaştırma); boş = Windows'un kendi ölçeği (ör. 1.25)
 const forcedScale = process.env.PARITY_DSF;
 if (forcedScale) app.commandLine.appendSwitch('force-device-scale-factor', forcedScale);
 
-async function measure(margins) {
+async function measure(margins, template) {
   const win = new BrowserWindow({
     show: false,
     width: 1100,
@@ -28,7 +29,7 @@ async function measure(margins) {
   // Vite ilk açılışta bağımlılıkları optimize edip sayfayı yeniden yükleyebilir → yeniden dene
   for (let attempt = 1; ; attempt++) {
     try {
-      await win.loadURL(`${baseUrl}?m=${margins}`);
+      await win.loadURL(`${baseUrl}?m=${margins}&t=${template}`);
       break;
     } catch (error) {
       if (attempt >= 3) throw error;
@@ -56,12 +57,14 @@ app.on('window-all-closed', () => {});
 app.whenReady().then(async () => {
   try {
     fs.mkdirSync(outDir, { recursive: true });
-    for (const margins of marginList.split(';')) {
-      const result = await measure(margins);
-      const dsf = forcedScale || String(require('electron').screen.getPrimaryDisplay().scaleFactor);
-      const file = path.join(outDir, `editor-${margins.replace(/,/g, '-')}@${dsf}.json`);
-      fs.writeFileSync(file, JSON.stringify({ ...result, dsf: Number(dsf) }));
-      console.log(`editör: ${margins} mm, ekran ölçeği ${dsf} → ${result.glyphs.length} glif, ${result.pageCount} sayfa`);
+    for (const template of templates) {
+      for (const margins of marginList.split(';')) {
+        const result = await measure(margins, template);
+        const dsf = forcedScale || String(require('electron').screen.getPrimaryDisplay().scaleFactor);
+        const file = path.join(outDir, `editor-${template}_${margins.replace(/,/g, '-')}@${dsf}.json`);
+        fs.writeFileSync(file, JSON.stringify({ ...result, dsf: Number(dsf) }));
+        console.log(`editör: ${template}, ${margins} mm, ekran ölçeği ${dsf} → ${result.glyphs.length} glif, ${result.pageCount} sayfa`);
+      }
     }
     console.log(`Chromium ${process.versions.chrome}`);
     app.exit(0);

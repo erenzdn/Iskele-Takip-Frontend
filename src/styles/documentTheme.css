@@ -300,6 +300,15 @@
 .doc-root h3 {
   break-after: avoid-page;
 }
+/*
+ * Yanına metin sarılan (sola/sağa yaslı) görselli paragraf sayfa sınırında bölünmez; sığmazsa
+ * bütün olarak sonraki sayfaya geçer. Bölünürse Chrome görseli sonraki sayfaya itip metni
+ * tam genişlikte bırakıyor; editör bunu gösteremez. Editör sayfalaması aynı kuralı uygular.
+ */
+.doc-root p:has(> img[data-align="left"]),
+.doc-root p:has(> img[data-align="right"]) {
+  break-inside: avoid;
+}
 
 .doc-root img {
   max-width: 100%;

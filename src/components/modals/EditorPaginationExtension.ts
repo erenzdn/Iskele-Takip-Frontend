@@ -79,6 +79,15 @@ function readMargins(element: HTMLElement) {
   };
 }
 
+function containsFloat(element: HTMLElement): boolean {
+  for (const img of Array.from(element.querySelectorAll('img'))) {
+    for (let el: Element | null = img; el && el !== element; el = el.parentElement) {
+      if (getComputedStyle(el).float !== 'none') return true;
+    }
+  }
+  return false;
+}
+
 function collectTextBlockUnits(
   view: EditorView,
   element: HTMLElement,
@@ -90,7 +99,9 @@ function collectTextBlockUnits(
 
   const margins = readMargins(element);
   const avoidBreakAfter = AVOID_BREAK_AFTER_TAGS.has(element.tagName);
-  const lines = measureTextLines(element, editorDom);
+  // Yaslı görselli paragraf PDF'te bölünmez (kanonik CSS: p:has(> img[data-align]) break-inside: avoid)
+  const keepTogether = containsFloat(element);
+  const lines = keepTogether ? [] : measureTextLines(element, editorDom);
 
   if (lines.length <= 1) {
     const layout = measureElementLayout(element, editorDom);

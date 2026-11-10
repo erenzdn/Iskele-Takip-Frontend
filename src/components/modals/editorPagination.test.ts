@@ -97,8 +97,27 @@ describe('paginateNaturalLayout', () => {
       PAGE,
       SPACING
     );
-    // hedef üst = 836; doğal üst 760; birleşen boşluk ayrılır (-2) ve üst boşluk kesilir (-10)
-    expect(targets).toEqual([{ docPos: 2, kind: 'block', height: 64 }]);
+    // hedef: blok kenarlığı tam sayfa başında (836). Aralıkla birleşme biter: 750 + 2 (alt) +
+    // aralık + 10 (üst) = 836 → aralık 74 = 836 − 760 − min(2, 10). (PDF ölçümüyle doğrulandı)
+    expect(targets).toEqual([{ docPos: 2, kind: 'block', height: 74 }]);
+  });
+
+  it('kardeş aralıktan sonraki birimleri gerçek kayma kadar kaydırır', () => {
+    // Blok 2 sayfa başına (836) taşınır → gerçek kayma 76 (aralık 74 + birleşmeyen 2px).
+    // Blok 3 doğal 840'ta; 840 + 76 = 916, sayfa 2'de 916 + 760 = 1676 > 836 + 800 → kırılır.
+    const { targets } = paginateNaturalLayout(
+      [
+        unit(1, 750, 0, 'block', { marginBottom: 2 }),
+        unit(2, 80, 760, 'block', { gapInside: false, marginTop: 10 }),
+        unit(3, 759, 840),
+      ],
+      PAGE,
+      SPACING
+    );
+    expect(targets).toEqual([
+      { docPos: 2, kind: 'block', height: 74 },
+      { docPos: 3, kind: 'block', height: 1672 - 916 },
+    ]);
   });
 });
 

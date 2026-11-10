@@ -39,6 +39,12 @@ import {
   type PageMargins,
 } from '../../src/components/modals/PageMargins';
 import stressTemplate from './stress-template.json';
+// Araç çubuğundaki her işlemi içeren şablon (make-features-template.cjs); editöre HTML olarak
+// eklenir — Düzen menüsünün yaptığı gibi editör kendisi ayrıştırır
+import featuresTemplate from './features-template.html?raw';
+
+const templateName = new URLSearchParams(location.search).get('t') || 'stress';
+const templateContent = templateName === 'features' ? featuresTemplate : stressTemplate;
 
 declare global {
   interface Window {
@@ -85,12 +91,14 @@ function extractGlyphs(paper: HTMLElement): { glyphs: Glyph[]; pageCount: number
       range.setEnd(node, i + 1);
       const rect = Array.from(range.getClientRects()).find((r) => r.width > 0 && r.height > 0);
       if (!rect) continue;
-      const absTop = rect.top - paperRect.top;
-      const page = Math.floor(absTop / step);
+      // Sayfa, taban çizgisine göre: sayfanın ilk satırının yazı kutusu sayfa sınırının
+      // kesir piksel üstünden başlayabilir
+      const absBaseline = rect.top - paperRect.top + ascent;
+      const page = Math.floor(absBaseline / step);
       glyphs.push({
         page,
         x: rect.left - paperRect.left,
-        baseline: absTop - page * step + ascent,
+        baseline: absBaseline - page * step,
         size,
         ch,
       });
@@ -118,7 +126,7 @@ function Harness() {
       EditorPagination,
       EditorWidgetPreview.configure({ context: 'contract' }),
     ],
-    content: stressTemplate,
+    content: templateContent,
   });
 
   useEffect(() => {
@@ -140,7 +148,23 @@ function Harness() {
         prepareTemplateContentForExport(editor.getJSON()),
         margins
       );
-      window.__parity = { ...extractGlyphs(paper), exportContent };
+      // Hata ayıklama: üst düzey blokların konumu (sayfa aralıkları dahil)
+      const pmRoot = paper.querySelector('.ProseMirror') as HTMLElement;
+      const rootTop = pmRoot.getBoundingClientRect().top;
+      const blocks = Array.from(pmRoot.children).map((el) => {
+        const r = el.getBoundingClientRect();
+        return {
+          tag: `${el.tagName.toLowerCase()}.${(el as HTMLElement).className}`,
+          top: +(r.top - rootTop).toFixed(2),
+          height: +r.height.toFixed(2),
+          gaps: Array.from(el.querySelectorAll('.editor-page-gap')).map((g) => {
+            const r = g.getBoundingClientRect();
+            return { top: +(r.top - rootTop).toFixed(2), height: +r.height.toFixed(2), style: (g as HTMLElement).style.height };
+          }),
+          text: (el.textContent || '').slice(0, 40),
+        };
+      });
+      window.__parity = { ...extractGlyphs(paper), exportContent, blocks };
       (window as unknown as { __editor: unknown }).__editor = editor;
     })().catch((error) => {
       window.__parityError = String(error?.stack || error);

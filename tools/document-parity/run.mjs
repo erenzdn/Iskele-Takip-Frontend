@@ -4,6 +4,7 @@
  *   node tools/document-parity/run.mjs [--backend <IskeleTakipAPI klasörü>] [--out <klasör>]
  *                                      [--margins "15,15,15,15;0,0,0,0;25,20,25,20"]
  *                                      [--dsf "1,native"]   (ekran ölçekleri; native = Windows ayarı)
+ *                                      [--templates "stress,features"]
  *
  * 1. Vite ile editör ölçüm sayfasını açar (uygulamanın CSS'i, fontu ve editör eklentileri).
  * 2. Uygulamanın kendi Electron'unda stres şablonunu sayfalar, glif konumlarını ölçer ve
@@ -28,6 +29,7 @@ const outDir = resolve(arg('out', join(tmpdir(), 'document-parity')));
 const margins = arg('margins', '15,15,15,15;0,0,0,0;25,20,25,20');
 const port = Number(arg('port', 5199));
 const scales = arg('dsf', '1,native').split(',');
+const templates = arg('templates', 'stress,features');
 
 function run(cmd, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
@@ -63,7 +65,7 @@ try {
   // VS Code / Claude Code ELECTRON_RUN_AS_NODE=1 verebilir; Electron uygulama olarak açılmalı
   const electronBin = join(root, 'node_modules/electron/dist', process.platform === 'win32' ? 'electron.exe' : 'electron');
   for (const scale of scales) {
-    const env = { ...process.env, PARITY_URL: url, PARITY_OUT: outDir, PARITY_MARGINS: margins };
+    const env = { ...process.env, PARITY_URL: url, PARITY_OUT: outDir, PARITY_MARGINS: margins, PARITY_TEMPLATES: templates };
     delete env.ELECTRON_RUN_AS_NODE;
     if (scale !== 'native') env.PARITY_DSF = scale;
     await run(electronBin, [join(here, 'electron-main.cjs')], { cwd: root, env });

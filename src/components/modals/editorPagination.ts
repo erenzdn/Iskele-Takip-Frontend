@@ -117,26 +117,29 @@ export function resolveMinimumPageCount(
 export function measureTextLines(element: HTMLElement, editorRoot: HTMLElement): LineRect[] {
   const rootRect = editorRoot.getBoundingClientRect();
   const scrollTop = editorRoot.scrollTop;
+  // Kutular BELGE SIRASIYLA toplanır: metin düğümleri (satır satır) ve satır içi görseller.
+  // range.selectNodeContents(element).getClientRects() önce kapsayıcı span'lerin tüm satır
+  // kutularını, sonra metni verdiğinden sıra bozuluyordu.
   const range = document.createRange();
-  range.selectNodeContents(element);
-
-  const buckets: Array<{ top: number; bottom: number }> = [];
-  for (const rect of Array.from(range.getClientRects())) {
-    if (rect.height < 1) continue;
-    const top = rect.top - rootRect.top + scrollTop;
-    const bottom = top + rect.height;
-    // Aynı satırdaki parçalar (farklı biçim, görsel, önizleme) dikeyde çakışır
-    const line = buckets.find((b) => top < b.bottom - 1 && bottom > b.top + 1);
-    if (line) {
-      line.top = Math.min(line.top, top);
-      line.bottom = Math.max(line.bottom, bottom);
-    } else {
-      buckets.push({ top, bottom });
+  const raw: DOMRect[] = [];
+  const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    if (node.nodeType === Node.TEXT_NODE) {
+      range.selectNodeContents(node);
+      raw.push(...Array.from(range.getClientRects()));
+    } else if ((node as Element).tagName === 'IMG') {
+      raw.push((node as Element).getBoundingClientRect());
     }
   }
-  if (buckets.length === 0) return [];
 
-  buckets.sort((a, b) => a.top - b.top);
+  const rects = raw
+    .filter((rect) => rect.height >= 1 && rect.width > 0)
+    .map((rect) => {
+      const top = rect.top - rootRect.top + scrollTop;
+      return { top, bottom: top + rect.height, left: rect.left, right: rect.right };
+    });
+  const buckets = groupRectsIntoLines(rects);
+  if (buckets.length === 0) return [];
 
   const style = getComputedStyle(element);
   const elementRect = element.getBoundingClientRect();
@@ -147,12 +150,47 @@ export function measureTextLines(element: HTMLElement, editorRoot: HTMLElement):
     elementRect.bottom - rootRect.top + scrollTop -
     parseFloat(style.borderBottomWidth || '0') - parseFloat(style.paddingBottom || '0');
 
-  return buckets.map((line, index) => {
-    const top = index === 0 ? contentTop : (buckets[index - 1].bottom + line.top) / 2;
-    const bottom =
-      index === buckets.length - 1 ? contentBottom : (line.bottom + buckets[index + 1].top) / 2;
+  // Satır kutusu sınırı: yazı kutusu satır kutusunun içinde her satırda aynı yerde durur
+  // (paragraf iskeleti/strut + yazı boyutu). İlk satırdan "yazı üstü − satır üstü", son
+  // satırdan "satır altı − yazı altı" payı çıkarılır; iki tahminin ortalaması düzenli
+  // satırlarda kesindir (iki yazı kutusunun ortası, ör. 2 satır aralığında 14px yazı, ~0,7px kayar).
+  const topInset = buckets[0].top - contentTop;
+  const bottomInset = contentBottom - buckets[buckets.length - 1].bottom;
+  const boundaries = buckets.slice(1).map((line, index) => {
+    const fromBelow = line.top - topInset;
+    const fromAbove = buckets[index].bottom + bottomInset;
+    return (fromBelow + fromAbove) / 2;
+  });
+
+  return buckets.map((_, index) => {
+    const top = index === 0 ? contentTop : boundaries[index - 1];
+    const bottom = index === buckets.length - 1 ? contentBottom : boundaries[index];
     return { offsetTop: top, height: Math.max(0, bottom - top) };
   });
+}
+
+/**
+ * Range kutularını (belge sırasıyla) satırlara ayırır. Yeni satır = kutu sola geri döner ve
+ * aşağıda başlar. Dikey çakışmaya bakılmaz: satır aralığı 1'in altındaysa (0,7–0,9) ardışık
+ * satırların yazı kutuları üst üste biner; çakışmayla gruplamak tüm paragrafı tek "satır"
+ * sayıp PDF'in satır satır böldüğü paragrafı bütün olarak taşıyordu.
+ */
+export function groupRectsIntoLines(
+  rects: Array<{ top: number; bottom: number; left: number; right: number }>
+): Array<{ top: number; bottom: number }> {
+  const lines: Array<{ top: number; bottom: number; right: number }> = [];
+  for (const rect of rects) {
+    const line = lines[lines.length - 1];
+    const wrapsToNewLine = !line || (rect.left < line.right - 1 && rect.top > line.top + 1);
+    if (wrapsToNewLine) {
+      lines.push({ top: rect.top, bottom: rect.bottom, right: rect.right });
+    } else {
+      line.top = Math.min(line.top, rect.top);
+      line.bottom = Math.max(line.bottom, rect.bottom);
+      line.right = Math.max(line.right, rect.right);
+    }
+  }
+  return lines.map(({ top, bottom }) => ({ top, bottom }));
 }
 
 export type PaginationResult = {
@@ -170,7 +208,8 @@ export type PaginationResult = {
  * Kurallar (PDF ile aynı):
  * - Sayfaya sığmayan birim (satır / blok / tablo satırı) sonraki sayfaya geçer.
  * - Sayfa başındaki birimin üst kenar boşluğu kesilir (unforced break).
- * - h1–h3'ten hemen sonra kırılım olacaksa başlık da sonraki sayfaya taşınır.
+ * - h1–h3'ten hemen sonra kırılım olacaksa başlık da sonraki sayfaya taşınır; art arda
+ *   başlıklar (Başlık 1 + Başlık 2) zincir olarak birlikte taşınır.
  * - Manuel sayfa sonundan sonra içerik yeni sayfadan başlar.
  */
 export function paginateNaturalLayout(
@@ -193,17 +232,25 @@ export function paginateNaturalLayout(
   let shift = 0;
   let visualShift = 0;
   let contentEnd = 0;
-  let prev: { unit: LayoutUnit; top: number; visualTop: number } | null = null;
+  // Bu sayfaya yerleşen birimler (başlık zinciri için geriye bakılır)
+  type Placed = { unit: LayoutUnit; top: number; visualTop: number; siblingBefore: LayoutUnit | null };
+  let placed: Placed[] = [];
   let prevSibling: LayoutUnit | null = null;
 
   const visualTopOf = (unit: LayoutUnit) => (unit.visualOffsetTop ?? unit.offsetTop) + visualShift;
 
-  const gapHeightFor = (unit: LayoutUnit, top: number, nextPageStart: number) => {
+  const gapHeightFor = (
+    unit: LayoutUnit,
+    top: number,
+    nextPageStart: number,
+    siblingBefore: LayoutUnit | null
+  ) => {
     let height = nextPageStart - top;
     if (!unit.gapInside && unit.kind === 'block') {
-      // Kardeş aralık, önceki bloğun alt ve bu bloğun üst boşluğunu ayırır (birleşme biter);
-      // PDF'te ise sayfa başındaki üst boşluk kesilir.
-      height -= Math.min(prevSibling?.marginBottom ?? 0, unit.marginTop ?? 0) + (unit.marginTop ?? 0);
+      // Kardeş aralık, önceki bloğun alt ve bu bloğun üst boşluğunu ayırır: birleşmiş
+      // max(alt, üst) yerine alt + aralık + üst oluşur → küçük olan pay fazladan eklenir.
+      // Sonuç: blok kenarlığı tam sayfa başında (PDF sayfa başındaki üst boşluğu keser).
+      height -= Math.min(siblingBefore?.marginBottom ?? 0, unit.marginTop ?? 0);
     }
     return Math.max(0, height);
   };
@@ -220,7 +267,7 @@ export function paginateNaturalLayout(
       visualShift += visualHeight - unit.height;
       pageCount += Math.round((nextPageStart - pageStart) / pageStep);
       pageStart = nextPageStart;
-      prev = null;
+      placed = [];
       prevSibling = null;
       continue;
     }
@@ -233,35 +280,43 @@ export function paginateNaturalLayout(
     const overflows = relativeTop + unit.height > fragmentainerHeight + 0.01;
 
     if (overflows && relativeTop > 0.5) {
-      let breakUnit = unit;
-      let breakTop = top;
-      let breakVisualTop = visualTop;
+      let breakAt: Placed = { unit, top, visualTop, siblingBefore: prevSibling };
       const isBlockBoundary = unit.kind !== 'line' || unit.startsBlock;
-      if (
-        isBlockBoundary &&
-        prev?.unit.avoidBreakAfter &&
-        prev.top - pageStart > 0.5 &&
-        !targets.some((t) => t.docPos === prev!.unit.docPos)
-      ) {
-        breakUnit = prev.unit;
-        breakTop = prev.top;
-        breakVisualTop = prev.visualTop;
+      if (isBlockBoundary) {
+        // break-after: avoid-page — kırılımı, sayfa başını boşaltmadan başlık(lar)ın önüne al
+        for (let index = placed.length - 1; index >= 0; index--) {
+          const candidate = placed[index];
+          if (!candidate.unit.avoidBreakAfter || candidate.top - pageStart <= 0.5) break;
+          if (targets.some((t) => t.docPos === candidate.unit.docPos)) break;
+          breakAt = candidate;
+        }
       }
 
       const nextPageStart = pageStart + pageStep;
-      const height = gapHeightFor(breakUnit, breakTop, nextPageStart);
-      const visualHeight = gapHeightFor(breakUnit, breakVisualTop, nextPageStart);
+      const height = gapHeightFor(breakAt.unit, breakAt.top, nextPageStart, breakAt.siblingBefore);
+      const visualHeight = gapHeightFor(breakAt.unit, breakAt.visualTop, nextPageStart, breakAt.siblingBefore);
+      const breakUnit = breakAt.unit;
       targets.push({
         docPos: breakUnit.docPos,
         kind: breakUnit.kind === 'table-row' ? 'table-row' : 'block',
         height: visualHeight,
       });
-      shift += height;
-      visualShift += visualHeight;
-      top += height;
-      visualTop += visualHeight;
+      // Gerçek kayma = kırılan birimin vardığı yer − eski yeri. Kardeş aralıkta bu, aralık
+      // yüksekliğinden "birleşmeyen pay" kadar fazladır; aralık yüksekliğini toplamak sonraki
+      // tüm sayfaları birkaç px kaydırıyordu.
+      const displacement = Math.max(height, nextPageStart - breakAt.top);
+      const visualDisplacement = Math.max(visualHeight, nextPageStart - breakAt.visualTop);
+      shift += displacement;
+      visualShift += visualDisplacement;
+      top += displacement;
+      visualTop += visualDisplacement;
       pageStart = nextPageStart;
       pageCount += 1;
+      // Taşınan başlıklar yeni sayfanın ilk birimleri
+      const movedFrom = placed.indexOf(breakAt);
+      placed = movedFrom >= 0
+        ? placed.slice(movedFrom).map((p) => ({ ...p, top: p.top + displacement, visualTop: p.visualTop + visualDisplacement }))
+        : [];
     }
 
     // Sayfadan uzun birim (dev görsel/satır): PDF onu sayfalara böler; editör bölemez,
@@ -273,7 +328,7 @@ export function paginateNaturalLayout(
 
     // Yükseklik farkı (ekran ↔ PDF) en fazla birkaç kesirli pikseldir; son sayfa dolgusu için yeterli
     contentEnd = Math.max(contentEnd, visualTop + unit.height);
-    prev = { unit, top, visualTop };
+    placed.push({ unit, top, visualTop, siblingBefore: prevSibling });
     if (unit.kind !== 'line' || unit.startsBlock) prevSibling = unit;
   }
 

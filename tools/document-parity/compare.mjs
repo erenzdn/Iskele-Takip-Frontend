@@ -110,7 +110,8 @@ for (const file of files) {
   failed ||= !ok;
 
   const verdict = ok ? (strictVertical ? 'BİREBİR' : 'SAYFALAR BİREBİR') : 'FARK VAR';
-  console.log(`\n=== Kenar boşluğu ${marginName} mm, ekran ölçeği ${dsfName}: ${verdict} ===`);
+  const [templateName, marginMm] = marginName.split('_');
+  console.log(`\n=== ${templateName} şablonu, kenar ${marginMm} mm, ekran ölçeği ${dsfName}: ${verdict} ===`);
   console.log(`sayfa: editör ${editor.pageCount}, PDF ${pdf.pageCount}`);
   console.log(`satır: editör ${editorLines.length}, PDF ${pdfLines.length}, eşleşen ${pairs.length}`);
   console.log(`farklı kırılım: editörde ${onlyA.length}, PDF'te ${onlyB.length} eşsiz satır${strictVertical ? '' : ' (bilgi)'}`);
