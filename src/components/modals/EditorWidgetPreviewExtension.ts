@@ -114,15 +114,40 @@ function createPlaceholderPreviewElement(value: string, key: string): HTMLElemen
   return span;
 }
 
+/** Örnek veri sabit nesnedir; widget HTML'i her tuş vuruşunda yeniden üretilmesin */
+const widgetHtmlCache = new WeakMap<DocumentPreviewSample, Map<DocumentWidgetKey, string>>();
+
+function getWidgetHtml(key: DocumentWidgetKey, sample: DocumentPreviewSample): string {
+  let cache = widgetHtmlCache.get(sample);
+  if (!cache) {
+    cache = new Map();
+    widgetHtmlCache.set(sample, cache);
+  }
+  let html = cache.get(key);
+  if (html === undefined) {
+    html = renderDocumentWidgetHtml(key, sample.raw);
+    cache.set(key, html);
+  }
+  return html;
+}
+
 function buildPreviewDecorations(
   doc: Editor['state']['doc'],
   sample: DocumentPreviewSample
 ): DecorationSet {
   const decorations: Decoration[] = [];
   const widgets = findWidgetParagraphs(doc);
+  // Widget anahtarları konum içermez: önce yazılan metin konumu kaydırınca ProseMirror önizleme
+  // DOM'unu silip yeniden kurmasın (büyük tablo önizlemesi her tuşta yeniden çiziliyordu).
+  const occurrences = new Map<string, number>();
+  const nextOccurrence = (key: string) => {
+    const n = occurrences.get(key) ?? 0;
+    occurrences.set(key, n + 1);
+    return n;
+  };
 
   for (const widget of widgets) {
-    const html = renderDocumentWidgetHtml(widget.key, sample.raw);
+    const html = getWidgetHtml(widget.key, sample);
     decorations.push(
       Decoration.node(widget.from, widget.to, {
         class: 'editor-widget-source-hidden',
@@ -132,7 +157,7 @@ function buildPreviewDecorations(
         () => createWidgetPreviewElement(html, widget.key),
         {
           side: -1,
-          key: `editor-widget-${widget.key}-${widget.from}`,
+          key: `editor-widget-${widget.key}-${nextOccurrence(`w:${widget.key}`)}`,
         }
       )
     );
@@ -150,7 +175,7 @@ function buildPreviewDecorations(
         {
           side: -1,
           marks: placeholder.marks,
-          key: `editor-placeholder-${placeholder.key}-${placeholder.from}-${JSON.stringify(placeholder.marks.map((m) => m.toJSON()))}`,
+          key: `editor-placeholder-${placeholder.key}-${nextOccurrence(`p:${placeholder.key}`)}-${placeholder.value}-${JSON.stringify(placeholder.marks.map((m) => m.toJSON()))}`,
         }
       )
     );

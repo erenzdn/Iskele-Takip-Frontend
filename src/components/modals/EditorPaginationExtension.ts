@@ -43,10 +43,23 @@ function resolveDomPos(view: EditorView, element: Element): number | null {
   }
 }
 
-function coordsTopInEditor(view: EditorView, pos: number, editorRoot: HTMLElement): number {
-  const rootRect = editorRoot.getBoundingClientRect();
-  const coords = view.coordsAtPos(pos);
-  return coords.top - rootRect.top + editorRoot.scrollTop;
+/**
+ * Satır birimlerinin belge konumunu tembel (yalnızca okunduğunda) çözer. Konum yalnızca sayfa
+ * kırılımı düşen satır için gerekir; her satır için harf harf coordsAtPos aramak her tuş
+ * vuruşunda yüzlerce ms donmaya yol açıyordu. Okuma, ölçüm düzeni (MEASURING_CLASS) açıkken
+ * yapılmalıdır — bkz. buildDecorationSet.
+ */
+function defineLazyDocPos<T extends { docPos: number }>(target: T, resolve: () => number): T {
+  let cached: number | null = null;
+  Object.defineProperty(target, 'docPos', {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      if (cached == null) cached = resolve();
+      return cached;
+    },
+  });
+  return target;
 }
 
 /** Bloğun içinde, verilen satırın başına denk gelen belge konumu */
@@ -58,10 +71,12 @@ function findDocumentPosAtLine(
   lineBottom: number
 ): number {
   const editorDom = view.dom as HTMLElement;
+  const rootRect = editorDom.getBoundingClientRect();
+  const rootTop = rootRect.top - editorDom.scrollTop;
   for (let pos = blockStartPos; pos <= blockEndPos; pos++) {
     let top: number;
     try {
-      top = coordsTopInEditor(view, pos, editorDom);
+      top = view.coordsAtPos(pos).top - rootTop;
     } catch {
       continue;
     }
@@ -127,27 +142,24 @@ function collectTextBlockUnits(
     /* blok sonu bulunamazsa satır konumu blok başı olur */
   }
 
-  return lines.map((line, index) => ({
-    docPos:
-      index === 0 || !resolveLinePositions
-        ? contentStart
-        : findDocumentPosAtLine(
-            view,
-            contentStart,
-            contentEnd,
-            line.offsetTop,
-            line.offsetTop + line.height
-          ),
-    height: line.height,
-    offsetTop: line.offsetTop,
-    isPageBreak: false,
-    kind: 'line' as const,
-    gapInside: true,
-    startsBlock: index === 0,
-    avoidBreakAfter: avoidBreakAfter && index === lines.length - 1,
-    ...(index === 0 ? { marginTop: margins.marginTop } : {}),
-    ...(index === lines.length - 1 ? { marginBottom: margins.marginBottom } : {}),
-  }));
+  return lines.map((line, index) => {
+    const unit: LayoutUnit = {
+      docPos: contentStart,
+      height: line.height,
+      offsetTop: line.offsetTop,
+      isPageBreak: false,
+      kind: 'line',
+      gapInside: true,
+      startsBlock: index === 0,
+      avoidBreakAfter: avoidBreakAfter && index === lines.length - 1,
+      ...(index === 0 ? { marginTop: margins.marginTop } : {}),
+      ...(index === lines.length - 1 ? { marginBottom: margins.marginBottom } : {}),
+    };
+    if (index === 0 || !resolveLinePositions) return unit;
+    return defineLazyDocPos(unit, () =>
+      findDocumentPosAtLine(view, contentStart, contentEnd, line.offsetTop, line.offsetTop + line.height)
+    );
+  });
 }
 
 function collectLayoutUnits(view: EditorView, resolveLinePositions = true): LayoutUnit[] {
@@ -275,41 +287,36 @@ function createGapDecoration(view: EditorView, target: PageGapTarget, index: num
  * kararları bu ölçümle, eklenecek boşluklar ise ekrandaki konumla hesaplanır.
  */
 function measureNaturalLayout(view: EditorView, paper: HTMLElement): LayoutUnit[] {
-  paper.classList.add(MEASURING_CLASS);
+  // MEASURING_CLASS çağıran (buildDecorationSet) tarafından yönetilir: tembel satır konumları
+  // sayfalama kararından sonra, hâlâ ölçüm düzenindeyken okunur.
+  const visual = collectLayoutUnits(view);
+  const dpr = window.devicePixelRatio || 1;
+  if (Math.abs(dpr - 1) < 0.001) return visual;
+
+  const widthBefore = paper.getBoundingClientRect().width;
+  const previousZoom = paper.style.getPropertyValue('zoom');
+  paper.style.setProperty('zoom', String(1 / dpr));
+  let pdfLike: LayoutUnit[];
+  let scale: number;
   try {
-    const visual = collectLayoutUnits(view);
-    const dpr = window.devicePixelRatio || 1;
-    if (Math.abs(dpr - 1) < 0.001) return visual;
-
-    const widthBefore = paper.getBoundingClientRect().width;
-    const previousZoom = paper.style.getPropertyValue('zoom');
-    paper.style.setProperty('zoom', String(1 / dpr));
-    let pdfLike: LayoutUnit[];
-    let scale: number;
-    try {
-      scale = widthBefore / paper.getBoundingClientRect().width;
-      pdfLike = collectLayoutUnits(view, false);
-    } finally {
-      if (previousZoom) paper.style.setProperty('zoom', previousZoom);
-      else paper.style.removeProperty('zoom');
-    }
-
-    // Chromium 120 (Electron 28) ölçümleri yakınlaştırılmamış birimlerle döndürür (scale = 1).
-    // Standart CSS zoom'lu sürümlerde (Chromium 128+) ölçek değişir; o zaman güvenli yola dön.
-    const consistent =
-      Math.abs(scale - 1) < 0.001 &&
-      pdfLike.length === visual.length &&
-      pdfLike.every((unit, index) => unit.kind === visual[index].kind && unit.isPageBreak === visual[index].isPageBreak);
-    if (!consistent) return visual;
-
-    return pdfLike.map((unit, index) => ({
-      ...unit,
-      docPos: visual[index].docPos,
-      visualOffsetTop: visual[index].offsetTop,
-    }));
+    scale = widthBefore / paper.getBoundingClientRect().width;
+    pdfLike = collectLayoutUnits(view, false);
   } finally {
-    paper.classList.remove(MEASURING_CLASS);
+    if (previousZoom) paper.style.setProperty('zoom', previousZoom);
+    else paper.style.removeProperty('zoom');
   }
+
+  // Chromium 120 (Electron 28) ölçümleri yakınlaştırılmamış birimlerle döndürür (scale = 1).
+  // Standart CSS zoom'lu sürümlerde (Chromium 128+) ölçek değişir; o zaman güvenli yola dön.
+  const consistent =
+    Math.abs(scale - 1) < 0.001 &&
+    pdfLike.length === visual.length &&
+    pdfLike.every((unit, index) => unit.kind === visual[index].kind && unit.isPageBreak === visual[index].isPageBreak);
+  if (!consistent) return visual;
+
+  return pdfLike.map((unit, index) =>
+    defineLazyDocPos({ ...unit, visualOffsetTop: visual[index].offsetTop }, () => visual[index].docPos)
+  );
 }
 
 function buildDecorationSet(view: EditorView): DecorationSet {
@@ -317,15 +324,23 @@ function buildDecorationSet(view: EditorView): DecorationSet {
   if (!(paper instanceof HTMLElement)) return DecorationSet.empty;
 
   const metrics = readPageMetrics(paper);
-  const units = measureNaturalLayout(view, paper);
-  const result = paginateNaturalLayout(
-    units,
-    metrics.pageContentHeight,
-    metrics.interPageSpacing,
-    metrics.marginTop,
-    metrics.fragmentainerHeight
-  );
-  const targets = dedupeGapTargets(result.targets);
+  let result: ReturnType<typeof paginateNaturalLayout>;
+  let targets: PageGapTarget[];
+  paper.classList.add(MEASURING_CLASS);
+  try {
+    const units = measureNaturalLayout(view, paper);
+    result = paginateNaturalLayout(
+      units,
+      metrics.pageContentHeight,
+      metrics.interPageSpacing,
+      metrics.marginTop,
+      metrics.fragmentainerHeight
+    );
+    // Kırılım hedeflerinin docPos'u (tembel satır konumları) paginate içinde, ölçüm düzenindeyken okunur
+    targets = dedupeGapTargets(result.targets);
+  } finally {
+    paper.classList.remove(MEASURING_CLASS);
+  }
 
   applyEditorPageLayout(view, paper, result.contentEnd, result.pageCount, metrics);
 
