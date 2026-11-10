@@ -31,13 +31,7 @@ import {
   TextUnderlineIcon,
   TextHOneIcon,
   TextHTwoIcon,
-  PlusIcon,
-  MinusIcon,
-  ColumnsIcon,
-  RowsIcon,
-  TrashIcon,
   GridFourIcon,
-  LayoutIcon,
   SquareSplitHorizontalIcon,
 } from '@phosphor-icons/react';
 import type { TemplateImage } from '../../models';
@@ -49,11 +43,7 @@ import { FONT_SIZE_OPTIONS, getActiveFontSize } from './FontSizeExtension';
 import { useDocumentTheme } from '../../hooks/useDocumentTheme';
 import { editorPaginationPluginKey } from './EditorPaginationExtension';
 import { getPageMarginsPaperStyle, type PageMargins } from './PageMargins';
-import {
-  BORDERLESS_STYLE,
-  toggleTableNoBorder,
-  ensureLayoutTablesBorderless,
-} from './CustomTableExtensions';
+import { LayoutInsertMenu, TableContextBar, ToolbarButton, ToolbarDivider } from './LayoutTools';
 
 export type TipTapPlaceholderItem = {
   key: string;
@@ -88,7 +78,7 @@ type TipTapTemplateEditorLayoutProps = {
   images: TemplateImage[];
   uploadingImage: boolean;
   onImageUpload: (event: ChangeEvent<HTMLInputElement>) => void;
-  onInsertImage: (imageId: number) => void;
+  onInsertImage: (imageId: number) => void | Promise<void>;
   fileInputRef: RefObject<HTMLInputElement>;
   showGridlines: boolean;
   onToggleGridlines: () => void;
@@ -96,46 +86,6 @@ type TipTapTemplateEditorLayoutProps = {
   isImageActive: boolean;
   previewModal: ReactNode;
 };
-
-function ToolbarButton({
-  title,
-  active,
-  disabled,
-  onClick,
-  children,
-  danger,
-}: {
-  title: string;
-  active?: boolean;
-  disabled?: boolean;
-  onClick: () => void;
-  children: ReactNode;
-  danger?: boolean;
-}) {
-  return (
-    <button
-      type="button"
-      title={title}
-      disabled={disabled}
-      onClick={onClick}
-      className={[
-        'inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-md px-2 text-xs font-medium transition-colors',
-        'disabled:opacity-40 disabled:pointer-events-none',
-        danger
-          ? 'text-error hover:bg-error/10'
-          : active
-            ? 'bg-primary/15 text-primary'
-            : 'text-text-primary hover:bg-background-hover',
-      ].join(' ')}
-    >
-      {children}
-    </button>
-  );
-}
-
-function ToolbarDivider() {
-  return <div className="mx-0.5 h-5 w-px shrink-0 bg-background-border" />;
-}
 
 export default function TipTapTemplateEditorLayout({
   editor,
@@ -206,21 +156,9 @@ export default function TipTapTemplateEditorLayout({
     [editor]
   );
 
-  const getTableAttrs = useCallback(() => {
-    const { $from } = editor.state.selection;
-    for (let depth = $from.depth; depth > 0; depth--) {
-      const node = $from.node(depth);
-      if (node.type.name === 'table') {
-        return node.attrs;
-      }
-    }
-    return editor.getAttributes('table');
-  }, [editor]);
-
   const imageNodeType = editor.isActive('imageResize') ? 'imageResize' : 'image';
   const imageAlign = editor.getAttributes(imageNodeType).align || 'none';
   const activeFontSize = getActiveFontSize(editor);
-  const tableAttrs = isTableActive ? getTableAttrs() : {};
 
   const filteredGroups = useMemo(() => {
     const q = fieldSearch.trim().toLowerCase();
@@ -236,67 +174,6 @@ export default function TipTapTemplateEditorLayout({
       }))
       .filter((group) => group.items.length > 0);
   }, [fieldSearch, placeholderGroups]);
-
-  const insertLayout = useCallback(
-    (val: string) => {
-      if (val === 'empty') {
-        editor.chain().focus().insertTable({ rows: 3, cols: 3, withHeaderRow: true }).run();
-        return;
-      }
-      if (val === 'logo-header') {
-        editor
-          .chain()
-          .focus()
-          .insertContent(`
-            <table class="border-none" data-no-border="true" style="width: 100%; ${BORDERLESS_STYLE}">
-              <tbody>
-                <tr>
-                  <td style="width: 30%; vertical-align: top; text-align: left; ${BORDERLESS_STYLE}"><p style="text-align: left;"><br></p></td>
-                  <td style="width: 70%; vertical-align: middle; text-align: center; ${BORDERLESS_STYLE}"><h2 style="text-align: center;">ŞİRKET UNVANI / BAŞLIK</h2><p style="text-align: center;">${documentNumberLabel}: {{${documentNumberKey}}}<br>Tarih: {{bugunTarihi}}</p></td>
-                </tr>
-              </tbody>
-            </table>
-            <p></p>
-          `)
-          .run();
-      } else if (val === '2-col') {
-        editor
-          .chain()
-          .focus()
-          .insertContent(`
-            <table class="border-none" data-no-border="true" style="width: 100%; ${BORDERLESS_STYLE}">
-              <tbody>
-                <tr>
-                  <td style="width: 50%; vertical-align: top; ${BORDERLESS_STYLE}"><p><strong>Sol sütun</strong></p><p></p></td>
-                  <td style="width: 50%; vertical-align: top; ${BORDERLESS_STYLE}"><p><strong>Sağ sütun</strong></p><p></p></td>
-                </tr>
-              </tbody>
-            </table>
-            <p></p>
-          `)
-          .run();
-      } else if (val === '3-col') {
-        editor
-          .chain()
-          .focus()
-          .insertContent(`
-            <table class="border-none" data-no-border="true" style="width: 100%; ${BORDERLESS_STYLE}">
-              <tbody>
-                <tr>
-                  <td style="width: 33.33%; vertical-align: top; ${BORDERLESS_STYLE}"><p><strong>Sütun 1</strong></p></td>
-                  <td style="width: 33.33%; vertical-align: top; ${BORDERLESS_STYLE}"><p><strong>Sütun 2</strong></p></td>
-                  <td style="width: 33.33%; vertical-align: top; ${BORDERLESS_STYLE}"><p><strong>Sütun 3</strong></p></td>
-                </tr>
-              </tbody>
-            </table>
-            <p></p>
-          `)
-          .run();
-      }
-      ensureLayoutTablesBorderless(editor);
-    },
-    [documentNumberKey, documentNumberLabel, editor]
-  );
 
   return (
     <div className="fixed inset-0 z-[100] flex flex-col overflow-hidden bg-background-main">
@@ -625,23 +502,13 @@ export default function TipTapTemplateEditorLayout({
             </select>
           )}
 
-          <select
-            defaultValue=""
-            onChange={(e) => {
-              if (e.target.value) {
-                insertLayout(e.target.value);
-                e.target.value = '';
-              }
-            }}
-            className="h-8 rounded-lg border border-background-border bg-background-surface/60 px-2 text-xs text-text-primary outline-none focus:ring-2 focus:ring-primary/40"
-            title="Düzen / tablo ekle"
-          >
-            <option value="">Düzen / Tablo</option>
-            <option value="empty">Boş tablo</option>
-            <option value="logo-header">Logo + başlık</option>
-            <option value="2-col">2 sütun</option>
-            <option value="3-col">3 sütun</option>
-          </select>
+          <LayoutInsertMenu
+            editor={editor}
+            images={images}
+            documentNumberKey={documentNumberKey}
+            documentNumberLabel={documentNumberLabel}
+            onInsertImage={onInsertImage}
+          />
 
           <ToolbarButton
             title="Sayfa sonu ekle (Ctrl+Enter)"
@@ -703,107 +570,8 @@ export default function TipTapTemplateEditorLayout({
           </div>
         )}
 
-        {/* Contextual: table */}
-        {isTableActive && (
-          <div className="flex flex-wrap items-center gap-0.5 border-t border-background-border bg-primary/5 px-3 py-1.5 md:px-4">
-            <span className="mr-1 text-[10px] font-semibold uppercase tracking-wide text-primary">
-              Tablo
-            </span>
-            <ToolbarButton
-              title="Sola yasla"
-              onClick={() => editor.commands.updateAttributes('table', { align: 'left' })}
-            >
-              <TextAlignLeftIcon size={14} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Ortala"
-              onClick={() => editor.commands.updateAttributes('table', { align: 'center' })}
-            >
-              <TextAlignCenterIcon size={14} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Sağa yasla"
-              onClick={() => editor.commands.updateAttributes('table', { align: 'right' })}
-            >
-              <TextAlignRightIcon size={14} />
-            </ToolbarButton>
-            <ToolbarButton
-              title={tableAttrs.noBorder ? 'Çizgileri göster' : 'Çizgileri gizle'}
-              active={!!tableAttrs.noBorder}
-              onClick={() => toggleTableNoBorder(editor)}
-            >
-              <LayoutIcon size={14} />
-              <span className="hidden sm:inline">
-                {tableAttrs.noBorder ? 'Çizgi göster' : 'Çizgi gizle'}
-              </span>
-            </ToolbarButton>
-            <ToolbarDivider />
-            <ToolbarButton
-              title="Sola sütun ekle"
-              onClick={() => editor.chain().focus().addColumnBefore().run()}
-            >
-              <ColumnsIcon size={14} />
-              <PlusIcon size={10} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Sağa sütun ekle"
-              onClick={() => editor.chain().focus().addColumnAfter().run()}
-            >
-              <ColumnsIcon size={14} />
-              <PlusIcon size={10} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Üste satır ekle"
-              onClick={() => editor.chain().focus().addRowBefore().run()}
-            >
-              <RowsIcon size={14} />
-              <PlusIcon size={10} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Alta satır ekle"
-              onClick={() => editor.chain().focus().addRowAfter().run()}
-            >
-              <RowsIcon size={14} />
-              <PlusIcon size={10} />
-            </ToolbarButton>
-            <ToolbarDivider />
-            <ToolbarButton
-              title="Sütunu sil"
-              danger
-              onClick={() => editor.chain().focus().deleteColumn().run()}
-            >
-              <ColumnsIcon size={14} />
-              <MinusIcon size={10} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Satırı sil"
-              danger
-              onClick={() => editor.chain().focus().deleteRow().run()}
-            >
-              <RowsIcon size={14} />
-              <MinusIcon size={10} />
-            </ToolbarButton>
-            <ToolbarButton
-              title="Hücreleri birleştir"
-              onClick={() => editor.chain().focus().mergeCells().run()}
-            >
-              Birleştir
-            </ToolbarButton>
-            <ToolbarButton
-              title="Hücreyi ayır"
-              onClick={() => editor.chain().focus().splitCell().run()}
-            >
-              Ayır
-            </ToolbarButton>
-            <ToolbarButton
-              title="Tabloyu sil"
-              danger
-              onClick={() => editor.chain().focus().deleteTable().run()}
-            >
-              <TrashIcon size={14} />
-            </ToolbarButton>
-          </div>
-        )}
+        {/* Contextual: table / sütun düzeni */}
+        {isTableActive && <TableContextBar editor={editor} />}
       </div>
 
       <div className="flex min-h-0 flex-1">
@@ -926,8 +694,10 @@ export default function TipTapTemplateEditorLayout({
               <div className="flex gap-2 text-[10px] leading-relaxed text-text-secondary">
                 <InfoIcon size={14} className="mt-0.5 shrink-0 text-info" />
                 <p>
-                  Logo ve yan yana içerikler için <strong>Düzen / Tablo</strong> menüsünü kullanın.
-                  Logo hücresine tıklayıp <strong>Kayıtlı görsel</strong> listesinden logoyu ekleyebilirsiniz.
+                  Logo, başlık ve yan yana içerikler için araç çubuğundaki <strong>Düzen</strong> menüsünden
+                  hazır bir sayfa başı seçin (logo otomatik eklenir). Düzenin içine tıklayınca açılan
+                  <strong> Sütun düzeni</strong> çubuğundan genişlikleri sürükleyerek ayarlayabilir, sütunu
+                  sola/sağa taşıyabilir, hücreyi dikeyde ortalayabilir ve tablonun üstüne/altına satır ekleyebilirsiniz.
                   Yeni sayfa başlatmak için araç çubuğundaki <strong>Sayfa Sonu</strong> düğmesini veya{' '}
                   <strong>Ctrl+Enter</strong> kısayolunu kullanın.
                   Her beyaz sayfa tam <strong>A4 (21×29,7 cm)</strong> boyutundadır; sayfa bittiğinde beyaz

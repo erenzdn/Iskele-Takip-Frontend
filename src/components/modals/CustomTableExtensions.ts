@@ -3,6 +3,7 @@ import { Table, TableView } from '@tiptap/extension-table';
 import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
+import { createLayoutTablePlugin, isInBorderlessTable } from './LayoutTable';
 
 export const BORDERLESS_STYLE =
   'border: none !important; border-width: 0 !important; border-style: none !important; border-spacing: 0 !important; box-shadow: none !important; outline: none !important;';
@@ -457,6 +458,24 @@ export const CustomTable = Table.extend({
     return {
       ...(parent as NonNullable<typeof parent>),
       View: DocumentTableView,
+    };
+  },
+  addProseMirrorPlugins() {
+    return [...(this.parent?.() ?? []), createLayoutTablePlugin()];
+  },
+  addKeyboardShortcuts() {
+    const parent = this.parent?.() ?? {};
+    return {
+      ...parent,
+      Tab: (props) => {
+        // Düzen (çizgisiz) tablosunda Tab yalnızca hücreler arasında gezinir; son hücrede
+        // yeni satır eklemez (logo/başlık düzeni beklenmedik şekilde büyümesin).
+        if (isInBorderlessTable(this.editor.state)) {
+          this.editor.commands.goToNextCell();
+          return true;
+        }
+        return parent.Tab ? parent.Tab(props) : false;
+      },
     };
   },
   addAttributes() {

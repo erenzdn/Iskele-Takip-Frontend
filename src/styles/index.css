@@ -389,6 +389,21 @@ button.addendum-badge {
   color: #dc2626;
 }
 
+/*
+ * Sütun düzeni (çizgisiz tablo): editörde sütun sınırları her zaman ince kesikli çizgiyle
+ * görünür, imleç içindeyken vurgulanır. Yalnızca outline kullanılır — yerleşimi değiştirmez,
+ * PDF'te çıkmaz.
+ */
+.template-editor-paper .ProseMirror table.border-none td,
+.template-editor-paper .ProseMirror table.border-none th {
+  outline: 1px dashed rgba(148, 163, 184, 0.45);
+  outline-offset: -1px;
+}
+.template-editor-paper .ProseMirror .tableWrapper.layout-table-active table.border-none td,
+.template-editor-paper .ProseMirror .tableWrapper.layout-table-active table.border-none th {
+  outline: 1px dashed rgba(59, 130, 246, 0.6);
+}
+
 /* Kılavuz modu açıkken: hücre sınırlarını noktalı göster (sadece editör) */
 .show-gridlines .ProseMirror table.border-none td,
 .show-gridlines .ProseMirror table.border-none th,
