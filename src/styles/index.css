@@ -141,8 +141,9 @@
 }
 
 /* TipTap Table Resize Handles — sütun yeniden boyutlandırma yalnızca editörde çalışır */
+/* PDF'te tablo taşarsa kesilmez; editörde de kesilmesin (kenarlık yarısı dahil) */
 .ProseMirror .tableWrapper {
-  overflow-x: auto;
+  overflow: visible;
 }
 
 .ProseMirror table td,
@@ -397,51 +398,9 @@ button.addendum-badge {
 }
 
 /*
- * Görsel Konumlandırma ve Hizalama — yalnızca editörde gerekli.
- * tiptap-extension-resize-image, <img>'i editörde wrapper/container div'leriyle
- * sarar (yeniden boyutlandırma tutamaçları için); PDF'teki generateHTML çıktısında
- * bu sarmalayıcılar yoktur, çıplak <img data-align="..."> üretilir ve .doc-root'taki
- * img[data-align] kuralları yeterlidir. Editörde ise float/metin sarma davranışının
- * doğru çalışması için sarmalayıcı div'in de hizalanması gerekir — bu yüzden bu
- * :has() kuralları .doc-root'a taşınmadı, burada kalıyor.
+ * Görsel hizalama editörde CustomImageExtension.applyEditorImageLayout ile yapılır;
+ * PDF ile aynı kuraldan (resolveImageExportAlignment) türetildiği için burada CSS yok.
  */
-.ProseMirror [data-align="left"],
-.ProseMirror :has(> [data-align="left"]),
-.ProseMirror .image-resizer:has(img[data-align="left"]) {
-  float: left !important;
-  margin-right: 1.5rem !important;
-  margin-bottom: 0.5rem !important;
-  display: inline-block !important;
-  clear: none !important;
-}
-
-.ProseMirror [data-align="right"],
-.ProseMirror :has(> [data-align="right"]),
-.ProseMirror .image-resizer:has(img[data-align="right"]) {
-  float: right !important;
-  margin-left: 1.5rem !important;
-  margin-bottom: 0.5rem !important;
-  display: inline-block !important;
-  clear: none !important;
-}
-
-.ProseMirror [data-align="center"],
-.ProseMirror :has(> [data-align="center"]),
-.ProseMirror .image-resizer:has(img[data-align="center"]) {
-  display: block !important;
-  margin-left: auto !important;
-  margin-right: auto !important;
-  float: none !important;
-  clear: both !important;
-}
-
-.ProseMirror [data-align="none"],
-.ProseMirror :has(> [data-align="none"]),
-.ProseMirror .image-resizer:has(img[data-align="none"]) {
-  display: inline-block !important;
-  float: none !important;
-  clear: both !important;
-}
 
 /* A4 şablon editörü – ayrı sayfa kağıtları */
 .template-editor-workspace {
@@ -538,9 +497,10 @@ button.addendum-badge {
   display: none !important;
 }
 
+/* Dış boşluk kanonik CSS'teki .doc-widget kuralından gelir (PDF ile aynı) */
 .template-editor-paper .ProseMirror .editor-widget-preview {
   display: block;
-  margin: 10px 0;
+  white-space: normal;
   pointer-events: none;
   user-select: none;
 }
@@ -562,7 +522,8 @@ button.addendum-badge {
   color: #0f766e;
   background: rgba(15, 118, 110, 0.08);
   border-radius: 2px;
-  padding: 0 2px;
+  /* padding yok: genişlik PDF'teki düz metinle aynı kalsın; vurgu yalnızca gölge ile */
+  box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.12);
   pointer-events: none;
   user-select: none;
 }
@@ -586,6 +547,7 @@ button.addendum-badge {
 }
 
 /* Sayfa geçişi — yalnızca akış boşluğu (görünmez; beyaz kağıt ::before'da) */
+/* Yükseklik sayfalama eklentisince satır içi verilir: sayfa sonuna kalan alan + sayfa arası */
 .template-editor-paper .ProseMirror .editor-page-gap {
   display: block;
   height: var(--inter-page-spacing);
@@ -602,7 +564,20 @@ button.addendum-badge {
 .template-editor-paper .ProseMirror tr.editor-table-page-break > td,
 .template-editor-paper .ProseMirror tr.editor-table-page-break > th {
   border-top: none;
-  padding-top: var(--inter-page-spacing);
+  /* 8px: kanonik hücre iç boşluğu (documentStyles .doc-root td) */
+  padding-top: calc(8px + var(--page-gap-fill, var(--inter-page-spacing)));
+}
+
+/* Sayfalama ölçümü: aralıklar gizli, doğal (PDF öncesi) akış ölçülür */
+.template-editor-paper.editor-pagination-measuring .ProseMirror .editor-page-gap {
+  display: none !important;
+}
+.template-editor-paper.editor-pagination-measuring .ProseMirror tr.editor-table-page-break > td,
+.template-editor-paper.editor-pagination-measuring .ProseMirror tr.editor-table-page-break > th {
+  padding-top: 8px;
+}
+.template-editor-paper.editor-pagination-measuring .ProseMirror .page-break::before {
+  height: 1px !important;
 }
 
 /* Şablon editörü — alan paneli */
@@ -637,7 +612,7 @@ button.addendum-badge {
 .template-editor-paper .ProseMirror .page-break::before {
   content: '';
   display: block;
-  height: var(--inter-page-spacing, var(--page-gap, 24px));
+  height: var(--page-break-fill, var(--inter-page-spacing, var(--page-gap, 24px)));
   margin: 0;
   background: transparent;
 }

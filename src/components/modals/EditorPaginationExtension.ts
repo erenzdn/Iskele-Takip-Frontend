@@ -2,29 +2,32 @@ import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, EditorView } from '@tiptap/pm/view';
 import {
-  computeAutoPageGapTargets,
   computeEditorPageLayout,
   dedupeGapTargets,
   findTableRowNodeRange,
-  getContentExtent,
-  groupElementLineRects,
   measureElementLayout,
+  measureTextLines,
+  paginateNaturalLayout,
   readPageMetrics,
-  resolveMinimumPageCount,
   parseCssLengthToPx,
   type LayoutUnit,
   type PageGapTarget,
 } from './editorPagination';
 
-const LINE_BREAK_TAGS = new Set(['P', 'LI', 'BLOCKQUOTE', 'PRE']);
+const TEXT_BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE']);
+const AVOID_BREAK_AFTER_TAGS = new Set(['H1', 'H2', 'H3']);
+
+/** Ölçüm sırasında sayfa aralıklarını gizleyip doğal (PDF öncesi) akışı gösteren sınıf */
+const MEASURING_CLASS = 'editor-pagination-measuring';
 
 export const editorPaginationPluginKey = new PluginKey('editorPagination');
 
 const TABLE_PAGE_BREAK_CLASS = 'editor-table-page-break';
 
-function createPageGapElement(): HTMLElement {
+function createPageGapElement(height: number): HTMLElement {
   const element = document.createElement('div');
   element.className = 'editor-page-gap';
+  element.style.height = `${height}px`;
   element.setAttribute('contenteditable', 'false');
   element.setAttribute('aria-hidden', 'true');
   return element;
@@ -45,50 +48,92 @@ function coordsTopInEditor(view: EditorView, pos: number, editorRoot: HTMLElemen
   return coords.top - rootRect.top + editorRoot.scrollTop;
 }
 
-function findDocumentPosAtEditorTop(
+/** Bloğun içinde, verilen satırın başına denk gelen belge konumu */
+function findDocumentPosAtLine(
   view: EditorView,
-  blockPos: number,
-  targetTop: number
+  blockStartPos: number,
+  blockEndPos: number,
+  lineTop: number,
+  lineBottom: number
 ): number {
   const editorDom = view.dom as HTMLElement;
-  const node = view.state.doc.nodeAt(blockPos);
-  if (!node) return blockPos;
-
-  const start = blockPos + 1;
-  const end = blockPos + node.nodeSize - 1;
-  if (start >= end) return blockPos;
-
-  let bestPos = blockPos;
-  let bestDelta = Infinity;
-
-  for (let pos = start; pos < end; pos++) {
-    const top = coordsTopInEditor(view, pos, editorDom);
-    const delta = Math.abs(top - targetTop);
-    if (delta < bestDelta) {
-      bestDelta = delta;
-      bestPos = pos;
+  for (let pos = blockStartPos; pos <= blockEndPos; pos++) {
+    let top: number;
+    try {
+      top = coordsTopInEditor(view, pos, editorDom);
+    } catch {
+      continue;
     }
-    if (top > targetTop + 4) break;
+    if (top >= lineTop - 1 && top < lineBottom - 1) return pos;
+    if (top >= lineBottom) break;
   }
-
-  return bestPos;
+  return blockStartPos;
 }
 
-function collectTextLineUnits(
+function readMargins(element: HTMLElement) {
+  const style = getComputedStyle(element);
+  return {
+    marginTop: parseFloat(style.marginTop || '0') || 0,
+    marginBottom: parseFloat(style.marginBottom || '0') || 0,
+  };
+}
+
+function collectTextBlockUnits(
   view: EditorView,
   element: HTMLElement,
-  blockPos: number,
   editorDom: HTMLElement
 ): LayoutUnit[] {
-  const lines = groupElementLineRects(element, editorDom);
-  if (lines.length <= 1) return [];
+  const contentStart = resolveDomPos(view, element);
+  if (contentStart == null) return [];
 
-  return lines.map((line) => ({
-    docPos: findDocumentPosAtEditorTop(view, blockPos, line.offsetTop),
+  const margins = readMargins(element);
+  const avoidBreakAfter = AVOID_BREAK_AFTER_TAGS.has(element.tagName);
+  const lines = measureTextLines(element, editorDom);
+
+  if (lines.length <= 1) {
+    const layout = measureElementLayout(element, editorDom);
+    return [
+      {
+        docPos: contentStart,
+        height: layout.height,
+        offsetTop: layout.offsetTop,
+        isPageBreak: false,
+        kind: 'block',
+        gapInside: true,
+        avoidBreakAfter,
+        ...margins,
+      },
+    ];
+  }
+
+  let contentEnd = contentStart;
+  try {
+    const $pos = view.state.doc.resolve(contentStart);
+    contentEnd = $pos.end();
+  } catch {
+    /* blok sonu bulunamazsa satır konumu blok başı olur */
+  }
+
+  return lines.map((line, index) => ({
+    docPos:
+      index === 0
+        ? contentStart
+        : findDocumentPosAtLine(
+            view,
+            contentStart,
+            contentEnd,
+            line.offsetTop,
+            line.offsetTop + line.height
+          ),
     height: line.height,
     offsetTop: line.offsetTop,
     isPageBreak: false,
     kind: 'line' as const,
+    gapInside: true,
+    startsBlock: index === 0,
+    avoidBreakAfter: avoidBreakAfter && index === lines.length - 1,
+    ...(index === 0 ? { marginTop: margins.marginTop } : {}),
+    ...(index === lines.length - 1 ? { marginBottom: margins.marginBottom } : {}),
   }));
 }
 
@@ -100,22 +145,34 @@ function collectLayoutUnits(view: EditorView): LayoutUnit[] {
     element: HTMLElement,
     docPos: number,
     kind: LayoutUnit['kind'],
-    isPageBreak = false
+    options: { isPageBreak?: boolean; gapInside?: boolean } = {}
   ) => {
     const layout = measureElementLayout(element, editorDom);
-    if (!isPageBreak && layout.height <= 0.5) return;
+    if (!options.isPageBreak && layout.height <= 0.5) return;
     units.push({
       docPos,
       height: layout.height,
       offsetTop: layout.offsetTop,
-      isPageBreak,
+      isPageBreak: options.isPageBreak ?? false,
       kind,
+      gapInside: options.gapInside ?? false,
+      ...readMargins(element),
+    });
+  };
+
+  const collectTableRows = (table: Element) => {
+    table.querySelectorAll(':scope > tbody > tr, :scope > thead > tr, :scope > tr').forEach((row) => {
+      if (!(row instanceof HTMLElement)) return;
+      const rowPos = resolveDomPos(view, row);
+      if (rowPos == null) return;
+      pushUnit(row, rowPos, 'table-row');
     });
   };
 
   for (const child of Array.from(editorDom.children)) {
     if (!(child instanceof HTMLElement)) continue;
     if (child.classList.contains('editor-page-gap')) continue;
+    if (child.classList.contains('editor-widget-source-hidden')) continue;
 
     if (child.classList.contains('editor-widget-preview')) {
       const pos = resolveDomPos(view, child);
@@ -126,41 +183,36 @@ function collectLayoutUnits(view: EditorView): LayoutUnit[] {
 
     if (child.classList.contains('page-break') || child.dataset.pageBreak === 'true') {
       const pos = resolveDomPos(view, child);
-      if (pos != null) pushUnit(child, pos, 'block', true);
+      if (pos != null) pushUnit(child, pos, 'block', { isPageBreak: true });
       continue;
     }
 
-    if (child.tagName === 'TABLE') {
-      child.querySelectorAll('tr').forEach((row) => {
-        if (!(row instanceof HTMLElement)) return;
-        const rowPos = resolveDomPos(view, row);
-        if (rowPos == null) return;
-        pushUnit(row, rowPos, 'table-row');
-      });
+    // TipTap tabloyu div.tableWrapper içinde çizer; PDF tabloyu satır satır böler
+    const table =
+      child.tagName === 'TABLE' ? child : child.classList.contains('tableWrapper') ? child.querySelector(':scope > table') : null;
+    if (table) {
+      collectTableRows(table);
       continue;
     }
 
     if (child.tagName === 'UL' || child.tagName === 'OL') {
+      // li: PDF'te break-inside: avoid — madde bütün olarak taşınır
       child.querySelectorAll(':scope > li').forEach((item) => {
         if (!(item instanceof HTMLElement)) return;
         const itemPos = resolveDomPos(view, item);
         if (itemPos == null) return;
-        pushUnit(item, itemPos, 'block');
+        pushUnit(item, itemPos, 'block', { gapInside: true });
       });
+      continue;
+    }
+
+    if (TEXT_BLOCK_TAGS.has(child.tagName)) {
+      units.push(...collectTextBlockUnits(view, child, editorDom));
       continue;
     }
 
     const pos = resolveDomPos(view, child);
     if (pos == null) continue;
-
-    if (LINE_BREAK_TAGS.has(child.tagName)) {
-      const lineUnits = collectTextLineUnits(view, child, pos, editorDom);
-      if (lineUnits.length > 0) {
-        units.push(...lineUnits);
-        continue;
-      }
-    }
-
     pushUnit(child, pos, 'block');
   }
 
@@ -168,16 +220,45 @@ function collectLayoutUnits(view: EditorView): LayoutUnit[] {
 }
 
 function createGapDecoration(view: EditorView, target: PageGapTarget, index: number): Decoration | null {
+  const height = Math.round(target.height * 100) / 100;
+
   if (target.kind === 'table-row') {
     const range = findTableRowNodeRange(view.state.doc, target.docPos);
     if (!range) return null;
-    return Decoration.node(range.from, range.to, { class: TABLE_PAGE_BREAK_CLASS });
+    return Decoration.node(
+      range.from,
+      range.to,
+      { class: TABLE_PAGE_BREAK_CLASS, style: `--page-gap-fill: ${height}px` },
+      { gapHeight: height }
+    );
   }
 
-  return Decoration.widget(target.docPos, createPageGapElement, {
-    side: -1,
-    key: `editor-page-gap-${index}-${target.docPos}`,
+  if (target.kind === 'page-break') {
+    const node = view.state.doc.nodeAt(target.docPos);
+    if (!node) return null;
+    return Decoration.node(
+      target.docPos,
+      target.docPos + node.nodeSize,
+      { style: `--page-break-fill: ${height}px` },
+      { gapHeight: height }
+    );
+  }
+
+  return Decoration.widget(target.docPos, () => createPageGapElement(height), {
+    // Aynı konumdaki alan/widget önizlemelerinden önce yerleşsin
+    side: -10,
+    key: `editor-page-gap-${index}-${target.docPos}-${height}`,
+    gapHeight: height,
   });
+}
+
+function measureNaturalLayout(view: EditorView, paper: HTMLElement): LayoutUnit[] {
+  paper.classList.add(MEASURING_CLASS);
+  try {
+    return collectLayoutUnits(view);
+  } finally {
+    paper.classList.remove(MEASURING_CLASS);
+  }
 }
 
 function buildDecorationSet(view: EditorView): DecorationSet {
@@ -185,17 +266,16 @@ function buildDecorationSet(view: EditorView): DecorationSet {
   if (!(paper instanceof HTMLElement)) return DecorationSet.empty;
 
   const metrics = readPageMetrics(paper);
-  const units = collectLayoutUnits(view);
-  const targets = dedupeGapTargets(
-    computeAutoPageGapTargets(
-      units,
-      metrics.pageContentHeight,
-      metrics.interPageSpacing,
-      metrics.marginTop
-    )
+  const units = measureNaturalLayout(view, paper);
+  const result = paginateNaturalLayout(
+    units,
+    metrics.pageContentHeight,
+    metrics.interPageSpacing,
+    metrics.marginTop
   );
+  const targets = dedupeGapTargets(result.targets);
 
-  applyEditorPageLayout(view, paper, units, targets, metrics);
+  applyEditorPageLayout(view, paper, result.contentEnd, result.pageCount, metrics);
 
   const decorations = targets
     .map((target, index) => createGapDecoration(view, target, index))
@@ -207,12 +287,12 @@ function buildDecorationSet(view: EditorView): DecorationSet {
 function applyEditorPageLayout(
   view: EditorView,
   paper: HTMLElement,
-  units: LayoutUnit[],
-  targets: PageGapTarget[],
+  contentEnd: number,
+  minimumPages: number,
   metrics: ReturnType<typeof readPageMetrics>
 ) {
-  const contentExtent = getContentExtent(units);
-  const minimumPages = resolveMinimumPageCount(units, targets.length);
+  // contentEnd editör köküne göre (üst kenar boşluğu dahil); akış hesabı içerik alanına göre
+  const contentExtent = Math.max(0, contentEnd - metrics.marginTop);
   const { pageCount, minHeightPx } = computeEditorPageLayout(
     contentExtent,
     metrics.pageContentHeight,
@@ -257,7 +337,11 @@ function decorationSetsEqual(a: DecorationSet, b: DecorationSet): boolean {
   if (aa.length !== bb.length) return false;
   return aa.every((deco, index) => {
     const other = bb[index];
-    return deco.from === other?.from && deco.to === other?.to;
+    return (
+      deco.from === other?.from &&
+      deco.to === other?.to &&
+      Math.abs((deco.spec.gapHeight ?? 0) - (other?.spec.gapHeight ?? 0)) < 0.5
+    );
   });
 }
 

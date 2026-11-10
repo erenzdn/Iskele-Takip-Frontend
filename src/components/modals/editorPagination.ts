@@ -16,15 +16,32 @@ export type LayoutUnitKind = 'block' | 'table-row' | 'line';
 export type LayoutUnit = {
   docPos: number;
   height: number;
-  /** ProseMirror köküne göre ölçülen üst konum (px) — margin birleşmesi dahil */
+  /**
+   * ProseMirror köküne göre üst konum (px). Sayfa aralıkları gizliyken ölçülür
+   * ("doğal" yerleşim — PDF'in sayfalamadan önceki akışı ile aynı).
+   */
   offsetTop: number;
   isPageBreak: boolean;
   kind: LayoutUnitKind;
+  /**
+   * Aralık, bloğun İÇİNE (içeriğinden önce) mi yerleşir? Paragraf/başlık/madde içinde
+   * yerleşince bloğun kenar boşlukları değişmez. Kardeş olarak yerleşen aralıkta (widget,
+   * hr…) margin birleşmesi bozulduğundan düzeltme gerekir.
+   */
+  gapInside?: boolean;
+  marginTop?: number;
+  marginBottom?: number;
+  /** h1–h3: PDF'te "break-after: avoid-page" — başlık sayfa sonunda yalnız kalmaz */
+  avoidBreakAfter?: boolean;
+  /** Bir bloğun ilk satırı (satır birimlerinde) — bloklar arası kırılım noktası */
+  startsBlock?: boolean;
 };
 
 export type PageGapTarget = {
   docPos: number;
-  kind: 'block' | 'table-row';
+  kind: 'block' | 'table-row' | 'page-break';
+  /** Eklenecek boşluk: sayfa sonuna kalan alan + alt kenar + sayfa arası + üst kenar */
+  height: number;
 };
 
 export type LineRect = {
@@ -78,104 +95,161 @@ export function resolveMinimumPageCount(
 }
 
 /**
- * Metin bloklarının satır kutularını gruplar (getClientRects).
+ * Bir metin bloğunun satır kutularını ölçer.
+ *
+ * Blok elemanın getClientRects()'i tek bir kutu döndürür; satırları görmek için içeriğin
+ * Range'i kullanılır. Range kutuları yalnızca yazı yüksekliğini (glyph alanı) kapsar; Chrome
+ * ise sayfayı satır kutusuna (line-height) göre böler. Bu yüzden ardışık satırların sınırı
+ * iki glyph kutusunun ortası, ilk/son satırın sınırı da bloğun içerik kenarı kabul edilir.
  */
-export function groupElementLineRects(
-  element: HTMLElement,
-  editorRoot: HTMLElement
-): LineRect[] {
+export function measureTextLines(element: HTMLElement, editorRoot: HTMLElement): LineRect[] {
   const rootRect = editorRoot.getBoundingClientRect();
   const scrollTop = editorRoot.scrollTop;
-  const lineMap = new Map<number, { top: number; bottom: number }>();
+  const range = document.createRange();
+  range.selectNodeContents(element);
 
-  for (const rect of Array.from(element.getClientRects())) {
-    if (rect.width < 1 || rect.height < 1) continue;
+  const buckets: Array<{ top: number; bottom: number }> = [];
+  for (const rect of Array.from(range.getClientRects())) {
+    if (rect.height < 1) continue;
     const top = rect.top - rootRect.top + scrollTop;
     const bottom = top + rect.height;
-    const bucket = Math.round(top / 2) * 2;
-    const existing = lineMap.get(bucket);
-    if (!existing) {
-      lineMap.set(bucket, { top, bottom });
-      continue;
+    // Aynı satırdaki parçalar (farklı biçim, görsel, önizleme) dikeyde çakışır
+    const line = buckets.find((b) => top < b.bottom - 1 && bottom > b.top + 1);
+    if (line) {
+      line.top = Math.min(line.top, top);
+      line.bottom = Math.max(line.bottom, bottom);
+    } else {
+      buckets.push({ top, bottom });
     }
-    existing.top = Math.min(existing.top, top);
-    existing.bottom = Math.max(existing.bottom, bottom);
   }
+  if (buckets.length === 0) return [];
 
-  return Array.from(lineMap.values())
-    .sort((a, b) => a.top - b.top)
-    .map((line) => ({
-      offsetTop: line.top,
-      height: line.bottom - line.top,
-    }));
+  buckets.sort((a, b) => a.top - b.top);
+
+  const style = getComputedStyle(element);
+  const elementRect = element.getBoundingClientRect();
+  const contentTop =
+    elementRect.top - rootRect.top + scrollTop +
+    parseFloat(style.borderTopWidth || '0') + parseFloat(style.paddingTop || '0');
+  const contentBottom =
+    elementRect.bottom - rootRect.top + scrollTop -
+    parseFloat(style.borderBottomWidth || '0') - parseFloat(style.paddingBottom || '0');
+
+  return buckets.map((line, index) => {
+    const top = index === 0 ? contentTop : (buckets[index - 1].bottom + line.top) / 2;
+    const bottom =
+      index === buckets.length - 1 ? contentBottom : (line.bottom + buckets[index + 1].top) / 2;
+    return { offsetTop: top, height: Math.max(0, bottom - top) };
+  });
 }
 
-export function computeAutoPageGapTargets(
+export type PaginationResult = {
+  targets: PageGapTarget[];
+  pageCount: number;
+  /** Aralıklar eklendikten sonra içeriğin bittiği yer (editör köküne göre) */
+  contentEnd: number;
+};
+
+/**
+ * Chrome'un yazdırma (PDF) sayfalamasını doğal yerleşim üzerinde simüle eder ve her
+ * sayfa geçişi için gereken TAM boşluğu hesaplar: sonraki birim bir sonraki sayfanın
+ * içerik başlangıcına (üst kenar boşluğunun hemen altına) oturur — PDF'teki gibi.
+ *
+ * Kurallar (PDF ile aynı):
+ * - Sayfaya sığmayan birim (satır / blok / tablo satırı) sonraki sayfaya geçer.
+ * - Sayfa başındaki birimin üst kenar boşluğu kesilir (unforced break).
+ * - h1–h3'ten hemen sonra kırılım olacaksa başlık da sonraki sayfaya taşınır.
+ * - Manuel sayfa sonundan sonra içerik yeni sayfadan başlar.
+ */
+export function paginateNaturalLayout(
   units: LayoutUnit[],
   pageContentHeight: number,
   interPageSpacingPx: number,
   marginTopPx = 0
-): PageGapTarget[] {
-  if (pageContentHeight <= 0 || units.length === 0) return [];
-
+): PaginationResult {
   const targets: PageGapTarget[] = [];
-  const seen = new Set<string>();
+  if (pageContentHeight <= 0) {
+    return { targets, pageCount: 1, contentEnd: 0 };
+  }
 
-  const pushTarget = (docPos: number, kind: 'block' | 'table-row') => {
-    const key = `${kind}:${docPos}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    targets.push({ docPos, kind });
-    return true;
-  };
+  const pageStep = pageContentHeight + interPageSpacingPx;
+  let pageStart = marginTopPx;
+  let pageCount = 1;
+  let shift = 0;
+  let contentEnd = 0;
+  let prev: { unit: LayoutUnit; top: number } | null = null;
+  let prevSibling: LayoutUnit | null = null;
 
-  const getPageBand = (offsetTop: number, epochStartY: number) => {
-    let pageStartY = epochStartY;
-    let pageEndY = pageStartY + pageContentHeight;
-
-    while (offsetTop >= pageEndY + 0.5) {
-      const gapEndY = pageEndY + interPageSpacingPx;
-      if (offsetTop < gapEndY - 0.5) {
-        return { pageStartY, pageEndY, inGap: true, gapEndY };
-      }
-      pageStartY = gapEndY;
-      pageEndY = pageStartY + pageContentHeight;
+  const gapHeightFor = (unit: LayoutUnit, top: number, nextPageStart: number) => {
+    let height = nextPageStart - top;
+    if (!unit.gapInside && unit.kind === 'block') {
+      // Kardeş aralık, önceki bloğun alt ve bu bloğun üst boşluğunu ayırır (birleşme biter);
+      // PDF'te ise sayfa başındaki üst boşluk kesilir.
+      height -= Math.min(prevSibling?.marginBottom ?? 0, unit.marginTop ?? 0) + (unit.marginTop ?? 0);
     }
-
-    return { pageStartY, pageEndY, inGap: false, gapEndY: pageEndY };
+    return Math.max(0, height);
   };
-
-  let epochStartY = marginTopPx;
-  let lastGapPageEndY = -1;
 
   for (const unit of units) {
     if (unit.isPageBreak) {
-      epochStartY = unit.offsetTop + Math.max(unit.height, interPageSpacingPx);
-      lastGapPageEndY = -1;
+      const top = unit.offsetTop + shift;
+      const nextPageStart = pageStart + pageStep * Math.max(1, Math.ceil((top - pageStart + 0.5) / pageStep));
+      const height = Math.max(0, nextPageStart - top);
+      targets.push({ docPos: unit.docPos, kind: 'page-break', height });
+      shift += height - unit.height;
+      pageCount += Math.round((nextPageStart - pageStart) / pageStep);
+      pageStart = nextPageStart;
+      prev = null;
+      prevSibling = null;
       continue;
     }
 
     if (unit.height <= 0.5) continue;
 
-    const gapKind: 'block' | 'table-row' =
-      unit.kind === 'table-row' ? 'table-row' : 'block';
-
-    const band = getPageBand(unit.offsetTop, epochStartY);
-
-    const relativeTop = unit.offsetTop - band.pageStartY;
+    let top = unit.offsetTop + shift;
+    const relativeTop = top - pageStart;
     const overflows = relativeTop + unit.height > pageContentHeight + 0.5;
-    const needsGap =
-      band.inGap || (overflows && (unit.kind === 'line' || relativeTop > 0.5 || unit.height > pageContentHeight));
 
-    if (!needsGap) continue;
-    if (band.pageEndY === lastGapPageEndY) continue;
+    if (overflows && relativeTop > 0.5) {
+      let breakUnit = unit;
+      let breakTop = top;
+      const isBlockBoundary = unit.kind !== 'line' || unit.startsBlock;
+      if (
+        isBlockBoundary &&
+        prev?.unit.avoidBreakAfter &&
+        prev.top - pageStart > 0.5 &&
+        !targets.some((t) => t.docPos === prev!.unit.docPos)
+      ) {
+        breakUnit = prev.unit;
+        breakTop = prev.top;
+      }
 
-    if (pushTarget(unit.docPos, gapKind)) {
-      lastGapPageEndY = band.pageEndY;
+      const nextPageStart = pageStart + pageStep;
+      const height = gapHeightFor(breakUnit, breakTop, nextPageStart);
+      targets.push({
+        docPos: breakUnit.docPos,
+        kind: breakUnit.kind === 'table-row' ? 'table-row' : 'block',
+        height,
+      });
+      shift += height;
+      top += height;
+      pageStart = nextPageStart;
+      pageCount += 1;
     }
+
+    // Sayfadan uzun birim (dev görsel/satır): PDF onu sayfalara böler; editör bölemez,
+    // yalnızca kapladığı sayfaları sayarız.
+    while (top + unit.height > pageStart + pageContentHeight + 0.5 && unit.height > pageContentHeight) {
+      pageStart += pageStep;
+      pageCount += 1;
+    }
+
+    contentEnd = Math.max(contentEnd, top + unit.height);
+    prev = { unit, top };
+    if (unit.kind !== 'line' || unit.startsBlock) prevSibling = unit;
   }
 
-  return targets;
+  return { targets, pageCount, contentEnd };
 }
 
 export function parseCssLengthToPx(value: string, context: HTMLElement): number {
@@ -264,7 +338,9 @@ export function gapTargetsEqual(a: PageGapTarget[], b: PageGapTarget[]): boolean
   if (a.length !== b.length) return false;
   return a.every(
     (target, index) =>
-      target.docPos === b[index]?.docPos && target.kind === b[index]?.kind
+      target.docPos === b[index]?.docPos &&
+      target.kind === b[index]?.kind &&
+      Math.abs(target.height - (b[index]?.height ?? 0)) < 0.5
   );
 }
 

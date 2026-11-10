@@ -1,5 +1,6 @@
 import type { Editor } from '@tiptap/core';
-import { Table } from '@tiptap/extension-table';
+import { Table, TableView } from '@tiptap/extension-table';
+import type { Node as ProseMirrorNode } from '@tiptap/pm/model';
 import { TableCell } from '@tiptap/extension-table-cell';
 import { TableHeader } from '@tiptap/extension-table-header';
 
@@ -201,10 +202,11 @@ function buildImageExportStyle(
     parts.push(`height: ${asString.endsWith('px') ? asString : `${asString}px`}`);
   }
 
+  // Editördeki yerleşimle aynı (CustomImageExtension.applyEditorImageLayout): 8px yan boşluk
   if (align === 'left') {
-    parts.push('float: left', 'margin-right: 1.5rem', 'margin-bottom: 0.5rem', 'display: inline-block');
+    parts.push('float: left', 'margin: 0 8px 0 0', 'display: inline-block');
   } else if (align === 'right') {
-    parts.push('float: right', 'margin-left: 1.5rem', 'margin-bottom: 0.5rem', 'display: inline-block');
+    parts.push('float: right', 'margin: 0 0 0 8px', 'display: inline-block');
   } else if (align === 'center') {
     parts.push('display: block', 'margin-left: auto', 'margin-right: auto', 'clear: both');
   } else {
@@ -421,7 +423,42 @@ export function ensureLayoutTablesBorderless(editor: Editor) {
   }
 }
 
+/**
+ * TipTap'ın TableView'ı tabloyu kendisi çizer ve renderHTML'deki class/data-no-border'ı
+ * uygulamaz; bu yüzden çizgisiz (düzen) tablolar editörde dış kenarlıkla görünüyordu,
+ * PDF'te ise kenarlıksız. Editördeki tabloyu PDF ile aynı işaretlerle çiziyoruz.
+ */
+function applyTableBorderMarkers(table: HTMLTableElement, node: ProseMirrorNode) {
+  if (isBorderlessTable(node.attrs)) {
+    table.classList.add('border-none');
+    table.setAttribute('data-no-border', 'true');
+  } else {
+    table.classList.remove('border-none');
+    table.removeAttribute('data-no-border');
+  }
+}
+
+export class DocumentTableView extends TableView {
+  constructor(node: ProseMirrorNode, cellMinWidth: number) {
+    super(node, cellMinWidth);
+    applyTableBorderMarkers(this.table, node);
+  }
+
+  update(node: ProseMirrorNode) {
+    const updated = super.update(node);
+    if (updated) applyTableBorderMarkers(this.table, node);
+    return updated;
+  }
+}
+
 export const CustomTable = Table.extend({
+  addOptions() {
+    const parent = this.parent?.();
+    return {
+      ...(parent as NonNullable<typeof parent>),
+      View: DocumentTableView,
+    };
+  },
   addAttributes() {
     return {
       ...this.parent?.(),

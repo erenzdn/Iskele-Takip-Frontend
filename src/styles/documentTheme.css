@@ -11,6 +11,28 @@
   line-height: 1.5;
   color: #0f172a;
   background: #ffffff;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0;
+  /* Editör sayfalaması paragrafı satır satır böler; PDF de öyle yapsın (varsayılan 2/2 değil) */
+  orphans: 1;
+  widows: 1;
+}
+
+/*
+ * Editör (ProseMirror) metni white-space: break-spaces ile gösterir; art arda boşluklar
+ * ve satır sonu boşlukları korunur. PDF'te de aynı olmalı, yoksa boşlukla hizalanan
+ * metinler kayar. Yalnızca metin bloklarına uygulanır (tablo/widget HTML girintisi etkilenmez).
+ */
+.doc-root p,
+.doc-root h1,
+.doc-root h2,
+.doc-root h3,
+.doc-root h4,
+.doc-root h5,
+.doc-root h6 {
+  white-space: pre-wrap;
+  white-space: break-spaces;
+  overflow-wrap: break-word;
 }
 .doc-root *,
 .doc-root *::before,
@@ -120,14 +142,12 @@
 
 .doc-root img[data-align="left"] {
   float: left;
-  margin-right: 1.5rem;
-  margin-bottom: 0.5rem;
+  margin: 0 8px 0 0;
   display: inline-block;
 }
 .doc-root img[data-align="right"] {
   float: right;
-  margin-left: 1.5rem;
-  margin-bottom: 0.5rem;
+  margin: 0 0 0 8px;
   display: inline-block;
 }
 .doc-root img[data-align="center"] {
@@ -175,6 +195,12 @@
   margin-right: 0 !important;
 }
 
+/* Yalnızca widget içeren paragrafın yerini alan blok (editörde .editor-widget-preview) */
+.doc-root .doc-widget {
+  display: block;
+  margin: 10px 0;
+}
+
 .doc-root .page-break {
   page-break-after: always;
   break-after: page;
@@ -204,9 +230,25 @@
   background-color: #eee !important;
 }
 
-.doc-root img {
-  max-width: 100%;
-  height: auto;
+.doc-root table.widget-table {
+  margin: 10px 0;
+}
+.doc-root table.widget-table thead tr {
+  background: #f0f0f0;
+}
+.doc-root table.widget-table thead tr.widget-table-header-dark {
+  background: #1a3c5e;
+  color: #ffffff;
+}
+.doc-root table.widget-table tfoot tr {
+  background: #f0f0f0;
+  font-weight: 700;
+}
+.doc-root table.widget-table tbody tr.widget-zebra {
+  background: #f7f9fc;
+}
+.doc-root table.widget-table tfoot tr.widget-total-row-accent td {
+  border-top: 2px solid #1a3c5e;
 }
 
 .doc-root tr,
@@ -222,4 +264,9 @@
 .doc-root h2,
 .doc-root h3 {
   break-after: avoid-page;
+}
+
+.doc-root img {
+  max-width: 100%;
+  height: auto;
 }

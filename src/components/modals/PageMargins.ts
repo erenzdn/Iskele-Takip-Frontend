@@ -43,9 +43,35 @@ export function withPageMargins(content: any, pageMargins: PageMargins) {
   };
 }
 
+/**
+ * Kenar boşluğu kaydedilmemiş (eski) şablonlar PDF'te her zaman 15mm ile basılır
+ * (IskeleTakipAPI documentGenerator.normalizePageMargins). Editör de aynısını göstermeli.
+ */
+export const LEGACY_PAGE_MARGINS: PageMargins = {
+  top: 15,
+  bottom: 15,
+  left: 15,
+  right: 15,
+};
+
 export function getPageMargins(content: unknown): PageMargins {
-  if (!content || typeof content !== 'object') return DEFAULT_PAGE_MARGINS;
-  return normalizePageMargins((content as { pageMargins?: unknown }).pageMargins);
+  const raw = content && typeof content === 'object'
+    ? (content as { pageMargins?: unknown }).pageMargins
+    : undefined;
+  if (!raw || typeof raw !== 'object') return LEGACY_PAGE_MARGINS;
+
+  const sides = raw as Partial<Record<keyof PageMargins, unknown>>;
+  const side = (value: unknown) => {
+    const number = typeof value === 'number' ? value : Number(value);
+    // Backend geçersiz kenarı 15mm'e çeker; aynı kural
+    return Number.isFinite(number) && number >= 0 && number <= 100 ? number : 15;
+  };
+  return {
+    top: side(sides.top),
+    bottom: side(sides.bottom),
+    left: side(sides.left),
+    right: side(sides.right),
+  };
 }
 
 export function getPageMarginsPaperStyle(pageMargins: PageMargins): Record<string, string> {

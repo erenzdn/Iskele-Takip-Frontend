@@ -1,6 +1,7 @@
 import { Extension, type Editor } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet } from '@tiptap/pm/view';
+import type { Mark } from '@tiptap/pm/model';
 import type { DocumentPreviewContext, DocumentPreviewSample } from '../../constants/documentPreviewSampleData';
 import { getLocalDocumentPreviewSample } from '../../constants/documentPreviewSampleData';
 import {
@@ -19,7 +20,13 @@ export type EditorWidgetPreviewOptions = {
 };
 
 type WidgetBlock = { key: DocumentWidgetKey; from: number; to: number };
-type PlaceholderInline = { key: string; from: number; to: number; value: string };
+type PlaceholderInline = {
+  key: string;
+  from: number;
+  to: number;
+  value: string;
+  marks: readonly Mark[];
+};
 
 function findWidgetParagraphs(doc: Editor['state']['doc']): WidgetBlock[] {
   const widgets: WidgetBlock[] = [];
@@ -47,11 +54,26 @@ function findPlaceholderRanges(
 
   doc.descendants((node, pos) => {
     if (!node.isTextblock) return;
+    if (!node.textContent.includes('{{')) return;
 
-    const text = node.textContent;
-    if (!text.includes('{{')) return;
+    // textContent satır sonu (hardBreak) ve görsel gibi metin dışı satır içi düğümleri saymaz,
+    // ama bunlar belgede 1 konum kaplar. Karakter → belge konumu eşlemesini düğüm düğüm
+    // kuruyoruz; aksi halde bu düğümlerden sonraki alanların önizlemesi kayıyordu.
+    let text = '';
+    const positions: number[] = [];
+    node.forEach((child, offset) => {
+      const childPos = pos + 1 + offset;
+      if (child.isText && child.text) {
+        for (let i = 0; i < child.text.length; i++) {
+          text += child.text[i];
+          positions.push(childPos + i);
+        }
+      } else {
+        text += '￼';
+        positions.push(childPos);
+      }
+    });
 
-    const blockStart = pos + 1;
     let match: RegExpExecArray | null;
     PLACEHOLDER_PATTERN.lastIndex = 0;
 
@@ -60,9 +82,12 @@ function findPlaceholderRanges(
       if (isDocumentWidgetKey(key)) continue;
       if (placeholders[key] === undefined) continue;
 
-      const from = blockStart + match.index;
-      const to = from + match[0].length;
-      results.push({ key, from, to, value: placeholders[key] });
+      const from = positions[match.index];
+      const to = positions[match.index + match[0].length - 1] + 1;
+      // Önizleme, alanın ilk karakterinin biçimini (kalın, yazı boyutu…) taşısın; PDF'te
+      // değer aynı biçimli metnin yerine geçer.
+      const marks = doc.nodeAt(from)?.marks ?? [];
+      results.push({ key, from, to, value: placeholders[key], marks });
     }
   });
 
@@ -71,7 +96,7 @@ function findPlaceholderRanges(
 
 function createWidgetPreviewElement(html: string, widgetKey: string): HTMLElement {
   const wrapper = document.createElement('div');
-  wrapper.className = 'editor-widget-preview doc-root';
+  wrapper.className = 'editor-widget-preview doc-widget';
   wrapper.setAttribute('contenteditable', 'false');
   wrapper.setAttribute('data-widget-key', widgetKey);
   wrapper.setAttribute('aria-label', `Önizleme: ${widgetKey}`);
@@ -124,7 +149,8 @@ function buildPreviewDecorations(
         () => createPlaceholderPreviewElement(placeholder.value, placeholder.key),
         {
           side: -1,
-          key: `editor-placeholder-${placeholder.key}-${placeholder.from}`,
+          marks: placeholder.marks,
+          key: `editor-placeholder-${placeholder.key}-${placeholder.from}-${JSON.stringify(placeholder.marks.map((m) => m.toJSON()))}`,
         }
       )
     );

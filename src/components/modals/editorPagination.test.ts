@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
-  computeAutoPageGapTargets,
   computeEditorPageLayout,
+  paginateNaturalLayout,
   type LayoutUnit,
 } from './editorPagination';
 
@@ -10,22 +10,28 @@ function unit(
   height: number,
   offsetTop: number,
   kind: 'block' | 'table-row' | 'line' = 'block',
-  isPageBreak = false
+  extra: Partial<LayoutUnit> = {}
 ): LayoutUnit {
-  return { docPos, height, offsetTop, isPageBreak, kind };
+  return { docPos, height, offsetTop, isPageBreak: false, kind, gapInside: true, ...extra };
 }
 
-describe('computeAutoPageGapTargets', () => {
+// Sayfa içerik yüksekliği 800, sayfalar arası (alt kenar + boşluk + üst kenar) 36, üst kenar 0
+const PAGE = 800;
+const SPACING = 36;
+
+describe('paginateNaturalLayout', () => {
   it('tek sayfaya sığan içerikte aralık eklemez', () => {
-    expect(
-      computeAutoPageGapTargets([unit(1, 200, 0), unit(2, 300, 200)], 800, 36)
-    ).toEqual([]);
+    const result = paginateNaturalLayout([unit(1, 200, 0), unit(2, 300, 200)], PAGE, SPACING);
+    expect(result.targets).toEqual([]);
+    expect(result.pageCount).toBe(1);
   });
 
-  it('taşan bloğu yeni sayfaya iter', () => {
-    expect(
-      computeAutoPageGapTargets([unit(1, 760, 0), unit(2, 80, 760)], 800, 36, 0)
-    ).toEqual([{ docPos: 2, kind: 'block' }]);
+  it('taşan bloğu sonraki sayfanın tam başına iter (sayfa sonundaki artık alan dahil)', () => {
+    const result = paginateNaturalLayout([unit(1, 760, 0), unit(2, 80, 760)], PAGE, SPACING);
+    // 40px artık alan + 36px sayfa arası
+    expect(result.targets).toEqual([{ docPos: 2, kind: 'block', height: 76 }]);
+    expect(result.contentEnd).toBe(836 + 80);
+    expect(result.pageCount).toBe(2);
   });
 
   it('tablo satırını yeni sayfaya iter', () => {
@@ -35,54 +41,63 @@ describe('computeAutoPageGapTargets', () => {
       unit(11, 40, 740, 'table-row'),
       unit(12, 40, 780, 'table-row'),
     ];
-    expect(computeAutoPageGapTargets(units, 800, 36)).toEqual([
-      { docPos: 12, kind: 'table-row' },
+    expect(paginateNaturalLayout(units, PAGE, SPACING).targets).toEqual([
+      { docPos: 12, kind: 'table-row', height: 56 },
     ]);
   });
 
-  it('manuel sayfa sonundan sonra sayacı sıfırlar', () => {
-    expect(
-      computeAutoPageGapTargets(
-        [unit(1, 700, 0), unit(2, 36, 700, 'block', true), unit(3, 500, 736)],
-        800,
-        36,
-        0
-      )
-    ).toEqual([]);
+  it('paragrafı satır satır böler', () => {
+    const result = paginateNaturalLayout(
+      [
+        unit(1, 18, 770, 'line', { startsBlock: true }),
+        unit(2, 18, 788, 'line'),
+        unit(3, 18, 806, 'line'),
+      ],
+      PAGE,
+      SPACING
+    );
+    expect(result.targets).toEqual([{ docPos: 2, kind: 'block', height: 48 }]);
   });
 
-  it('liste maddelerinde margin birikimini offsetTop ile doğru hesaplar', () => {
-    // 12 madde ~66px, 13. madde sayfa sonuna taşar
-    const units = Array.from({ length: 13 }, (_, i) => {
-      const itemHeight = 66;
-      const listMargin = 8;
-      const offsetTop = listMargin + i * itemHeight;
-      return unit(i + 1, itemHeight, offsetTop);
-    });
-    expect(computeAutoPageGapTargets(units, 800, 36)).toEqual([
-      { docPos: 13, kind: 'block' },
-    ]);
+  it('sonraki sayfalardaki kırılımları da sayfa başına hizalar', () => {
+    const units = Array.from({ length: 100 }, (_, i) => unit(i + 1, 30, i * 30));
+    const { targets } = paginateNaturalLayout(units, PAGE, SPACING);
+    // Sayfaya 26 blok sığar (780px), 27. blok taşar
+    expect(targets.map((t) => t.docPos)).toEqual([27, 53, 79]);
+    expect(targets.every((t) => t.height === 20 + SPACING)).toBe(true);
   });
 
-  it('taşan satırı sonraki sayfaya iter', () => {
-    expect(
-      computeAutoPageGapTargets(
-        [
-          unit(1, 18, 780, 'line'),
-          unit(2, 18, 798, 'line'),
-          unit(3, 18, 816, 'line'),
-        ],
-        800,
-        36,
-        0
-      )
-    ).toEqual([{ docPos: 2, kind: 'block' }]);
+  it('manuel sayfa sonundan sonra içerik yeni sayfadan başlar', () => {
+    const result = paginateNaturalLayout(
+      [unit(1, 300, 0), { ...unit(2, 1, 300), isPageBreak: true }, unit(3, 500, 301)],
+      PAGE,
+      SPACING
+    );
+    expect(result.targets).toEqual([{ docPos: 2, kind: 'page-break', height: 536 }]);
+    expect(result.pageCount).toBe(2);
+    expect(result.contentEnd).toBe(836 + 500);
   });
 
-  it('sayfa aralığına düşen satırı sonraki sayfaya iter', () => {
-    expect(
-      computeAutoPageGapTargets([unit(1, 18, 810, 'line')], 800, 36, 0)
-    ).toEqual([{ docPos: 1, kind: 'block' }]);
+  it('başlık sayfa sonunda yalnız kalmaz (break-after: avoid-page)', () => {
+    const { targets } = paginateNaturalLayout(
+      [unit(1, 740, 0), unit(2, 30, 740, 'block', { avoidBreakAfter: true }), unit(3, 60, 770)],
+      PAGE,
+      SPACING
+    );
+    expect(targets).toEqual([{ docPos: 2, kind: 'block', height: 96 }]);
+  });
+
+  it('kardeş aralıkta sayfa başındaki üst boşluğu keser', () => {
+    const { targets } = paginateNaturalLayout(
+      [
+        unit(1, 750, 0, 'block', { marginBottom: 2 }),
+        unit(2, 80, 760, 'block', { gapInside: false, marginTop: 10 }),
+      ],
+      PAGE,
+      SPACING
+    );
+    // hedef üst = 836; doğal üst 760; birleşen boşluk ayrılır (-2) ve üst boşluk kesilir (-10)
+    expect(targets).toEqual([{ docPos: 2, kind: 'block', height: 64 }]);
   });
 });
 
