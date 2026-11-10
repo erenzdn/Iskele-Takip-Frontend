@@ -6,13 +6,46 @@
  */
 .doc-root {
   box-sizing: border-box;
-  font-family: Arial, 'Liberation Sans', Helvetica, sans-serif;
+  /*
+   * Arimo: Arial ile metrik olarak birebir aynı. Editör (@fontsource/arimo paketi) ve PDF
+   * (documentFonts.js ile gömülü) AYNI font dosyasını kullanır; sistem fontuna bırakılınca
+   * Windows Arial ↔ Linux Liberation Sans farkı satır/sayfa kırılımlarını kaydırıyordu.
+   */
+  font-family: 'Arimo', Arial, 'Liberation Sans', Helvetica, sans-serif;
   font-size: 16px;
   line-height: 1.5;
   color: #0f172a;
   background: #ffffff;
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0;
+  /*
+   * Yalıtım: kalıtımla gelen metin özellikleri tarayıcı varsayılanına sabitlenir. Editör
+   * uygulama içinde (Tailwind preflight, uygulama CSS'i) çizilir, PDF boş bir sayfada;
+   * belge alanı dışarıdan hiçbir şey devralmamalı.
+   */
+  font-style: normal;
+  font-weight: 400;
+  font-stretch: normal;
+  font-variant-caps: normal;
+  font-variant-numeric: normal;
+  font-variant-east-asian: normal;
+  font-kerning: normal;
+  font-optical-sizing: auto;
+  font-variation-settings: normal;
+  font-synthesis: none;
+  text-rendering: auto;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-indent: 0;
+  text-transform: none;
+  text-align: start;
+  direction: ltr;
+  tab-size: 8;
+  hyphens: manual;
+  word-break: normal;
+  line-break: auto;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
   /* Editör sayfalaması paragrafı satır satır böler; PDF de öyle yapsın (varsayılan 2/2 değil) */
   orphans: 1;
   widows: 1;
@@ -95,6 +128,7 @@
 .doc-root pre,
 .doc-root code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 1em;
 }
 .doc-root pre {
   background: #f1f5f9;
@@ -112,6 +146,7 @@
   table-layout: fixed;
   width: 100%;
   margin: 0;
+  text-indent: 0;
   border: 2px solid #0f172a;
 }
 .doc-root td,
@@ -269,4 +304,6 @@
 .doc-root img {
   max-width: 100%;
   height: auto;
+  /* Tailwind preflight img'yi "vertical-align: middle" yapar; tarayıcı varsayılanı baseline */
+  vertical-align: baseline;
 }

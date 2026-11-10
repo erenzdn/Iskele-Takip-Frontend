@@ -2,6 +2,7 @@ import { useEffect } from 'react';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const STYLE_TAG_ID = 'doc-theme-remote';
+export const DOCUMENT_THEME_UPDATED_EVENT = 'doc-theme-updated';
 
 /**
  * Backend'deki kanonik belge stil sayfasını (IskeleTakipAPI/src/services/documentStyles.js)
@@ -28,7 +29,11 @@ function fetchAndInjectDocumentTheme(): Promise<void> {
         styleEl.id = STYLE_TAG_ID;
         document.head.appendChild(styleEl);
       }
-      styleEl.textContent = css;
+      if (styleEl.textContent !== css) {
+        styleEl.textContent = css;
+        // Editör sayfalaması yeni CSS ile yeniden ölçsün (EditorPaginationExtension dinler)
+        window.dispatchEvent(new Event(DOCUMENT_THEME_UPDATED_EVENT));
+      }
     })
     .catch((error) => {
       console.warn('Kanonik belge stil sayfası alınamadı, paketlenmiş yedek kullanılıyor.', error);

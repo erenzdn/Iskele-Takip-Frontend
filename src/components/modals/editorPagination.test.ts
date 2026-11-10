@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   computeEditorPageLayout,
   paginateNaturalLayout,
+  pdfFragmentainerHeight,
   type LayoutUnit,
 } from './editorPagination';
 
@@ -121,5 +122,32 @@ describe('computeEditorPageLayout', () => {
       pageCount: 2,
       minHeightPx: 1636,
     });
+  });
+});
+
+describe('PDF sayfa geometrisi', () => {
+  it('Chrome gibi sayfa içerik yüksekliğini tam piksele yukarı yuvarlar', () => {
+    // 297mm − 15mm − 15mm = 1009,13px → PDF'te 1010px sığar (ölçüldü)
+    expect(pdfFragmentainerHeight(1009.134)).toBe(1010);
+    expect(pdfFragmentainerHeight(934)).toBe(934);
+  });
+
+  it('kesirli sayfa sınırına taşan ama tam piksele sığan satırı aynı sayfada tutar', () => {
+    const units = [unit(1, 990, 0), unit(2, 19.5, 990)];
+    const editorOnly = paginateNaturalLayout(units, 1009.134, SPACING);
+    expect(editorOnly.targets).toHaveLength(1);
+    const pdfLike = paginateNaturalLayout(units, 1009.134, SPACING, 0, pdfFragmentainerHeight(1009.134));
+    expect(pdfLike.targets).toEqual([]);
+  });
+
+  it('kararı PDF ölçümüyle verir, boşluğu ekrandaki konuma göre hesaplar', () => {
+    // Ekran ölçeği %125: ekranda satırlar daha kısa (ince çizgiler); PDF'te ikinci satır taşar
+    const units = [
+      unit(1, 400, 0, 'table-row', { visualOffsetTop: 0 }),
+      unit(2, 401, 400, 'table-row', { visualOffsetTop: 398 }),
+    ];
+    const result = paginateNaturalLayout(units, PAGE, SPACING);
+    // PDF: 400 + 401 = 801 > 800 → kırılım; ekranda satır 398'de → 800 − 398 + 36
+    expect(result.targets).toEqual([{ docPos: 2, kind: 'table-row', height: 438 }]);
   });
 });

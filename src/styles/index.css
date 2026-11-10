@@ -524,6 +524,9 @@ button.addendum-badge {
   border-radius: 2px;
   /* padding yok: genişlik PDF'teki düz metinle aynı kalsın; vurgu yalnızca gölge ile */
   box-shadow: 0 0 0 1px rgba(15, 118, 110, 0.12);
+  /* ProseMirror [contenteditable=false] { white-space: normal } kuralını ez: PDF'te değer
+     paragrafın içinde break-spaces ile dizilir (art arda boşluklar korunur) */
+  white-space: break-spaces;
   pointer-events: none;
   user-select: none;
 }
@@ -599,7 +602,9 @@ button.addendum-badge {
 .template-editor-paper .ProseMirror .page-break {
   position: relative;
   display: block;
-  height: 0;
+  /* auto: yükseklik ::before dolgusundan gelir. Kanonik CSS'teki "height: 0" burada kalırsa
+     dolgu taşar ama sonraki içeriği itmez → sayfa sonundan sonrası editörde aynı sayfada kalır. */
+  height: auto;
   margin: 0 calc(-1 * var(--page-margin-right, 0mm)) 0 calc(-1 * var(--page-margin-left, 0mm));
   padding: 0;
   border: none;

@@ -1,0 +1,1799 @@
+{
+  "type": "doc",
+  "content": [
+    {
+      "type": "table",
+      "attrs": {
+        "class": "border-none",
+        "data-no-border": "true",
+        "noBorder": true
+      },
+      "content": [
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  200
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "imageResize",
+                      "attrs": {
+                        "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNDAiIGhlaWdodD0iMTIwIj48cmVjdCB3aWR0aD0iMjQwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iIzFhM2M1ZSIvPjwvc3ZnPg==",
+                        "width": 120,
+                        "containerStyle": "width: 120px; height: auto; cursor: pointer;",
+                        "wrapperStyle": "display: flex;",
+                        "align": "left"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  480
+                ]
+              },
+              "content": [
+                {
+                  "type": "heading",
+                  "attrs": {
+                    "level": 2,
+                    "textAlign": "center"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "KİRALAMA SÖZLEŞMESİ"
+                    }
+                  ]
+                },
+                {
+                  "type": "paragraph",
+                  "attrs": {
+                    "textAlign": "center"
+                  },
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Sözleşme No: {{sozlesmeNo}}"
+                    },
+                    {
+                      "type": "hardBreak"
+                    },
+                    {
+                      "type": "text",
+                      "text": "Tarih: {{bugunTarihi}}"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph"
+    },
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 1
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Taraflar"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiraya veren ile "
+        },
+        {
+          "type": "text",
+          "text": "{{musteriAdi}}",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": " ("
+        },
+        {
+          "type": "text",
+          "text": "Vergi No: {{musteriVergiNo}}"
+        },
+        {
+          "type": "text",
+          "text": ") arasında, aşağıdaki şartlarla "
+        },
+        {
+          "type": "text",
+          "text": "{{santiyeAdi}}",
+          "marks": [
+            {
+              "type": "italic"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": " şantiyesi için iskele kiralama sözleşmesi yapılmıştır. Adres: {{musteriAdres}}."
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. "
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. ",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "12px"
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Önemli: ",
+          "marks": [
+            {
+              "type": "bold"
+            },
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "20px"
+              }
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. ",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "14px"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "lineHeight": "1.5",
+        "textAlign": "justify"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. "
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "lineHeight": "2",
+        "textAlign": "right"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. "
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "imageResize",
+          "attrs": {
+            "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNDAiIGhlaWdodD0iMTIwIj48cmVjdCB3aWR0aD0iMjQwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iIzFhM2M1ZSIvPjwvc3ZnPg==",
+            "width": 160,
+            "containerStyle": "width: 160px; height: auto; cursor: pointer;",
+            "wrapperStyle": "display: flex;",
+            "align": "right"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. "
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 2
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Malzeme Listesi"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "{{malzemeTablosu}}"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Boşluklarla    hizalanmış     metin:    A      B       C"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Sekme\tile\thizalanmış\tmetin"
+        }
+      ]
+    },
+    {
+      "type": "bulletList",
+      "content": [
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Madde 1: Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenl"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Madde 2: Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde k"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Madde 3: Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybol"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Madde 4: Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar gör"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "orderedList",
+      "attrs": {
+        "start": 1
+      },
+      "content": [
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Numaralı madde 1: Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenl"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Numaralı madde 2: Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenl"
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "listItem",
+          "content": [
+            {
+              "type": "paragraph",
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Numaralı madde 3: Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenl"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 3
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Ödeme Koşulları"
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "content": [
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableHeader",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  120
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Başlık 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableHeader",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  360
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Başlık 2"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableHeader",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  200
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Başlık 3"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  120
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 2 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  360
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 2 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  200
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 2 hücre 3"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  120
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 3 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  360
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 3 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  200
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 3 hücre 3"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  120
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 4 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  360
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 4 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  200
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 4 hücre 3"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  120
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 5 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  360
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 5 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  200
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 5 hücre 3"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  120
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 6 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  360
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 6 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": [
+                  200
+                ]
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 6 hücre 3"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph"
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "lineHeight": "1.15"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. ",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "11px"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "imageResize",
+          "attrs": {
+            "src": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSIyNDAiIGhlaWdodD0iMTIwIj48cmVjdCB3aWR0aD0iMjQwIiBoZWlnaHQ9IjEyMCIgZmlsbD0iIzFhM2M1ZSIvPjwvc3ZnPg==",
+            "width": 200,
+            "containerStyle": "width: 200px; height: auto; cursor: pointer;",
+            "wrapperStyle": "display: flex;",
+            "align": "center"
+          }
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "attrs": {
+        "lineHeight": "1"
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. "
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 2
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Genel Hükümler"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "1) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde k",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "18px"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "2) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, ç"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "3) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde g"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "4) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "18px"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "5) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. "
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "6) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin k"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "7) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görme",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "18px"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "8) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerin"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "9) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "10) ",
+          "marks": [
+            {
+              "type": "bold"
+            }
+          ]
+        },
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; ma",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "18px"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "pageBreak"
+    },
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 1
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Ek-1 İade Tablosu"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "{{iadeTablosu}}"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. "
+        }
+      ]
+    },
+    {
+      "type": "table",
+      "content": [
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableHeader",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Başlık 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableHeader",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Başlık 2"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 2 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 2 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 3 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 3 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 4 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 4 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 5 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 5 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 6 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 6 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 7 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 7 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 8 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 8 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 9 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 9 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 10 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 10 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 11 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 11 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 12 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 12 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 13 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 13 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        },
+        {
+          "type": "tableRow",
+          "content": [
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 14 hücre 1"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "type": "tableCell",
+              "attrs": {
+                "colspan": 1,
+                "rowspan": 1,
+                "colwidth": null
+              },
+              "content": [
+                {
+                  "type": "paragraph",
+                  "content": [
+                    {
+                      "type": "text",
+                      "text": "Satır 14 hücre 2 uzun açıklama metni burada kırılabilir"
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiraya Veren"
+        },
+        {
+          "type": "text",
+          "text": "                                                  "
+        },
+        {
+          "type": "text",
+          "text": "Kiracı: {{musteriAdi}}"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. ",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "9px"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "type": "heading",
+      "attrs": {
+        "level": 2
+      },
+      "content": [
+        {
+          "type": "text",
+          "text": "Son"
+        }
+      ]
+    },
+    {
+      "type": "paragraph",
+      "content": [
+        {
+          "type": "text",
+          "text": "Kiracı, kiraladığı iskele malzemelerini sözleşmede belirtilen şantiye adresinde, iş güvenliği mevzuatına uygun şekilde kullanmayı; malzemelerin kaybolması, çalınması veya hasar görmesi halinde güncel liste fiyatı üzerinden bedelini ödemeyi kabul ve taahhüt eder. ",
+          "marks": [
+            {
+              "type": "textStyle",
+              "attrs": {
+                "fontSize": "24px"
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

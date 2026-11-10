@@ -3,6 +3,12 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles/index.css';
 import './styles/documentTheme.css';
+// Belge fontu — PDF (IskeleTakipAPI documentFonts.js) aynı paketin aynı sürümünü gömer.
+// Ağırlık/stil listesi orada da aynı olmalı: 400, 700, 400-italic, 700-italic.
+import '@fontsource/arimo/400.css';
+import '@fontsource/arimo/700.css';
+import '@fontsource/arimo/400-italic.css';
+import '@fontsource/arimo/700-italic.css';
 import { applyInitialTheme } from './store/themeStore';
 import { apiClient } from './services/apiClient';
 

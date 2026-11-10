@@ -1,6 +1,7 @@
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, EditorView } from '@tiptap/pm/view';
+import { DOCUMENT_THEME_UPDATED_EVENT } from '../../hooks/useDocumentTheme';
 import {
   computeEditorPageLayout,
   dedupeGapTargets,
@@ -81,7 +82,8 @@ function readMargins(element: HTMLElement) {
 function collectTextBlockUnits(
   view: EditorView,
   element: HTMLElement,
-  editorDom: HTMLElement
+  editorDom: HTMLElement,
+  resolveLinePositions: boolean
 ): LayoutUnit[] {
   const contentStart = resolveDomPos(view, element);
   if (contentStart == null) return [];
@@ -116,7 +118,7 @@ function collectTextBlockUnits(
 
   return lines.map((line, index) => ({
     docPos:
-      index === 0
+      index === 0 || !resolveLinePositions
         ? contentStart
         : findDocumentPosAtLine(
             view,
@@ -137,7 +139,7 @@ function collectTextBlockUnits(
   }));
 }
 
-function collectLayoutUnits(view: EditorView): LayoutUnit[] {
+function collectLayoutUnits(view: EditorView, resolveLinePositions = true): LayoutUnit[] {
   const editorDom = view.dom as HTMLElement;
   const units: LayoutUnit[] = [];
 
@@ -207,7 +209,7 @@ function collectLayoutUnits(view: EditorView): LayoutUnit[] {
     }
 
     if (TEXT_BLOCK_TAGS.has(child.tagName)) {
-      units.push(...collectTextBlockUnits(view, child, editorDom));
+      units.push(...collectTextBlockUnits(view, child, editorDom, resolveLinePositions));
       continue;
     }
 
@@ -252,10 +254,48 @@ function createGapDecoration(view: EditorView, target: PageGapTarget, index: num
   });
 }
 
+/**
+ * Sayfalama için doğal (aralıksız) yerleşimi ölçer.
+ *
+ * Windows ekran ölçeği %100 değilse (ör. %125) Chromium yerleşimi fiziksel piksellerde yapar:
+ * 1px tablo çizgisi 0,8px'e iner, satırlar PDF'tekinden kısa ölçülür ve sayfa sonu kararları
+ * PDF'ten ayrışır (metin kırılımı etkilenmez). Bu durumda kağıda geçici olarak
+ * "zoom: 1/devicePixelRatio" verilip yerleşim PDF'teki (DSF=1) gibi yeniden ölçülür: kırılım
+ * kararları bu ölçümle, eklenecek boşluklar ise ekrandaki konumla hesaplanır.
+ */
 function measureNaturalLayout(view: EditorView, paper: HTMLElement): LayoutUnit[] {
   paper.classList.add(MEASURING_CLASS);
   try {
-    return collectLayoutUnits(view);
+    const visual = collectLayoutUnits(view);
+    const dpr = window.devicePixelRatio || 1;
+    if (Math.abs(dpr - 1) < 0.001) return visual;
+
+    const widthBefore = paper.getBoundingClientRect().width;
+    const previousZoom = paper.style.getPropertyValue('zoom');
+    paper.style.setProperty('zoom', String(1 / dpr));
+    let pdfLike: LayoutUnit[];
+    let scale: number;
+    try {
+      scale = widthBefore / paper.getBoundingClientRect().width;
+      pdfLike = collectLayoutUnits(view, false);
+    } finally {
+      if (previousZoom) paper.style.setProperty('zoom', previousZoom);
+      else paper.style.removeProperty('zoom');
+    }
+
+    // Chromium 120 (Electron 28) ölçümleri yakınlaştırılmamış birimlerle döndürür (scale = 1).
+    // Standart CSS zoom'lu sürümlerde (Chromium 128+) ölçek değişir; o zaman güvenli yola dön.
+    const consistent =
+      Math.abs(scale - 1) < 0.001 &&
+      pdfLike.length === visual.length &&
+      pdfLike.every((unit, index) => unit.kind === visual[index].kind && unit.isPageBreak === visual[index].isPageBreak);
+    if (!consistent) return visual;
+
+    return pdfLike.map((unit, index) => ({
+      ...unit,
+      docPos: visual[index].docPos,
+      visualOffsetTop: visual[index].offsetTop,
+    }));
   } finally {
     paper.classList.remove(MEASURING_CLASS);
   }
@@ -271,7 +311,8 @@ function buildDecorationSet(view: EditorView): DecorationSet {
     units,
     metrics.pageContentHeight,
     metrics.interPageSpacing,
-    metrics.marginTop
+    metrics.marginTop,
+    metrics.fragmentainerHeight
   );
   const targets = dedupeGapTargets(result.targets);
 
@@ -417,14 +458,30 @@ export const EditorPagination = Extension.create({
           const paper = view.dom.closest('.template-editor-paper');
           if (paper instanceof HTMLElement) resizeObserver?.observe(paper);
 
+          // Belge fontu (Arimo) veya kanonik CSS sonradan yüklenince satır yükseklikleri ve
+          // kırılımlar değişir; boyut değişmese bile (ResizeObserver tetiklenmez) yeniden ölç.
+          let destroyed = false;
+          const remeasure = () => {
+            if (destroyed) return;
+            refinePass = 0;
+            schedule();
+          };
+          const fonts = typeof document !== 'undefined' ? document.fonts : undefined;
+          fonts?.ready.then(remeasure).catch(() => {});
+          fonts?.addEventListener('loadingdone', remeasure);
+          window.addEventListener(DOCUMENT_THEME_UPDATED_EVENT, remeasure);
+
           return {
             update() {
               refinePass = 0;
               schedule();
             },
             destroy() {
+              destroyed = true;
               cancelAnimationFrame(frame);
               resizeObserver?.disconnect();
+              fonts?.removeEventListener('loadingdone', remeasure);
+              window.removeEventListener(DOCUMENT_THEME_UPDATED_EVENT, remeasure);
             },
           };
         },

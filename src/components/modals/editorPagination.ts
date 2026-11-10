@@ -9,6 +9,12 @@ export type PageMetrics = {
   marginTop: number;
   marginBottom: number;
   interPageSpacing: number;
+  /**
+   * PDF'te bir sayfaya sığan içerik yüksekliği. Chrome yazdırırken sayfa içerik alanını tam
+   * piksele YUKARI yuvarlar (ölçüm: 15/15mm → 1009,13px değil 1010px). Sayfa sonundaki satırın
+   * hangi sayfaya düşeceği bununla belirlenir; görsel sayfa adımı ise kesin mm değeriyle kalır.
+   */
+  fragmentainerHeight: number;
 };
 
 export type LayoutUnitKind = 'block' | 'table-row' | 'line';
@@ -35,6 +41,12 @@ export type LayoutUnit = {
   avoidBreakAfter?: boolean;
   /** Bir bloğun ilk satırı (satır birimlerinde) — bloklar arası kırılım noktası */
   startsBlock?: boolean;
+  /**
+   * Ekranda görünen (doğal) üst konum. Verilirse offsetTop/height PDF eşdeğeri ölçümdür
+   * (ekran ölçeği ≠ %100 iken; bkz. EditorPaginationExtension) ve kırılım KARARI onlarla
+   * verilir; eklenecek boşluğun yüksekliği ise görünen konuma göre hesaplanır.
+   */
+  visualOffsetTop?: number;
 };
 
 export type PageGapTarget = {
@@ -165,7 +177,8 @@ export function paginateNaturalLayout(
   units: LayoutUnit[],
   pageContentHeight: number,
   interPageSpacingPx: number,
-  marginTopPx = 0
+  marginTopPx = 0,
+  fragmentainerHeight = pageContentHeight
 ): PaginationResult {
   const targets: PageGapTarget[] = [];
   if (pageContentHeight <= 0) {
@@ -175,10 +188,15 @@ export function paginateNaturalLayout(
   const pageStep = pageContentHeight + interPageSpacingPx;
   let pageStart = marginTopPx;
   let pageCount = 1;
+  // shift: PDF eşdeğeri akışta, visualShift: ekrandaki akışta eklenen toplam boşluk.
+  // Sayfa ızgarası (pageStart + k·pageStep) iki akışta aynıdır.
   let shift = 0;
+  let visualShift = 0;
   let contentEnd = 0;
-  let prev: { unit: LayoutUnit; top: number } | null = null;
+  let prev: { unit: LayoutUnit; top: number; visualTop: number } | null = null;
   let prevSibling: LayoutUnit | null = null;
+
+  const visualTopOf = (unit: LayoutUnit) => (unit.visualOffsetTop ?? unit.offsetTop) + visualShift;
 
   const gapHeightFor = (unit: LayoutUnit, top: number, nextPageStart: number) => {
     let height = nextPageStart - top;
@@ -193,10 +211,13 @@ export function paginateNaturalLayout(
   for (const unit of units) {
     if (unit.isPageBreak) {
       const top = unit.offsetTop + shift;
+      const visualTop = visualTopOf(unit);
       const nextPageStart = pageStart + pageStep * Math.max(1, Math.ceil((top - pageStart + 0.5) / pageStep));
       const height = Math.max(0, nextPageStart - top);
-      targets.push({ docPos: unit.docPos, kind: 'page-break', height });
+      const visualHeight = Math.max(0, nextPageStart - visualTop);
+      targets.push({ docPos: unit.docPos, kind: 'page-break', height: visualHeight });
       shift += height - unit.height;
+      visualShift += visualHeight - unit.height;
       pageCount += Math.round((nextPageStart - pageStart) / pageStep);
       pageStart = nextPageStart;
       prev = null;
@@ -207,12 +228,14 @@ export function paginateNaturalLayout(
     if (unit.height <= 0.5) continue;
 
     let top = unit.offsetTop + shift;
+    let visualTop = visualTopOf(unit);
     const relativeTop = top - pageStart;
-    const overflows = relativeTop + unit.height > pageContentHeight + 0.5;
+    const overflows = relativeTop + unit.height > fragmentainerHeight + 0.01;
 
     if (overflows && relativeTop > 0.5) {
       let breakUnit = unit;
       let breakTop = top;
+      let breakVisualTop = visualTop;
       const isBlockBoundary = unit.kind !== 'line' || unit.startsBlock;
       if (
         isBlockBoundary &&
@@ -222,34 +245,44 @@ export function paginateNaturalLayout(
       ) {
         breakUnit = prev.unit;
         breakTop = prev.top;
+        breakVisualTop = prev.visualTop;
       }
 
       const nextPageStart = pageStart + pageStep;
       const height = gapHeightFor(breakUnit, breakTop, nextPageStart);
+      const visualHeight = gapHeightFor(breakUnit, breakVisualTop, nextPageStart);
       targets.push({
         docPos: breakUnit.docPos,
         kind: breakUnit.kind === 'table-row' ? 'table-row' : 'block',
-        height,
+        height: visualHeight,
       });
       shift += height;
+      visualShift += visualHeight;
       top += height;
+      visualTop += visualHeight;
       pageStart = nextPageStart;
       pageCount += 1;
     }
 
     // Sayfadan uzun birim (dev görsel/satır): PDF onu sayfalara böler; editör bölemez,
     // yalnızca kapladığı sayfaları sayarız.
-    while (top + unit.height > pageStart + pageContentHeight + 0.5 && unit.height > pageContentHeight) {
+    while (top + unit.height > pageStart + fragmentainerHeight + 0.01 && unit.height > fragmentainerHeight) {
       pageStart += pageStep;
       pageCount += 1;
     }
 
-    contentEnd = Math.max(contentEnd, top + unit.height);
-    prev = { unit, top };
+    // Yükseklik farkı (ekran ↔ PDF) en fazla birkaç kesirli pikseldir; son sayfa dolgusu için yeterli
+    contentEnd = Math.max(contentEnd, visualTop + unit.height);
+    prev = { unit, top, visualTop };
     if (unit.kind !== 'line' || unit.startsBlock) prevSibling = unit;
   }
 
   return { targets, pageCount, contentEnd };
+}
+
+/** Chrome yazdırma: sayfa içerik alanı tam piksele yukarı yuvarlanır (bkz. PageMetrics). */
+export function pdfFragmentainerHeight(pageContentHeight: number): number {
+  return Math.ceil(pageContentHeight - 0.001);
 }
 
 export function parseCssLengthToPx(value: string, context: HTMLElement): number {
@@ -283,6 +316,7 @@ export function readPageMetrics(paper: HTMLElement): PageMetrics {
     marginTop,
     marginBottom,
     interPageSpacing,
+    fragmentainerHeight: pdfFragmentainerHeight(pageContentHeight),
   };
 }
 
