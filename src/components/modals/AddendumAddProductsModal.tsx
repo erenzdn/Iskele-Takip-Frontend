@@ -25,6 +25,7 @@ import { toast } from '../../hooks/useToast';
 import ProductPickerModal from './ProductPickerModal';
 import StockErrorPanel from '../StockErrorPanel';
 import ContractLinesReferenceDrawer from '../contracts/ContractLinesReferenceDrawer';
+import DataTable from '../DataTable';
 
 type StagingLine = {
   key: string;
@@ -459,7 +460,7 @@ export default function AddendumAddProductsModal({
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-background-border">
-              <table className="w-full text-sm">
+              <DataTable tableId="AddendumAddProductsModal" className="w-full text-sm">
                 <thead>
                   <tr className="text-left text-text-secondary border-b border-background-border bg-background-surface">
                     <th className="px-3 py-2 font-medium">Ürün</th>
@@ -678,7 +679,7 @@ export default function AddendumAddProductsModal({
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
         </div>

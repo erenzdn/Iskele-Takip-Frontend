@@ -15,6 +15,7 @@ import { getWarehouseDeleteErrorMessage } from '../utils/apiError';
 import { resolveWarehouseDeactivateError, type WarehouseDeactivateErrorDialog } from '../utils/warehouseDeactivate';
 import { toast } from '../hooks/useToast';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
+import DataTable from '../components/DataTable';
 
 export default function WarehousesPage() {
   const navigate = useNavigate();
@@ -216,7 +217,7 @@ export default function WarehousesPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-140px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse text-text-primary">
+            <DataTable tableId="WarehousesPage.1" className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Depo Adı</th>
@@ -306,7 +307,7 @@ export default function WarehousesPage() {
                               ) : expandedStock.length === 0 ? (
                                 <div className="text-center py-2 text-text-secondary text-xs">Bu depoda malzeme yok.</div>
                               ) : (
-                                <table className="w-full text-xs border-collapse text-text-primary">
+                                <DataTable tableId="WarehousesPage.2" className="w-full text-xs border-collapse text-text-primary">
                                   <thead>
                                     <tr className="border-b border-background-border">
                                       <th className="text-left py-0.5 px-2 font-medium text-text-secondary bg-background-hover border-r border-background-border">Malzeme</th>
@@ -323,7 +324,7 @@ export default function WarehousesPage() {
                                       </tr>
                                     ))}
                                   </tbody>
-                                </table>
+                                </DataTable>
                               )}
                             </div>
                           </td>
@@ -333,7 +334,7 @@ export default function WarehousesPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>

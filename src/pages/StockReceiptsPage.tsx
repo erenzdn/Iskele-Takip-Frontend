@@ -13,6 +13,7 @@ import { toast } from '../hooks/useToast';
 import { getStockReceiptDeleteErrorMessage } from '../utils/apiError';
 import { canDeleteStockReceipt, isStockReceiptCancelled } from '../utils/stockReceiptPermissions';
 import { PageActions } from '../components/PageActions';
+import DataTable from '../components/DataTable';
 
 const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {
   IN: 'Giriş',
@@ -234,7 +235,7 @@ export default function StockReceiptsPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse text-text-primary">
+            <DataTable tableId="StockReceiptsPage" className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
@@ -336,7 +337,7 @@ export default function StockReceiptsPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>Toplam: {receipts.length} fiş</span>

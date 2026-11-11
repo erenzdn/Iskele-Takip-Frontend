@@ -10,6 +10,7 @@ import { formatMoney, formatShortDateTime } from '../utils/formatters';
 import { toast } from '../hooks/useToast';
 import { getApiErrorMessage } from '../utils/apiError';
 import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
+import DataTable from '../components/DataTable';
 
 type FiltersState = {
   warehouseId: number | '';
@@ -295,7 +296,7 @@ export default function ItemMovementsPage() {
           {/* Desktop / Tablet: Table */}
           <div className="hidden md:block border border-background-border rounded-panel overflow-hidden bg-background-panel">
             <div className="overflow-auto max-h-[calc(100vh-240px)] min-h-[320px]">
-              <table className="w-full text-xs border-collapse text-text-primary">
+              <DataTable tableId="ItemMovementsPage.1" className="w-full text-xs border-collapse text-text-primary">
                 <thead className="sticky top-0 z-10 border-b border-background-border">
                   <tr>
                     <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover" />
@@ -400,7 +401,7 @@ export default function ItemMovementsPage() {
                               <div className="text-xs font-medium text-text-primary mb-2">İade Detayları</div>
                               {row.returns?.length ? (
                                 <div className="overflow-auto">
-                                  <table className="w-full text-xs border-collapse">
+                                  <DataTable tableId="ItemMovementsPage.2" className="w-full text-xs border-collapse">
                                     <thead className="border-b border-background-border">
                                       <tr>
                                         <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
@@ -446,7 +447,7 @@ export default function ItemMovementsPage() {
                                         );
                                       })}
                                     </tbody>
-                                  </table>
+                                  </DataTable>
                                 </div>
                               ) : (
                                 <div className="text-sm text-text-secondary">Henüz iade yapılmamış.</div>
@@ -463,7 +464,7 @@ export default function ItemMovementsPage() {
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           </div>
 

@@ -21,6 +21,7 @@ import { toast } from '../../hooks/useToast';
 import AddendumDetailModal from '../modals/AddendumDetailModal';
 import AddendumReverseModal from '../modals/AddendumReverseModal';
 import PdfPreviewModal from '../modals/PdfPreviewModal';
+import DataTable from '../DataTable';
 
 interface ContractAddendaPanelProps {
   contractId: number;
@@ -291,7 +292,7 @@ export default function ContractAddendaPanel({
         </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-background-border">
-          <table className="w-full text-sm">
+          <DataTable tableId="ContractAddendaPanel" className="w-full text-sm">
             <thead>
               <tr className="text-left text-text-secondary bg-background-panel border-b border-background-border">
                 <th className="px-3 py-2.5 font-medium">No</th>
@@ -457,7 +458,7 @@ export default function ContractAddendaPanel({
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       )}
 

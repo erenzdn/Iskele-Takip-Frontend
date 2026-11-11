@@ -4,6 +4,7 @@ import {
   isStockErrorMessage,
   parseStockError,
 } from '../utils/parseStockError';
+import DataTable from './DataTable';
 
 interface StockErrorPanelProps {
   message: string;
@@ -45,7 +46,7 @@ export default function StockErrorPanel({
           </p>
           {parsed && parsed.warehouses.length > 0 && (
             <div className="overflow-x-auto">
-              <table className="w-full text-xs border-collapse mt-1">
+              <DataTable tableId="StockErrorPanel" className="w-full text-xs border-collapse mt-1">
                 <thead>
                   <tr className="text-red-200/80 border-b border-red-800/50">
                     <th className="text-left py-1 pr-3 font-medium">Depo</th>
@@ -66,7 +67,7 @@ export default function StockErrorPanel({
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
           {parsed && parsed.warehouses.length === 0 && message.includes('Depo stok durumu:') && (

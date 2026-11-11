@@ -5,6 +5,7 @@ import { inventoryService } from '../services/inventoryService';
 import { PriceTier, Inventory } from '../models';
 import EmptyState from '../components/EmptyState';
 import PriceTierDetailModal from '../components/modals/PriceTierDetailModal';
+import DataTable from '../components/DataTable';
 
 export default function PriceTiersPage() {
   const [priceTiers, setPriceTiers] = useState<PriceTier[]>([]);
@@ -132,7 +133,7 @@ export default function PriceTiersPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse">
+            <DataTable tableId="PriceTiersPage" className="w-full text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Malzeme</th>
@@ -160,7 +161,7 @@ export default function PriceTiersPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>Toplam: {priceTiers.length} tarife</span>

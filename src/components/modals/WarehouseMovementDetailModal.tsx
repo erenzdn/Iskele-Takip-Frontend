@@ -2,6 +2,7 @@ import { createPortal } from 'react-dom';
 import { usePortalTarget } from '../tabs/TabContext';
 import { XIcon, PackageIcon, FileTextIcon, UserIcon, BuildingsIcon } from '@phosphor-icons/react';
 import { WarehouseMovementRow, resolveContractQuoteType } from '../../models';
+import DataTable from '../DataTable';
 
 interface WarehouseMovementDetailModalProps {
   row: WarehouseMovementRow | null;
@@ -190,7 +191,7 @@ export default function WarehouseMovementDetailModal({
             </div>
           ) : (
             <div className="overflow-x-auto">
-              <table className="w-full text-sm border-collapse text-left">
+              <DataTable tableId="WarehouseMovementDetailModal" className="w-full text-sm border-collapse text-left">
                 <thead className="bg-background-hover/50 text-xs text-text-secondary uppercase tracking-wider border-b border-background-border">
                   <tr>
                     <th className="py-3 px-4 font-medium">İade Tarihi</th>
@@ -226,7 +227,7 @@ export default function WarehouseMovementDetailModal({
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
         </div>

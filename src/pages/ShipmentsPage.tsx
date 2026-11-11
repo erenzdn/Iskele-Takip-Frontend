@@ -17,6 +17,7 @@ import { contractPath } from '../utils/entityNavigation';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import { useShipmentPdfPreview } from '../hooks/useShipmentPdfPreview';
+import DataTable from '../components/DataTable';
 
 type ViewMode = 'awaiting' | 'shipments';
 /** Türetilmiş fiş durumu filtresi: teslim durumu yalnızca aktif fişler için anlamlı */
@@ -209,7 +210,7 @@ export default function ShipmentsPage() {
         ) : (
           <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel">
             <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[200px]">
-              <table className="w-full text-xs border-collapse text-text-primary">
+              <DataTable tableId="ShipmentsPage.1" className="w-full text-xs border-collapse text-text-primary">
                 <thead className="sticky top-0 z-10 border-b border-background-border">
                   <tr>
                     <th className={th}>Sözleşme</th>
@@ -260,7 +261,7 @@ export default function ShipmentsPage() {
                     </tr>
                   ))}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           </div>
         )
@@ -273,7 +274,7 @@ export default function ShipmentsPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel">
           <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[200px]">
-            <table className="w-full text-xs border-collapse text-text-primary">
+            <DataTable tableId="ShipmentsPage.2" className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className={th}>Fiş no</th>
@@ -348,7 +349,7 @@ export default function ShipmentsPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         </div>
       )}

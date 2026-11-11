@@ -14,6 +14,7 @@ import {
   validateShipmentDraft,
   type ShipmentDraftLine,
 } from '../../utils/shipment';
+import DataTable from '../DataTable';
 
 interface CreateShipmentModalProps {
   contract: Contract;
@@ -268,7 +269,7 @@ export default function CreateShipmentModal({ contract, lines, onClose, onCreate
                   </div>
                 </div>
                 <div className="overflow-x-auto rounded border border-background-border">
-                  <table className="w-full text-xs">
+                  <DataTable tableId="CreateShipmentModal" className="w-full text-xs">
                     <thead className="bg-background-elevated text-text-secondary">
                       <tr>
                         <th className="text-left px-2 py-1.5">Malzeme</th>
@@ -309,7 +310,7 @@ export default function CreateShipmentModal({ contract, lines, onClose, onCreate
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
                 <p className="text-[11px] text-text-secondary mt-1">
                   Parçalı sevk için miktarı düşürün veya boş bırakın. Her sevk partisi kendi tarihinden itibaren en az 30 gün faturalanır.

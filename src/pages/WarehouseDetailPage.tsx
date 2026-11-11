@@ -31,6 +31,7 @@ import { getApiErrorMessage, getWarehouseDeleteErrorMessage } from '../utils/api
 import { useAuthStore } from '../store/authStore';
 import { canDeleteWarehouse } from '../utils/warehousePermissions';
 import { resolveWarehouseDeactivateError, type WarehouseDeactivateErrorDialog } from '../utils/warehouseDeactivate';
+import DataTable from '../components/DataTable';
 
 export default function WarehouseDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -638,7 +639,7 @@ export default function WarehouseDetailPage() {
               ) : (
                 <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-panel border border-background-border">
                   <div className="min-h-0 flex-1 overflow-auto">
-                    <table className="w-full border-collapse text-xs">
+                    <DataTable tableId="WarehouseDetailPage.1" className="w-full border-collapse text-xs">
                       <thead className="sticky top-0 z-10 border-b border-background-border">
                         <tr>
                           <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Malzeme</th>
@@ -704,7 +705,7 @@ export default function WarehouseDetailPage() {
                           );
                         })}
                       </tbody>
-                    </table>
+                    </DataTable>
                   </div>
                   <div className="shrink-0 border-t border-background-border bg-background-hover px-2 py-1 text-xs text-text-secondary">
                     {filteredStock.length} çeşit
@@ -804,7 +805,7 @@ export default function WarehouseDetailPage() {
                   ) : (
                     <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-panel border border-background-border">
                       <div className="min-h-0 flex-1 overflow-auto">
-                        <table className="w-full border-collapse text-xs">
+                        <DataTable tableId="WarehouseDetailPage.2" className="w-full border-collapse text-xs">
                           <thead className="sticky top-0 z-10 border-b border-background-border">
                             <tr>
                               <th className="bg-background-hover px-2 py-1.5 text-left font-medium text-text-secondary">Malzeme</th>
@@ -828,7 +829,7 @@ export default function WarehouseDetailPage() {
                               </tr>
                             ))}
                           </tbody>
-                        </table>
+                        </DataTable>
                       </div>
                       <div className="shrink-0 border-t border-background-border bg-background-hover px-2 py-1 text-xs text-text-secondary">
                         {filteredRentedItems.length} çeşit kirada · {filteredRentedQty.toLocaleString('tr-TR')} adet
@@ -979,7 +980,7 @@ export default function WarehouseDetailPage() {
                 <>
                   <div className="hidden min-h-0 flex-1 flex-col overflow-hidden rounded-panel border border-background-border md:flex">
                     <div ref={movementsScrollRef} className="min-h-0 flex-1 overflow-auto">
-                      <table className="w-full border-collapse text-xs">
+                      <DataTable tableId="WarehouseDetailPage.3" className="w-full border-collapse text-xs">
                         <thead className="sticky top-0 z-10 border-b border-background-border">
                           <tr>
                             <th className="bg-background-hover px-2 py-1.5" />
@@ -1069,7 +1070,7 @@ export default function WarehouseDetailPage() {
                             );
                           })}
                         </tbody>
-                      </table>
+                      </DataTable>
                     </div>
                     <div className="shrink-0 border-t border-background-border bg-background-hover px-2 py-1 text-xs text-text-secondary">
                       {(movementsData?.movements ?? []).length} hareket satırı

@@ -23,6 +23,7 @@ import {
 } from '../constants/tableColumns';
 import { useContextMenu, useContextMenuHandlers, type ContextMenuActionHandlers, type ScaffoldRowTarget } from '../context-menu';
 import { PageActions } from '../components/PageActions';
+import DataTable from '../components/DataTable';
 
 type StockStatusFilter = 'all' | 'onRent' | 'available';
 
@@ -830,8 +831,8 @@ export default function InventoryPage() {
         <div
           className={`border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col ${listLoading ? 'opacity-80' : ''}`}
         >
-          <div className="overflow-y-auto overflow-x-hidden max-h-[calc(100vh-180px)] min-h-[320px]">
-            <table className="w-full table-fixed text-xs border-collapse">
+          <div className="overflow-y-auto overflow-x-auto max-h-[calc(100vh-180px)] min-h-[320px]">
+            <DataTable tableId="InventoryPage" className="w-full table-fixed text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   {selectionMode ? (
@@ -1081,7 +1082,7 @@ export default function InventoryPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span className="flex items-center gap-2">

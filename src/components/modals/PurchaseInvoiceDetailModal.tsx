@@ -22,6 +22,7 @@ import {
   validateRequired,
   validateTaxNumber,
 } from '../../utils/validation';
+import DataTable from '../DataTable';
 
 interface PurchaseInvoiceDetailModalProps {
   invoice: PurchaseInvoice | null;
@@ -684,7 +685,7 @@ export default function PurchaseInvoiceDetailModal({
             )}
           </div>
           <div className="overflow-auto flex-1 min-h-0">
-            <table className="w-full text-sm border-collapse text-text-primary">
+            <DataTable tableId="PurchaseInvoiceDetailModal" className="w-full text-sm border-collapse text-text-primary">
               <thead className="sticky top-0 bg-background-surface z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left px-3 py-1.5 font-semibold text-text-secondary text-xs">Ürün</th>
@@ -775,7 +776,7 @@ export default function PurchaseInvoiceDetailModal({
                   </td>
                 </tr>
               </tbody>
-            </table>
+            </DataTable>
           </div>
         </section>
 

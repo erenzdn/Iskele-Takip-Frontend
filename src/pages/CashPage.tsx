@@ -17,6 +17,7 @@ import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import { PageActions } from '../components/PageActions';
+import DataTable from '../components/DataTable';
 
 const LIMIT = 20;
 
@@ -391,7 +392,7 @@ export default function CashPage() {
                         Kayıtlı kasa hesabı yok.
                       </div>
                     ) : (
-                      <table className="w-full text-xs border-collapse text-text-primary">
+                      <DataTable tableId="CashPage.1" className="w-full text-xs border-collapse text-text-primary">
                         <thead className="border-b border-background-border bg-background-hover">
                           <tr>
                             <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
@@ -468,7 +469,7 @@ export default function CashPage() {
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </DataTable>
                     )}
                   </div>
                 )}
@@ -498,7 +499,7 @@ export default function CashPage() {
                         Kayıtlı banka hesabı yok.
                       </div>
                     ) : (
-                      <table className="w-full text-xs border-collapse text-text-primary">
+                      <DataTable tableId="CashPage.2" className="w-full text-xs border-collapse text-text-primary">
                         <thead className="border-b border-background-border bg-background-hover">
                           <tr>
                             <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border/60">
@@ -563,7 +564,7 @@ export default function CashPage() {
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </DataTable>
                     )}
                   </div>
                 )}
@@ -639,7 +640,7 @@ export default function CashPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-280px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse text-text-primary">
+            <DataTable tableId="CashPage.3" className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
@@ -771,7 +772,7 @@ export default function CashPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
 
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">

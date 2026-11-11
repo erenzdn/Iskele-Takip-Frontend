@@ -10,6 +10,7 @@ import { toast } from '../../hooks/useToast';
 import PdfPreviewModal from '../modals/PdfPreviewModal';
 import CancelReturnSlipModal from '../modals/CancelReturnSlipModal';
 import AttachmentsPanel from '../attachments/AttachmentsPanel';
+import DataTable from '../DataTable';
 
 interface ContractReturnSlipsPanelProps {
   contractId: number;
@@ -104,7 +105,7 @@ export default function ContractReturnSlipsPanel({
         <p className="text-xs text-text-secondary">Bu sözleşmede henüz iade fişi kesilmedi.</p>
       ) : (
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <DataTable tableId="ContractReturnSlipsPanel.1" className="w-full text-xs">
             <thead className="text-text-secondary">
               <tr className="border-b border-background-border">
                 <th className="text-left py-1.5 pr-2">Fiş no</th>
@@ -187,7 +188,7 @@ export default function ContractReturnSlipsPanel({
                     {expanded && (
                       <tr className="bg-background-panel/60">
                         <td colSpan={11} className="px-3 py-2">
-                          <table className="w-full text-[11px] mb-2">
+                          <DataTable tableId="ContractReturnSlipsPanel.2" className="w-full text-[11px] mb-2">
                             <tbody>
                               {(s.items ?? []).map((it) => (
                                 <tr key={it.ReturnSlipItemId}>
@@ -206,7 +207,7 @@ export default function ContractReturnSlipsPanel({
                                 </tr>
                               ))}
                             </tbody>
-                          </table>
+                          </DataTable>
                           <div className="text-[11px] text-text-secondary space-x-3">
                             {s.DeliveredByName && <span>Teslim eden: {s.DeliveredByName}</span>}
                             {s.VehiclePlate && <span>Plaka: {s.VehiclePlate}</span>}
@@ -237,7 +238,7 @@ export default function ContractReturnSlipsPanel({
                 );
               })}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       )}
 

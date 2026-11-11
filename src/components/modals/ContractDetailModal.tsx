@@ -90,6 +90,7 @@ import {
 import { LINE_ITEM_COL, LINE_ITEM_COL_SPAN } from '../../constants/lineItemTableColumns';
 import { normalizeContractDetailPrice } from '../../utils/linePriceMetadata';
 import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
+import DataTable from '../DataTable';
 
 type InventoryLineItem = Extract<ContractLineItem, { kind: 'inventory' }>;
 
@@ -2679,7 +2680,7 @@ export default function ContractDetailModal({
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-auto">
-              <table className="table-data-grid table-excel-rows text-text-primary">
+              <DataTable tableId="ContractDetailModal.1" className="table-data-grid table-excel-rows text-text-primary">
                 <thead>
                   <tr>
                     <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
@@ -2792,7 +2793,7 @@ export default function ContractDetailModal({
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
           <div className="mt-3 flex shrink-0 gap-2">
@@ -2831,7 +2832,7 @@ export default function ContractDetailModal({
           ) : (
             <>
               <div className="min-h-0 flex-1 overflow-auto">
-                <table className="table-data-grid table-excel-rows text-text-primary">
+                <DataTable tableId="ContractDetailModal.2" className="table-data-grid table-excel-rows text-text-primary">
                   <thead>
                     <tr>
                       <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
@@ -2967,7 +2968,7 @@ export default function ContractDetailModal({
                       </tr>
                     </tfoot>
                   )}
-                </table>
+                </DataTable>
               </div>
             </>
           )}
@@ -3043,7 +3044,7 @@ export default function ContractDetailModal({
             </div>
           ) : (
             <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border bg-background-panel">
-              <table className="table-data-grid table-excel-rows text-text-primary w-full">
+              <DataTable tableId="ContractDetailModal.3" className="table-data-grid table-excel-rows text-text-primary w-full">
                 <thead>
                   <tr>
                     <th className="text-left w-14">Z</th>
@@ -3117,7 +3118,7 @@ export default function ContractDetailModal({
                     </Fragment>
                   ))}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
         </div>
@@ -3692,7 +3693,7 @@ export default function ContractDetailModal({
               </div>
             </div>
             <div className="overflow-auto flex-1 min-h-0">
-              <table className="table-data-grid table-excel-rows text-text-primary">
+              <DataTable tableId="ContractDetailModal.4" className="table-data-grid table-excel-rows text-text-primary">
                   <thead>
                     <tr>
                       {!isReadOnly && (
@@ -4370,7 +4371,7 @@ export default function ContractDetailModal({
                     })
                     )}
                   </tbody>
-                </table>
+                </DataTable>
             </div>
           </section>
 

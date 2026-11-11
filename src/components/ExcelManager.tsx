@@ -33,6 +33,7 @@ import type {
   InventoryCategoryMapping,
   UnmatchedCategoryLookup,
 } from '../types/inventoryExcelImport';
+import DataTable from './DataTable';
 
 export type ExcelModuleType = 'inventory' | 'customers' | 'checks' | 'stockReceipts';
 
@@ -1405,7 +1406,7 @@ export default function ExcelManager({
                   </p>
                 </div>
               ) : (
-                <table className="w-full text-xs border-collapse">
+                <DataTable tableId="ExcelManager" className="w-full text-xs border-collapse">
                   <thead>
                     <tr className="border-b border-background-border text-left text-text-secondary">
                       <th className="py-2 px-2 font-medium w-12 text-center">Satır</th>
@@ -1445,7 +1446,7 @@ export default function ExcelManager({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               )}
             </div>
 

@@ -21,6 +21,7 @@ import {
 } from '../constants/tableColumns';
 import { useContextMenu, useContextMenuHandlers, type CustomerModalInitialTab, type CustomerRowTarget } from '../context-menu';
 import { PageActions } from '../components/PageActions';
+import DataTable from '../components/DataTable';
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -246,8 +247,8 @@ export default function CustomersPage() {
           className={`border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col ${listLoading ? 'opacity-80' : ''}`}
         >
           {/* Sabit yükseklik: viewport - üst alan (~200px). Satır ~20px → 1080p'de ~40, 768p'de ~25 satır görünür */}
-          <div className="overflow-y-auto overflow-x-hidden max-h-[calc(100vh-140px)] min-h-[320px]">
-            <table className="w-full table-fixed text-xs border-collapse text-text-primary">
+          <div className="overflow-y-auto overflow-x-auto max-h-[calc(100vh-140px)] min-h-[320px]">
+            <DataTable tableId="CustomersPage" className="w-full table-fixed text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   {isCustomerColVisible('id') ? (
@@ -382,7 +383,7 @@ export default function CustomersPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span className="flex items-center gap-2">

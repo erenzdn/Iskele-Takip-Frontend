@@ -9,6 +9,7 @@ import { Inventory, MaterialCategory, SubCategory } from '../models';
 import { inventoryService } from '../services/inventoryService';
 import { subcategoryService } from '../services/subcategoryService';
 import { hydrateInventoryCategories } from '../utils/inventoryCategories';
+import DataTable from './DataTable';
 
 type ItemRecord = Inventory & Record<string, unknown>;
 
@@ -596,7 +597,7 @@ export default function ItemPickerPanel({
           className="overflow-auto flex-1 min-h-[280px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           tabIndex={0}
         >
-          <table className="w-full text-sm border-collapse text-text-primary" aria-label={displayMode === 'quote' ? 'Teklif ürün listesi' : 'Sözleşme ürün listesi'}>
+          <DataTable tableId="ItemPickerPanel" className="w-full text-sm border-collapse text-text-primary" aria-label={displayMode === 'quote' ? 'Teklif ürün listesi' : 'Sözleşme ürün listesi'}>
             <thead className="sticky top-0 bg-background-secondary z-10">
               <tr>
                 <th className="text-left px-3 py-2 font-semibold text-text-secondary border-b border-background-border">
@@ -710,7 +711,7 @@ export default function ItemPickerPanel({
                 })
               )}
             </tbody>
-          </table>
+          </DataTable>
         </div>
       </div>
     </div>

@@ -14,6 +14,7 @@ import AttachmentsPanel from '../attachments/AttachmentsPanel';
 import ConfirmDeliveryModal from '../modals/ConfirmDeliveryModal';
 import ConfirmModal from '../modals/ConfirmModal';
 import DeliveryStatusBadge from '../shipments/DeliveryStatusBadge';
+import DataTable from '../DataTable';
 
 interface ContractShipmentsPanelProps {
   contract: Contract;
@@ -162,7 +163,7 @@ export default function ContractShipmentsPanel({ contract, lines, canEdit, onCha
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full text-xs">
+          <DataTable tableId="ContractShipmentsPanel.1" className="w-full text-xs">
             <thead className="text-text-secondary">
               <tr className="border-b border-background-border">
                 <th className="text-left py-1.5 pr-2">Malzeme</th>
@@ -198,7 +199,7 @@ export default function ContractShipmentsPanel({ contract, lines, canEdit, onCha
                 <td className="text-right py-1.5 pl-2">{totals.pending}</td>
               </tr>
             </tbody>
-          </table>
+          </DataTable>
         </div>
       </div>
 
@@ -213,7 +214,7 @@ export default function ContractShipmentsPanel({ contract, lines, canEdit, onCha
           <p className="text-xs text-text-secondary">Bu sözleşme için henüz sevkiyat fişi kesilmedi.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-xs">
+            <DataTable tableId="ContractShipmentsPanel.2" className="w-full text-xs">
               <thead className="text-text-secondary">
                 <tr className="border-b border-background-border">
                   <th className="text-left py-1.5 pr-2">Fiş no</th>
@@ -375,7 +376,7 @@ export default function ContractShipmentsPanel({ contract, lines, canEdit, onCha
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         )}
       </div>

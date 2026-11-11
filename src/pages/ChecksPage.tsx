@@ -10,6 +10,7 @@ import { customerService } from '../services/customerService';
 import CheckDetailModal from '../components/modals/CheckDetailModal';
 import ExcelManager from '../components/ExcelManager';
 import { PageActions } from '../components/PageActions';
+import DataTable from '../components/DataTable';
 
 type DateRange = {
   from: string | null;
@@ -309,7 +310,7 @@ export default function ChecksPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[320px]">
-            <table className="w-full text-xs border-collapse">
+            <DataTable tableId="ChecksPage" className="w-full text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border">
@@ -436,7 +437,7 @@ export default function ChecksPage() {
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>Toplam: {checks.length} çek</span>

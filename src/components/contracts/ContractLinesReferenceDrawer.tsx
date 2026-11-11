@@ -10,6 +10,7 @@ import {
   resolveInventoryForContractLine,
 } from '../../utils/contractLinePeek';
 import { formatInventoryBilingualLabel, formatMoney } from '../../utils/formatters';
+import DataTable from '../DataTable';
 
 type InventoryContractLine = Extract<ContractLineItem, { kind: 'inventory' }>;
 
@@ -146,7 +147,7 @@ export default function ContractLinesReferenceDrawer({
               Aramaya uyan kalem bulunamadı.
             </p>
           ) : (
-            <table className="w-full text-xs">
+            <DataTable tableId="ContractLinesReferenceDrawer" className="w-full text-xs">
               <thead className="sticky top-0 bg-background-surface text-text-secondary border-b border-background-border">
                 <tr>
                   <th className="text-left font-medium px-3 py-2">Ürün</th>
@@ -235,7 +236,7 @@ export default function ContractLinesReferenceDrawer({
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           )}
         </div>
 

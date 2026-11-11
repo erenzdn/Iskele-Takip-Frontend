@@ -63,6 +63,7 @@ import {
 } from '../../utils/linePriceMetadata';
 import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
 import { sortByStoredLineOrder } from '../../utils/lineItemOrder';
+import DataTable from '../DataTable';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -3300,7 +3301,7 @@ export default function QuoteDetailModal({
               </div>
             </div>
             <div className="overflow-auto flex-1 min-h-0">
-              <table className="table-data-grid table-excel-rows text-text-primary">
+              <DataTable tableId="QuoteDetailModal" className="table-data-grid table-excel-rows text-text-primary">
                 <thead>
                   <tr>
                     <th
@@ -3906,7 +3907,7 @@ export default function QuoteDetailModal({
                     })
                   )}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           </section>
 

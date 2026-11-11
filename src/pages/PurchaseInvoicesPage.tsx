@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState';
 import PurchaseInvoiceDetailModal from '../components/modals/PurchaseInvoiceDetailModal';
 import { formatCurrency, formatDate, formatShortDateTime } from '../utils/formatters';
 import { PageActions } from '../components/PageActions';
+import DataTable from '../components/DataTable';
 
 export default function PurchaseInvoicesPage() {
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
@@ -134,7 +135,7 @@ export default function PurchaseInvoicesPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-150px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse text-text-primary">
+            <DataTable tableId="PurchaseInvoicesPage" className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">Fatura No</th>
@@ -178,7 +179,7 @@ export default function PurchaseInvoicesPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>Toplam: {invoices.length} fatura</span>

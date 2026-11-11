@@ -27,6 +27,8 @@ import { inventoryService, ExchangeRateResponse, PricingPresetResponse } from '.
 import { useAuthStore } from '../store/authStore';
 import { useArchivePreferencesStore } from '../store/archivePreferencesStore';
 import { useTableColumnPreferencesStore } from '../store/tableColumnPreferencesStore';
+import { useTableLayoutStore } from '../store/tableLayoutStore';
+import { buildColumnIds, resolveColumnOrder } from '../utils/tableLayout';
 import { useThemeStore } from '../store/themeStore';
 import { isAdminUser } from '../utils/authHelpers';
 import type { LiveExchangeRatesResult } from '../types/electron';
@@ -122,18 +124,24 @@ const CUSTOMER_PREVIEW_ROWS: CustomerMockRow[] = [
 function ColumnPreviewTable<TKey extends string>({
   columns,
   visibility,
+  tableId,
   rows,
   emptyHint,
 }: {
   columns: TableColumnMeta<TKey>[];
   visibility: Record<TKey, boolean>;
+  /** Asıl tablonun DataTable kimliği: önizleme kullanıcının sütun sırasını yansıtır. */
+  tableId: string;
   rows: Array<Record<TKey, ReactNode>>;
   emptyHint: string;
 }) {
-  const visibleColumns = useMemo(
-    () => columns.filter((col) => visibility[col.key]),
-    [columns, visibility]
-  );
+  const savedOrder = useTableLayoutStore((s) => s.layouts[tableId]?.order);
+  const visibleColumns = useMemo(() => {
+    const visible = columns.filter((col) => visibility[col.key]);
+    const ids = buildColumnIds(visible.map((col) => col.label));
+    const ordered = resolveColumnOrder(ids, savedOrder);
+    return ordered.map((id) => visible[ids.indexOf(id)]);
+  }, [columns, visibility, savedOrder]);
   const widths = useMemo(
     () => getVisibleColumnWidths(columns, visibility),
     [columns, visibility]
@@ -983,7 +991,7 @@ export default function SystemSettingsPage() {
               <SettingsSection
                 icon={<ColumnsIcon size={18} weight="duotone" />}
                 title="Tablo Sütunları"
-                description="Listelerde görmek istediğiniz sütunları seçin. Alttaki örnek tabloda seçiminizin nasıl görüneceğini anında inceleyebilirsiniz."
+                description="Listelerde görmek istediğiniz sütunları seçin. Sütunların sırasını ve genişliğini doğrudan her tablonun üzerinde değiştirebilirsiniz: başlığı sürükleyerek taşıyın, iki sütun arasındaki çizgiden (herhangi bir satırda) tutup çekerek genişletin, çizgiye çift tıklayarak içeriğe sığdırın. Başlığa sağ tıklayıp düzeni sıfırlayabilirsiniz."
               />
 
               <SettingsSection
@@ -1025,6 +1033,7 @@ export default function SystemSettingsPage() {
                 <ColumnPreviewTable
                   columns={INVENTORY_TABLE_COLUMNS}
                   visibility={inventoryColumns}
+                  tableId="InventoryPage"
                   rows={INVENTORY_PREVIEW_ROWS}
                   emptyHint="Önizleme için en az bir sütun seçin."
                 />
@@ -1069,6 +1078,7 @@ export default function SystemSettingsPage() {
                 <ColumnPreviewTable
                   columns={CUSTOMER_TABLE_COLUMNS}
                   visibility={customerColumns}
+                  tableId="CustomersPage"
                   rows={CUSTOMER_PREVIEW_ROWS}
                   emptyHint="Önizleme için en az bir sütun seçin."
                 />

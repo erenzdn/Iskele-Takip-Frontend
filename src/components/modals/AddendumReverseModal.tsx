@@ -8,6 +8,7 @@ import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/ap
 import { formatAddendumRefLabel, getChangeTypeLabel } from '../../utils/addendum';
 import { formatDate, formatMoney } from '../../utils/formatters';
 import { toast } from '../../hooks/useToast';
+import DataTable from '../DataTable';
 
 function todayDateInputValue(): string {
   return new Date().toISOString().split('T')[0];
@@ -239,7 +240,7 @@ export default function AddendumReverseModal({
                   </div>
                 ) : (
                   <div className="overflow-x-auto rounded-xl border border-background-border">
-                    <table className="w-full text-sm">
+                    <DataTable tableId="AddendumReverseModal" className="w-full text-sm">
                       <thead>
                         <tr className="text-left text-text-secondary bg-background-main/50 border-b border-background-border">
                           <th className="px-3 py-2 font-medium">Tip</th>
@@ -271,7 +272,7 @@ export default function AddendumReverseModal({
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </DataTable>
                   </div>
                 )}
               </section>

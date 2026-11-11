@@ -29,6 +29,7 @@ import { getUserFacingApiErrorMessage, getWarehouseDeleteErrorMessage } from '..
 import { formatShortDateTime } from '../../utils/formatters';
 import { useAuthStore } from '../../store/authStore';
 import { canDeleteWarehouse, canUpdateWarehouse } from '../../utils/warehousePermissions';
+import DataTable from '../DataTable';
 
 interface WarehouseDetailModalProps {
   warehouse: Warehouse | null;
@@ -574,7 +575,7 @@ export default function WarehouseDetailModal({
                     </div>
                   ) : (
                     <div className="min-h-0 flex-1 overflow-auto rounded-lg border border-background-border">
-                      <table className="w-full text-sm table-compact text-text-primary">
+                      <DataTable tableId="WarehouseDetailModal" className="w-full text-sm table-compact text-text-primary">
                         <thead className="sticky top-0 bg-background-surface">
                           <tr className="border-b border-background-border">
                             <th className="p-2 text-left font-semibold">Ürün</th>
@@ -667,7 +668,7 @@ export default function WarehouseDetailModal({
                             </tr>
                           ))}
                         </tbody>
-                      </table>
+                      </DataTable>
                     </div>
                   )}
                 </SectionCard>

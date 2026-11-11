@@ -19,6 +19,7 @@ import EmptyState from '../components/EmptyState';
 import CustomerSearchField from '../components/CustomerSearchField';
 import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import ReportTemplateEditorModal from '../components/modals/ReportTemplateEditorModal';
+import DataTable from '../components/DataTable';
 
 type ReportType = 'customer' | 'site' | 'global';
 
@@ -513,7 +514,7 @@ export default function RentalMovementReportPage() {
       ) : data && data.items.length > 0 ? (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-340px)] min-h-[280px]">
-            <table className="w-full text-xs border-collapse">
+            <DataTable tableId="RentalMovementReportPage" className="w-full text-xs border-collapse">
               <thead className="sticky top-0 z-10 border-b border-background-border">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover">
@@ -553,7 +554,7 @@ export default function RentalMovementReportPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         </div>
       ) : null}

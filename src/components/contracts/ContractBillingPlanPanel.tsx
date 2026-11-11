@@ -27,6 +27,7 @@ import {
   resolveBillingLineLabel,
   warningLooksPendingAddendum,
 } from '../../utils/billingPlan';
+import DataTable from '../DataTable';
 
 interface ContractBillingPlanPanelProps {
   contractId: number;
@@ -274,7 +275,7 @@ export default function ContractBillingPlanPanel({
             </div>
           ) : (
             <div className="overflow-x-auto rounded-xl border border-background-border">
-              <table className="table-data-grid table-excel-rows text-text-primary min-w-[860px] w-full">
+              <DataTable tableId="ContractBillingPlanPanel.1" className="table-data-grid table-excel-rows text-text-primary min-w-[860px] w-full">
                 <thead>
                   <tr>
                     <th className="text-left w-8" />
@@ -407,7 +408,7 @@ export default function ContractBillingPlanPanel({
                               {period.lines.length === 0 ? (
                                 <p className="text-xs text-text-secondary">Bu dönem için kalem kırılımı yok.</p>
                               ) : (
-                                <table className="w-full text-xs">
+                                <DataTable tableId="ContractBillingPlanPanel.2" className="w-full text-xs">
                                   <thead>
                                     <tr className="text-text-secondary">
                                       <th className="text-left font-medium py-1">Kalem</th>
@@ -433,7 +434,7 @@ export default function ContractBillingPlanPanel({
                                       </tr>
                                     ))}
                                   </tbody>
-                                </table>
+                                </DataTable>
                               )}
                               {period.varianceReasons.length > 0 && (
                                 <div className="mt-3 rounded-md border border-amber-600/30 bg-amber-950/15 px-2.5 py-2">
@@ -474,7 +475,7 @@ export default function ContractBillingPlanPanel({
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           )}
         </section>

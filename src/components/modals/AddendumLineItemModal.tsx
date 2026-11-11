@@ -25,6 +25,7 @@ import { isStockErrorMessage } from '../../utils/parseStockError';
 import { formatInventoryBilingualLabel, formatMoney } from '../../utils/formatters';
 import StockErrorPanel from '../StockErrorPanel';
 import ItemPickerPanel from '../ItemPickerPanel';
+import DataTable from '../DataTable';
 
 type AddKind = 'inventory' | 'manual';
 
@@ -518,7 +519,7 @@ export default function AddendumLineItemModal({
             Depo stok dağılımı
           </div>
           <div className="max-h-36 overflow-y-auto">
-            <table className="w-full text-xs">
+            <DataTable tableId="AddendumLineItemModal" className="w-full text-xs">
               <thead>
                 <tr className="text-text-secondary border-b border-background-border/60">
                   <th className="text-left py-1.5 px-3 font-medium">Depo</th>
@@ -540,7 +541,7 @@ export default function AddendumLineItemModal({
                   );
                 })}
               </tbody>
-            </table>
+            </DataTable>
           </div>
         </div>
       )}

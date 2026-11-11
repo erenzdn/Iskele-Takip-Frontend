@@ -20,6 +20,7 @@ import { useTabTitle } from '../components/tabs/TabContext';
 import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
+import DataTable from '../components/DataTable';
 
 const LIMIT = 20;
 
@@ -474,7 +475,7 @@ export default function CashAccountDetailPage() {
       ) : (
         <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
           <div className="overflow-auto max-h-[calc(100vh-240px)] min-h-[320px]">
-            <table className="w-full text-xs border-collapse text-text-primary">
+            <DataTable tableId="CashAccountDetailPage" className="w-full text-xs border-collapse text-text-primary">
               <thead className="sticky top-0 z-10 border-b border-background-border bg-background-hover">
                 <tr>
                   <th className="text-left py-1 px-2 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0">
@@ -591,7 +592,7 @@ export default function CashAccountDetailPage() {
                   </tr>
                 ))}
               </tbody>
-            </table>
+            </DataTable>
           </div>
           <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
             <span>

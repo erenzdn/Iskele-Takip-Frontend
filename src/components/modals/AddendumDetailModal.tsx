@@ -36,6 +36,7 @@ import AddendumLineItemModal from './AddendumLineItemModal';
 import AddendumAddProductsModal from './AddendumAddProductsModal';
 import AddendumReverseModal from './AddendumReverseModal';
 import ContractLinesReferenceDrawer from '../contracts/ContractLinesReferenceDrawer';
+import DataTable from '../DataTable';
 
 function todayDateInputValue(): string {
   return new Date().toISOString().split('T')[0];
@@ -678,7 +679,7 @@ export default function AddendumDetailModal({
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
+                  <DataTable tableId="AddendumDetailModal" className="w-full text-sm">
                     <thead>
                       <tr className="text-left text-text-secondary border-b border-background-border">
                         <th className="py-2 pr-3 font-medium">Tip</th>
@@ -736,7 +737,7 @@ export default function AddendumDetailModal({
                         </tr>
                       ))}
                     </tbody>
-                  </table>
+                  </DataTable>
                 </div>
               )}
             </section>

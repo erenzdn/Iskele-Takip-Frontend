@@ -6,6 +6,7 @@ import { inventoryService } from '../services/inventoryService';
 import { QuotePackage, QuotePackageDetail, Inventory, Quote } from '../models';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
+import DataTable from '../components/DataTable';
 
 type CreateMode = 'sourceQuote' | 'manual';
 
@@ -343,7 +344,7 @@ export default function QuotePackagesPage({ embedded = false, onPackageCountChan
               </div>
               <div className="text-xs text-text-secondary">Varsayılan iskonto: %{selectedPackage.DefaultDiscount ?? 0}</div>
               <div className="border border-background-border rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
+                <DataTable tableId="QuotePackagesPage" className="w-full text-sm">
                   <thead className="bg-background-hover">
                     <tr>
                       <th className="text-left px-2 py-1">Ürün</th>
@@ -366,7 +367,7 @@ export default function QuotePackagesPage({ embedded = false, onPackageCountChan
                       ))
                     )}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             </div>
           )}

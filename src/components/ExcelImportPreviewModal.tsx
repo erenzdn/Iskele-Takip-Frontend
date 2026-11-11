@@ -17,6 +17,7 @@ import type {
   UnmatchedCategoryLookup,
 } from '../types/inventoryExcelImport';
 import UnmatchedCategoryResolutionPanel from './UnmatchedCategoryResolutionPanel';
+import DataTable from './DataTable';
 
 export interface ExcelPreviewValidRow {
   row: number;
@@ -297,7 +298,7 @@ export default function ExcelImportPreviewModal({
               <p className="text-sm text-text-secondary py-8 text-center">Yüklenebilir satır yok.</p>
             ) : (
               <div className="overflow-x-auto border border-background-border rounded-md">
-                <table className="w-full text-xs border-collapse">
+                <DataTable tableId="ExcelImportPreviewModal" className="w-full text-xs border-collapse">
                   <thead>
                     <tr className="border-b border-background-border text-left text-text-secondary bg-background-muted/40">
                       <th className="py-2 px-2 font-medium w-14 text-center">Satır</th>
@@ -322,7 +323,7 @@ export default function ExcelImportPreviewModal({
                       </tr>
                     ))}
                   </tbody>
-                </table>
+                </DataTable>
               </div>
             ))}
 

@@ -24,6 +24,7 @@ import PdfPreviewModal from './PdfPreviewModal';
 import ProductPickerModal from './ProductPickerModal';
 import SearchableItemCombobox from '../SearchableItemCombobox';
 import ReportTemplateEditorModal from './ReportTemplateEditorModal';
+import DataTable from '../DataTable';
 
 const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {
   IN: 'Giriş',
@@ -372,7 +373,7 @@ export default function StockReceiptDetailModal({
                 <div className="mb-4">
                   <h3 className="text-sm font-medium text-text-secondary mb-2">Kalemler</h3>
                   <div className="border border-background-border rounded overflow-hidden">
-                    <table className="w-full text-xs border-collapse text-text-primary">
+                    <DataTable tableId="StockReceiptDetailModal.1" className="w-full text-xs border-collapse text-text-primary">
                       <thead className="bg-background-surface">
                         <tr>
                           <th className="text-left py-2 px-2 font-medium">Ürün</th>
@@ -389,7 +390,7 @@ export default function StockReceiptDetailModal({
                           </tr>
                         ))}
                       </tbody>
-                    </table>
+                    </DataTable>
                   </div>
                 </div>
 
@@ -576,7 +577,7 @@ export default function StockReceiptDetailModal({
                   ) : (
                     <div className="border border-background-border rounded-lg overflow-visible">
                       <div className="overflow-x-auto">
-                        <table className="w-full text-sm border-collapse text-text-primary">
+                        <DataTable tableId="StockReceiptDetailModal.2" className="w-full text-sm border-collapse text-text-primary">
                         <thead className="bg-background-surface">
                           <tr>
                             <th className="text-left py-2.5 px-3 font-medium text-text-secondary min-w-[260px]">Ürün</th>
@@ -638,7 +639,7 @@ export default function StockReceiptDetailModal({
                             );
                           })}
                         </tbody>
-                      </table>
+                      </DataTable>
                       </div>
                     </div>
                   )}

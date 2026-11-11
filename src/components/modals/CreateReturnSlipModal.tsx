@@ -18,6 +18,7 @@ import {
   RETURN_CONDITIONS,
   type ReturnSlipDraftLine,
 } from '../../utils/returnSlip';
+import DataTable from '../DataTable';
 
 /** Fişe girebilecek sözleşme kalemi (yalnızca sahada malzemesi olanlar) */
 export interface ReturnableLine {
@@ -354,7 +355,7 @@ export default function CreateReturnSlipModal({
               </button>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-xs">
+              <DataTable tableId="CreateReturnSlipModal" className="w-full text-xs">
                 <thead className="text-text-secondary">
                   <tr className="border-b border-background-border">
                     <th className="text-left py-1.5 px-2">Malzeme</th>
@@ -463,7 +464,7 @@ export default function CreateReturnSlipModal({
                     );
                   })}
                 </tbody>
-              </table>
+              </DataTable>
             </div>
           </div>
         </form>

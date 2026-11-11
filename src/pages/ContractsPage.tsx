@@ -38,6 +38,7 @@ import {
   type ContractRowTarget,
   type QuoteRowTarget,
 } from '../context-menu';
+import DataTable from '../components/DataTable';
 
 type TabType = 'active' | 'completed' | 'cancelled' | 'archived' | 'quotes' | 'quotesConverted';
 
@@ -815,7 +816,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     return (
       <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
         <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
-          <table className="w-full text-xs border-collapse text-text-primary">
+          <DataTable tableId="ContractsPage.1" className="w-full text-xs border-collapse text-text-primary">
             <thead className="sticky top-0 z-10 border-b border-background-border">
               <tr>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">ID</th>
@@ -888,7 +889,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               );
               })}
             </tbody>
-          </table>
+          </DataTable>
         </div>
         <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex flex-wrap items-center justify-between gap-2 shrink-0">
           <span>
@@ -931,7 +932,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     return (
       <div className="border border-background-border rounded-panel overflow-hidden bg-background-panel flex flex-col">
         <div className="overflow-auto max-h-[calc(100vh-160px)] min-h-[280px]">
-          <table className="w-full text-xs border-collapse text-text-primary">
+          <DataTable tableId="ContractsPage.2" className="w-full text-xs border-collapse text-text-primary">
             <thead className="sticky top-0 z-10 border-b border-background-border">
               <tr>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">ID</th>
@@ -1012,7 +1013,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                 </tr>
               ))}
             </tbody>
-          </table>
+          </DataTable>
         </div>
         <div className="bg-background-hover border-t border-background-border px-2 py-1 text-xs text-text-secondary flex items-center justify-between shrink-0">
           <span>Toplam: {quotes.length} teklif</span>

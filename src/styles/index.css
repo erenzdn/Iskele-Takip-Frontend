@@ -132,6 +132,38 @@
     -moz-appearance: textfield;
   }
 
+
+  /* DataTable: sürükle-bırak ile taşınabilir / genişletilebilir sütun başlıkları */
+  .ct-th {
+    position: relative;
+    cursor: grab;
+    user-select: none;
+  }
+  .ct-th:active {
+    cursor: grabbing;
+  }
+  .ct-th-static,
+  .ct-th-static:active {
+    cursor: default;
+  }
+  /* Başlığa gelince her sütun sınırında tutamak çizgisi belirir */
+  .ct-th::after {
+    content: '';
+    position: absolute;
+    top: 20%;
+    right: 0;
+    width: 2px;
+    height: 60%;
+    border-radius: 1px;
+    background: var(--color-border-strong);
+    opacity: 0;
+    transition: opacity 0.15s;
+    pointer-events: none;
+  }
+  .ct-table > thead:hover .ct-th::after {
+    opacity: 0.9;
+  }
+
 } /* Close @layer components */
 
 /* TipTap Editor Styles (Outside @layer to ensure application) */
@@ -731,4 +763,64 @@ button.addendum-badge {
 
 .template-editor-paper .ProseMirror .template-image.is-resizing img {
   cursor: inherit;
+}
+
+/* DataTable: sütun sınırına gelince her satırda genişlik imleci */
+.ct-table[data-ct-edge],
+.ct-table[data-ct-edge] * {
+  cursor: col-resize !important;
+}
+/* Kullanıcı genişlik ayarladığında taşan içerik komşu sütuna binmesin */
+.ct-custom > thead > tr > th {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ct-custom > tbody > tr > td {
+  overflow-wrap: anywhere;
+}
+.ct-custom > tbody > tr > td.whitespace-nowrap,
+.ct-custom > tbody > tr > td.truncate {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* Sütun sınırı / bırakma kılavuzu */
+.ct-guide {
+  position: fixed;
+  z-index: 10000;
+  display: none;
+  width: 2px;
+  margin-left: -1px;
+  pointer-events: none;
+  background: var(--color-primary);
+  opacity: 0.55;
+  border-radius: 1px;
+}
+.ct-guide[data-mode='active'] {
+  opacity: 1;
+}
+.ct-guide[data-mode='drop'] {
+  width: 3px;
+  opacity: 1;
+}
+.ct-menu {
+  position: fixed;
+  z-index: 10001;
+  min-width: 190px;
+  padding: 4px;
+  border-radius: 8px;
+  border: 1px solid var(--color-border);
+  background: var(--color-bg-panel);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+.ct-menu button {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border-radius: 6px;
+  text-align: left;
+  font-size: 0.8125rem;
+  color: var(--color-text-primary);
+}
+.ct-menu button:hover {
+  background: var(--color-bg-hover);
 }
