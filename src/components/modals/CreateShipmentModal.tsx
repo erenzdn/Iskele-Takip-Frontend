@@ -79,7 +79,6 @@ export default function CreateShipmentModal({ contract, lines, onClose, onCreate
   }));
 
   const totalToShip = draftLines.reduce((sum, l) => sum + (Number(l.quantityInput) || 0), 0);
-  const today = todayDateInput();
   const contractStartKey = contract.StartDate ? contract.StartDate.slice(0, 10) : '';
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -89,8 +88,8 @@ export default function CreateShipmentModal({ contract, lines, onClose, onCreate
       setError('Çıkış deposunu seçin.');
       return;
     }
-    if (!shipmentDate || shipmentDate > today) {
-      setError('Sevk tarihi bugünden ileri olamaz.');
+    if (!shipmentDate) {
+      setError('Sevk tarihini girin.');
       return;
     }
     const validation = validateShipmentDraft(draftLines);
@@ -169,7 +168,6 @@ export default function CreateShipmentModal({ contract, lines, onClose, onCreate
                     className="input w-full"
                     value={shipmentDate}
                     min={contractStartKey || undefined}
-                    max={today}
                     onChange={(e) => setShipmentDate(e.target.value)}
                     disabled={isSubmitting}
                     required
