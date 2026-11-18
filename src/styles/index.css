@@ -556,12 +556,13 @@ button.addendum-badge {
   width: 100%;
 }
 
-/* Placeholder önizleme — {{musteriAdi}} vb. */
+/*
+ * Placeholder önizleme — {{musteriAdi}} vb. Kaynak metin yerleşimden TAMAMEN çıkar: font-size: 0
+ * ile gizlenen metin görünmez ama satır kırma hesabına katılır; "{{musteriAdi}}'nin" gibi bitişik
+ * ek/noktalamada editör "A.Ş." ile "'nin" arasından kırıyordu, PDF'te ("A.Ş.'nin") kırılmaz.
+ */
 .template-editor-paper .ProseMirror .editor-placeholder-source-hidden {
-  font-size: 0 !important;
-  line-height: 0 !important;
-  color: transparent !important;
-  letter-spacing: 0 !important;
+  display: none !important;
 }
 
 .template-editor-paper .ProseMirror .editor-placeholder-preview {
@@ -613,9 +614,13 @@ button.addendum-badge {
 /* Tablo satırı sayfa geçişi */
 .template-editor-paper .ProseMirror tr.editor-table-page-break > td,
 .template-editor-paper .ProseMirror tr.editor-table-page-break > th {
-  border-top: none;
   /* 8px: kanonik hücre iç boşluğu (documentStyles .doc-root td) */
   padding-top: calc(8px + var(--page-gap-fill, var(--inter-page-spacing)));
+}
+/* Hücre çizgisi (kanonik ::before katmanı) aralıktan sonra, yeni sayfanın başından başlasın */
+.template-editor-paper .ProseMirror tr.editor-table-page-break > td::before,
+.template-editor-paper .ProseMirror tr.editor-table-page-break > th::before {
+  top: calc(var(--page-gap-fill, var(--inter-page-spacing)) - 0.5px);
 }
 
 /* Sayfalama ölçümü: aralıklar gizli, doğal (PDF öncesi) akış ölçülür */

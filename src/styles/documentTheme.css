@@ -117,12 +117,15 @@
 
 .doc-root blockquote {
   padding-left: 1rem;
-  border-left: 3px solid #cbd5e1;
+  /* Çizgi gölgeyle: kenarlık kalınlığı ekran ölçeğinde yuvarlanıp metin genişliğini değiştirirdi */
+  padding-left: calc(1rem + 3px);
+  box-shadow: inset 3px 0 0 #cbd5e1;
   color: #475569;
 }
 .doc-root hr {
-  border: none;
-  border-top: 1px solid #cbd5e1;
+  border: 0;
+  height: 1px;
+  background: #cbd5e1;
   margin: 1rem 0;
 }
 .doc-root pre,
@@ -141,21 +144,62 @@
   text-decoration: underline;
 }
 
+/*
+ * Tablo çizgileri YERLEŞİME GİRMEZ. Chromium border-width'i cihaz pikseline yuvarlar: Windows
+ * ekran ölçeği %125'te 1px çizgi 0,8px, 2px çizgi 1,6px yer kaplar (PDF'te 1px / 2px). Fark hücre
+ * içeriğinin genişliğini ve satır yüksekliklerini değiştirip editörle PDF'in satır kırılımlarını
+ * ayırıyordu. Kalınlık her yerde (satır içi stiller dahil) sıfırlanır; çizgiyi, öğenin kendi
+ * kenarlık stilini ve rengini devralan ::before katmanı çizer ("border: none" → çizgi yok).
+ * Böylece yerleşim her ekran ölçeğinde birebir aynıdır.
+ */
 .doc-root table {
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
   width: 100%;
   margin: 0;
   text-indent: 0;
-  border: 2px solid #0f172a;
+  border: 0 solid #0f172a;
+  border-width: 0 !important;
+  position: relative;
+}
+.doc-root table::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-width: 2px;
+  border-style: inherit;
+  border-color: inherit;
+  pointer-events: none;
+  z-index: 1;
 }
 .doc-root td,
 .doc-root th {
-  border: 1px solid #0f172a;
+  border: 0 solid #0f172a;
+  border-width: 0 !important;
   padding: 8px;
   vertical-align: top;
   overflow-wrap: break-word;
   position: relative;
+}
+/* Komşu hücreler aynı çizgiyi ortak kenarın ortasına çizer (±0,5px) — üst üste biner */
+.doc-root td::before,
+.doc-root th::before {
+  content: '';
+  position: absolute;
+  inset: -0.5px;
+  border-width: 1px;
+  border-style: inherit;
+  border-color: inherit;
+  pointer-events: none;
+  z-index: 1;
+}
+/* Widget'lardaki vurgulu toplam satırı (satır içi "border-top: 2px …") */
+.doc-root td[style*="border-top: 2px"]::before,
+.doc-root td[style*="border-top:2px"]::before,
+.doc-root th[style*="border-top: 2px"]::before,
+.doc-root th[style*="border-top:2px"]::before {
+  border-top-width: 2px;
 }
 .doc-root th {
   background: #f8fafc;
@@ -254,7 +298,7 @@
 }
 .doc-root table.malzeme-tablosu th,
 .doc-root table.malzeme-tablosu td {
-  border: 0.5pt solid #bbb !important;
+  border: 0 solid #bbb !important;
   padding: 1px 4px !important;
   font-size: 8.5pt !important;
   line-height: 1.15 !important;
@@ -283,7 +327,11 @@
   background: #f7f9fc;
 }
 .doc-root table.widget-table tfoot tr.widget-total-row-accent td {
-  border-top: 2px solid #1a3c5e;
+  border-top-style: solid;
+  border-top-color: #1a3c5e;
+}
+.doc-root table.widget-table tfoot tr.widget-total-row-accent td::before {
+  border-top-width: 2px;
 }
 
 .doc-root tr,

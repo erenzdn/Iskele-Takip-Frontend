@@ -3,8 +3,8 @@
  *
  *   node tools/document-parity/run.mjs [--backend <IskeleTakipAPI klasörü>] [--out <klasör>]
  *                                      [--margins "15,15,15,15;0,0,0,0;25,20,25,20"]
- *                                      [--dsf "1,native"]   (ekran ölçekleri; native = Windows ayarı)
- *                                      [--templates "stress,features"]
+ *                                      [--dsf "1,1.25,1.5"] (ekran ölçekleri; native = Windows ayarı)
+ *                                      [--templates "stress,features,fields,fonts"]
  *
  * 1. Vite ile editör ölçüm sayfasını açar (uygulamanın CSS'i, fontu ve editör eklentileri).
  * 2. Uygulamanın kendi Electron'unda stres şablonunu sayfalar, glif konumlarını ölçer ve
@@ -13,9 +13,9 @@
  * 4. Satır satır karşılaştırır. Çıkış kodu 0 = birebir.
  */
 import { spawn } from 'child_process';
-import { mkdirSync, readdirSync } from 'fs';
+import { mkdirSync, readdirSync, readFileSync } from 'fs';
 import { dirname, join, resolve } from 'path';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { tmpdir } from 'os';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -28,8 +28,8 @@ const backendDir = resolve(arg('backend', resolve(root, '../../source/repos/Iske
 const outDir = resolve(arg('out', join(tmpdir(), 'document-parity')));
 const margins = arg('margins', '15,15,15,15;0,0,0,0;25,20,25,20');
 const port = Number(arg('port', 5199));
-const scales = arg('dsf', '1,native').split(',');
-const templates = arg('templates', 'stress,features');
+const scales = arg('dsf', '1,1.25,1.5').split(',');
+const templates = arg('templates', 'stress,features,fields,fonts');
 
 function run(cmd, args, options = {}) {
   return new Promise((resolvePromise, reject) => {
@@ -49,6 +49,24 @@ async function waitForServer(url) {
     await new Promise((r) => setTimeout(r, 500));
   }
   throw new Error(`Vite açılmadı: ${url}`);
+}
+
+// Ön koşul: editör ile PDF aynı kanonik CSS'i kullanmalı (frontend yedeği = backend DOCUMENT_CSS)
+{
+  const normalize = (css) =>
+    css
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/\s+/g, ' ')
+      .replace(/\s*([{}:;,>])\s*/g, '$1')
+      .replace(/;}/g, '}')
+      .trim();
+  const { DOCUMENT_CSS } = await import(pathToFileURL(join(backendDir, 'src/services/documentStyles.js')).href);
+  const frontendCss = readFileSync(join(root, 'src/styles/documentTheme.css'), 'utf8');
+  if (normalize(DOCUMENT_CSS) !== normalize(frontendCss)) {
+    console.error('HATA: src/styles/documentTheme.css ile backend documentStyles.js DOCUMENT_CSS farklı. Önce eşitleyin.');
+    process.exit(1);
+  }
+  console.log('Kanonik CSS: frontend = backend ✓');
 }
 
 mkdirSync(outDir, { recursive: true });

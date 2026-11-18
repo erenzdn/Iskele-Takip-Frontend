@@ -69,6 +69,7 @@ import {
 } from './CustomImageExtension';
 import { resolveImageExportAlignment } from './CustomTableExtensions';
 import ConfirmModal from './ConfirmModal';
+import DocumentThemeWarning from './DocumentThemeWarning';
 
 /** Ctrl+S ile kaydet (editör açıkken tarayıcı/Electron "sayfayı kaydet" yerine). */
 export function useEditorSaveShortcut(onSave: () => void, disabled: boolean) {
@@ -343,7 +344,7 @@ export default function TipTapTemplateEditorLayout({
     onClose();
   };
 
-  useDocumentTheme();
+  const documentThemeStatus = useDocumentTheme();
   useEditorSaveShortcut(onSave, isBusy);
 
   useEffect(() => {
@@ -443,6 +444,7 @@ export default function TipTapTemplateEditorLayout({
               <SidebarIcon size={16} />
               <span className="hidden md:inline">Alanlar</span>
             </button>
+            <DocumentThemeWarning status={documentThemeStatus} />
             <button
               type="button"
               onClick={onPreview}

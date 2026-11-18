@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
   computeEditorPageLayout,
+  dedupeGapTargets,
+  gapTargetsEqual,
   paginateNaturalLayout,
   pdfFragmentainerHeight,
   type LayoutUnit,
@@ -168,5 +170,30 @@ describe('PDF sayfa geometrisi', () => {
     const result = paginateNaturalLayout(units, PAGE, SPACING);
     // PDF: 400 + 401 = 801 > 800 → kırılım; ekranda satır 398'de → 800 − 398 + 36
     expect(result.targets).toEqual([{ docPos: 2, kind: 'table-row', height: 438 }]);
+  });
+});
+
+describe('alan değerinin içinde başlayan satır (previewOffset)', () => {
+  it('kırılım hedefi satırın alan değerindeki karakter sırasını taşır', () => {
+    const result = paginateNaturalLayout(
+      [
+        unit(1, 18, 760, 'line', { startsBlock: true }),
+        unit(2, 18, 778, 'line'),
+        // 796 + 18 > 800: bu satır sonraki sayfaya; satır, alanın değerinin 10. karakterinden başlıyor
+        unit(5, 18, 796, 'line', { previewOffset: 10 }),
+      ],
+      PAGE,
+      SPACING
+    );
+    expect(result.targets).toEqual([{ docPos: 5, kind: 'block', height: 40, previewOffset: 10 }]);
+  });
+
+  it('aynı konumda farklı değer içi kırılımlar ayrı tutulur ve eşitlikte karşılaştırılır', () => {
+    const a = { docPos: 5, kind: 'block' as const, height: 30, previewOffset: 4 };
+    const b = { docPos: 5, kind: 'block' as const, height: 30, previewOffset: 9 };
+    expect(dedupeGapTargets([b, a])).toEqual([a, b]);
+    expect(gapTargetsEqual([a], [{ ...a }])).toBe(true);
+    expect(gapTargetsEqual([a], [b])).toBe(false);
+    expect(gapTargetsEqual([a], [{ docPos: 5, kind: 'block', height: 30 }])).toBe(false);
   });
 });

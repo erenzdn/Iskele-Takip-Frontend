@@ -1,8 +1,42 @@
-import { useEffect } from 'react';
+import { useEffect, useSyncExternalStore } from 'react';
+import bundledDocumentCss from '../styles/documentTheme.css?raw';
 
 const BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000';
 const STYLE_TAG_ID = 'doc-theme-remote';
 export const DOCUMENT_THEME_UPDATED_EVENT = 'doc-theme-updated';
+
+/**
+ * Sunucudaki kanonik CSS ile bu uygulamanın paketlediği documentTheme.css aynı mı?
+ * - in-sync: editör ile PDF aynı kurallarla çizer.
+ * - out-of-sync: backend ile uygulama farklı sürümde (backend elle dağıtılıyor; biri geride
+ *   kalmış). Editörün sayfalaması/kırılımı PDF'ten ayrışabilir — kullanıcı uyarılır.
+ * - unavailable: CSS çekilemedi; paketlenmiş yedek kullanılıyor (PDF yine sunucu CSS'iyle basılır).
+ */
+export type DocumentThemeStatus = 'pending' | 'in-sync' | 'out-of-sync' | 'unavailable';
+
+/** Yorumlar ve boşluklar karşılaştırmaya girmez (frontend dosyasının başında ek açıklama var) */
+export function normalizeDocumentCss(css: string): string {
+  return css
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, ' ')
+    .replace(/\s*([{}:;,>])\s*/g, '$1')
+    .replace(/;}/g, '}')
+    .trim();
+}
+
+let status: DocumentThemeStatus = 'pending';
+const listeners = new Set<() => void>();
+
+function setStatus(next: DocumentThemeStatus) {
+  if (status === next) return;
+  status = next;
+  listeners.forEach((listener) => listener());
+}
+
+function subscribe(listener: () => void) {
+  listeners.add(listener);
+  return () => listeners.delete(listener);
+}
 
 /**
  * Backend'deki kanonik belge stil sayfasını (IskeleTakipAPI/src/services/documentStyles.js)
@@ -22,7 +56,17 @@ function fetchAndInjectDocumentTheme(): Promise<void> {
       return res.text();
     })
     .then((css) => {
-      if (!css.trim()) return;
+      if (!css.trim()) {
+        setStatus('unavailable');
+        return;
+      }
+      const inSync = normalizeDocumentCss(css) === normalizeDocumentCss(bundledDocumentCss);
+      if (!inSync) {
+        console.warn(
+          'Sunucudaki belge stil sayfası (GET /document-styles.css) bu uygulama sürümünün documentTheme.css dosyasından farklı. ' +
+            'Backend ile uygulama aynı sürümde değil; editör ile PDF önizlemesi ayrışabilir.'
+        );
+      }
       let styleEl = document.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null;
       if (!styleEl) {
         styleEl = document.createElement('style');
@@ -34,16 +78,22 @@ function fetchAndInjectDocumentTheme(): Promise<void> {
         // Editör sayfalaması yeni CSS ile yeniden ölçsün (EditorPaginationExtension dinler)
         window.dispatchEvent(new Event(DOCUMENT_THEME_UPDATED_EVENT));
       }
+      setStatus(inSync ? 'in-sync' : 'out-of-sync');
     })
     .catch((error) => {
       console.warn('Kanonik belge stil sayfası alınamadı, paketlenmiş yedek kullanılıyor.', error);
+      setStatus('unavailable');
+      // Sonraki editör açılışında yeniden denensin
+      fetchPromise = null;
     });
 
   return fetchPromise;
 }
 
-export function useDocumentTheme() {
+/** Kanonik belge CSS'ini yükler; sunucu ile uygulamanın uyum durumunu döndürür. */
+export function useDocumentTheme(): DocumentThemeStatus {
   useEffect(() => {
     fetchAndInjectDocumentTheme();
   }, []);
+  return useSyncExternalStore(subscribe, () => status);
 }

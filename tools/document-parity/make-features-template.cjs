@@ -76,3 +76,57 @@ h += '<p></p><p></p><p style="text-align: center"><strong>İMZA</strong></p>';
 
 fs.writeFileSync(path.join(__dirname, 'features-template.html'), h);
 console.log(`features-template.html: ${h.length} karakter`);
+
+/*
+ * fields-template.html: alan ({{...}}) hemen ardından ek / noktalama gelen cümleler. Editör alanın
+ * değerini önizler, PDF'te değer metnin yerine geçer; iki tarafta karakter dizisi ve satır kırma
+ * fırsatları aynı olmalı. Her cümle önüne artan uzunlukta dolgu alır ki alan mutlaka satır sonuna,
+ * ek de bir sonraki satırın başına denk gelsin.
+ */
+const fieldCases = [
+  "{{musteriAdi}}'nin",
+  "{{baslangicTarihi}}'den",
+  "({{teklifNo}})",
+  '{{toplamTutar}}.',
+  '"{{santiyeAdi}}"',
+  "{{bitisTarihi}}'ye",
+  '{{kiralananSure}},',
+  "<strong>{{musteriAdi}}</strong>'na",
+  "<span style=\"font-size: 18px\">{{toplamTutar}}</span>'lik",
+];
+const filler = 'Kiralama kapsamında teslim edilen iskele malzemelerinin bedeli ve sorumluluğu ';
+let f = '';
+fieldCases.forEach((c, ci) => {
+  for (let pad = 0; pad < 40; pad += 1) {
+    const prefix = filler + 'x'.repeat(pad) + ' ' + filler.slice(0, (pad * 7 + ci * 5) % filler.length);
+    f += `<p>${ci + 1}.${pad} ${prefix}${c} devamındaki metin burada sürüyor.</p>`;
+  }
+});
+fs.writeFileSync(path.join(__dirname, 'fields-template.html'), f);
+console.log(`fields-template.html: ${f.length} karakter`);
+
+/*
+ * fonts-template.html: yazı tipi seçicideki her font × normal/kalın/italik/kalın italik, Türkçe
+ * metin ve ekli alan; Tab girintisi (4 bölünmez boşluk — EditorTabKeyExtension.TAB_INDENT).
+ */
+const fonts = [
+  ['Tinos', 'serif'], ['Carlito', 'sans-serif'], ['Cousine', 'monospace'], ['Roboto', 'sans-serif'],
+  ['Open Sans', 'sans-serif'], ['Lato', 'sans-serif'], ['Montserrat', 'sans-serif'],
+  ['Merriweather', 'serif'], ['Noto Serif', 'serif'],
+];
+const TAB = ' '.repeat(4);
+const sentence =
+  "Kiracı {{musteriAdi}}'nin şantiyesine ({{santiyeAdi}}) teslim edilen iskele malzemelerinin bedeli, {{toplamTutar}} üzerinden hesaplanır; eksik ya da hasarlı parçalar ÇĞİÖŞÜ çğıöşü güncel fiyattan faturalanır. ";
+let ft = '';
+for (const [family, fallback] of fonts) {
+  const ff = `font-family: ${family}, ${fallback}`;
+  ft += `<h2><span style="${ff}">${family} başlık — Genel Şartlar</span></h2>`;
+  for (const size of [12, 16]) {
+    ft += `<p><span style="${ff}; font-size: ${size}px">${TAB}${sentence}${sentence}</span></p>`;
+    ft += `<p><strong><span style="${ff}; font-size: ${size}px">${sentence}</span></strong></p>`;
+    ft += `<p><em><span style="${ff}; font-size: ${size}px">${TAB}${TAB}${sentence}</span></em></p>`;
+    ft += `<p><strong><em><span style="${ff}; font-size: ${size}px">${sentence}</span></em></strong></p>`;
+  }
+}
+fs.writeFileSync(path.join(__dirname, 'fonts-template.html'), ft);
+console.log(`fonts-template.html: ${ft.length} karakter`);

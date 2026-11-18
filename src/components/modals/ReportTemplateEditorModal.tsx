@@ -24,6 +24,7 @@ import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
 import { EditorTabKey } from './EditorTabKeyExtension';
 import { useEditorSaveShortcut } from './TipTapTemplateEditorLayout';
 import { useDocumentTheme } from '../../hooks/useDocumentTheme';
+import DocumentThemeWarning from './DocumentThemeWarning';
 import {
   DEFAULT_PAGE_MARGINS,
   getPageMargins,
@@ -70,7 +71,7 @@ export default function ReportTemplateEditorModal({
   const [pageMargins, setPageMargins] = useState<PageMargins>(DEFAULT_PAGE_MARGINS);
   const [, setToolbarTick] = useState(0);
 
-  useDocumentTheme();
+  const documentThemeStatus = useDocumentTheme();
   // handleSave aşağıda tanımlı; yalnızca tuşa basıldığında çağrılır
   useEditorSaveShortcut(() => void handleSave(), isBusy);
 
@@ -440,6 +441,7 @@ export default function ReportTemplateEditorModal({
           <button onClick={onClose} className="btn-secondary flex-1">
             İptal
           </button>
+          <DocumentThemeWarning status={documentThemeStatus} />
           <button
             onClick={handlePreview}
             disabled={isBusy}

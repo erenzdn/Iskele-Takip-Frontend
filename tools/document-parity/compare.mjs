@@ -12,7 +12,34 @@ const require = createRequire(import.meta.url);
 const pdfjs = require('pdfjs-dist/legacy/build/pdf.js');
 
 const PT_TO_PX = 96 / 72;
+const MM_TO_PX = 96 / 25.4;
+/** A4 sayfa yüksekliği (px) */
+const PAGE_HEIGHT_PX = 297 * MM_TO_PX;
 const outDir = process.argv[2];
+
+/**
+ * Chrome, sayfa başına itilen satırın kutusunu aşan mürekkebini (ör. satır aralığı 1'de "İ"
+ * noktası) önceki sayfanın alt kenar boşluğuna da basar: aynı glif, aynı x'te, tam bir sayfa
+ * içerik yüksekliği yukarıda. Editörle ilgisi olmayan bu kopyalar ayıklanır.
+ */
+function dropOverflowGhosts(glyphs, marginsMm) {
+  const [top, , bottom] = marginsMm;
+  const contentBottom = PAGE_HEIGHT_PX - bottom * MM_TO_PX;
+  const fragmentainer = Math.ceil(PAGE_HEIGHT_PX - (top + bottom) * MM_TO_PX - 0.001);
+  return glyphs.filter(
+    (g) =>
+      !(
+        g.baseline > contentBottom &&
+        glyphs.some(
+          (h) =>
+            h.page === g.page + 1 &&
+            h.ch === g.ch &&
+            Math.abs(h.x - g.x) < 0.5 &&
+            Math.abs(g.baseline - h.baseline - fragmentainer) < 2
+        )
+      )
+  );
+}
 
 function groupLines(glyphs) {
   const sorted = [...glyphs].sort((a, b) => a.page - b.page || a.baseline - b.baseline || a.x - b.x);
@@ -85,8 +112,11 @@ for (const file of files) {
   const [marginName, dsfName = '1'] = name.split('@');
   const editor = JSON.parse(readFileSync(join(outDir, file), 'utf8'));
   const pdf = await pdfGlyphs(join(outDir, `pdf-${marginName}.pdf`));
-  // Ekran ölçeği ≠ 1 iken Chromium çizgileri fiziksel piksele yuvarlar (1px → 0,8px @%125);
-  // ekrandaki dikey konum PDF'ten birkaç px sapabilir. Sayfa ve kırılım yine birebir olmalı.
+  const marginsMm = marginName.split('_')[1].split('-').map(Number);
+  pdf.glyphs = dropOverflowGhosts(pdf.glyphs, marginsMm);
+  // Ekran ölçeği ≠ 1 iken Chromium yazı tipi ascent/descent değerlerini fiziksel piksele
+  // yuvarlar: karışık puntolu / satır aralığı < 1 satırların yüksekliği kesirli px oynar. Dikey
+  // konum PDF'ten birkaç px sapabilir; sayfa ve satır kırılımı yine BİREBİR olmalı.
   const strictVertical = Math.abs(Number(dsfName) - 1) < 0.001;
   const editorLines = groupLines(editor.glyphs);
   const pdfLines = groupLines(pdf.glyphs);
@@ -103,25 +133,29 @@ for (const file of files) {
   //   (Chrome PDF'te metin taban çizgisini tam piksele yuvarlar: ±0,5px, ölçüm yuvarlaması ±0,5px).
   // - Diğer ölçekler: her satır aynı sayfada ve sayfa sayısı aynı olmalı. Çizgiler fiziksel
   //   piksele yuvarlandığından dar tablo hücresinde kırılım ve birkaç px dikey konum farkı bilgi amaçlı.
-  const pagesOk = pageDiff.length === 0 && editor.pageCount === pdf.pageCount;
+  // Sayfalar arası gri bölgeye (maskeli) düşen satır editörde GÖRÜNMEZ — sayfa numarası tutsa da hata
+  const hiddenInGap = editorLines.filter((l) => l.baseline > PAGE_HEIGHT_PX);
+  const pagesOk = pageDiff.length === 0 && editor.pageCount === pdf.pageCount && hiddenInGap.length === 0;
+  const breaksOk = onlyA.length === 0 && onlyB.length === 0;
   const ok = strictVertical
-    ? pagesOk && onlyA.length === 0 && onlyB.length === 0 && maxDy <= 1.25 && maxDx <= 1.25
-    : pagesOk;
+    ? pagesOk && breaksOk && maxDy <= 1.25 && maxDx <= 1.25
+    : pagesOk && breaksOk && maxDx <= 1.25;
   failed ||= !ok;
 
-  const verdict = ok ? (strictVertical ? 'BİREBİR' : 'SAYFALAR BİREBİR') : 'FARK VAR';
+  const verdict = ok ? (strictVertical ? 'BİREBİR' : 'SATIR VE SAYFALAR BİREBİR') : 'FARK VAR';
   const [templateName, marginMm] = marginName.split('_');
   console.log(`\n=== ${templateName} şablonu, kenar ${marginMm} mm, ekran ölçeği ${dsfName}: ${verdict} ===`);
   console.log(`sayfa: editör ${editor.pageCount}, PDF ${pdf.pageCount}`);
   console.log(`satır: editör ${editorLines.length}, PDF ${pdfLines.length}, eşleşen ${pairs.length}`);
-  console.log(`farklı kırılım: editörde ${onlyA.length}, PDF'te ${onlyB.length} eşsiz satır${strictVertical ? '' : ' (bilgi)'}`);
-  console.log(`farklı sayfadaki satır: ${pageDiff.length}`);
+  console.log(`farklı kırılım: editörde ${onlyA.length}, PDF'te ${onlyB.length} eşsiz satır`);
+  console.log(`farklı sayfadaki satır: ${pageDiff.length}; sayfa arasında görünmeyen satır: ${hiddenInGap.length}`);
   console.log(`aynı sayfada en büyük sapma: dikey ${maxDy.toFixed(2)}px${strictVertical ? '' : ' (bilgi)'}, yatay ${maxDx.toFixed(2)}px`);
   const show = (label, list) => {
     for (const l of list.slice(0, 6)) {
       console.log(`  ${label} s${l.page + 1} y=${l.baseline.toFixed(1)} x=${l.x.toFixed(1)} "${l.text.slice(0, 60)}"`);
     }
   };
+  show('aralıkta   ', hiddenInGap);
   show('editör-yalnız', onlyA);
   show('pdf-yalnız   ', onlyB);
   const worst = samePage

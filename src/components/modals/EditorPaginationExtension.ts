@@ -14,6 +14,13 @@ import {
   type LayoutUnit,
   type PageGapTarget,
 } from './editorPagination';
+import {
+  editorWidgetPreviewPluginKey,
+  getHiddenPlaceholderRanges,
+  getPreviewSplits,
+  previewSplitsEqual,
+  type PreviewSplit,
+} from './EditorWidgetPreviewExtension';
 
 const TEXT_BLOCK_TAGS = new Set(['P', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6', 'BLOCKQUOTE', 'PRE']);
 const AVOID_BREAK_AFTER_TAGS = new Set(['H1', 'H2', 'H3']);
@@ -49,41 +56,107 @@ function resolveDomPos(view: EditorView, element: Element): number | null {
  * vuruşunda yüzlerce ms donmaya yol açıyordu. Okuma, ölçüm düzeni (MEASURING_CLASS) açıkken
  * yapılmalıdır — bkz. buildDecorationSet.
  */
-function defineLazyDocPos<T extends { docPos: number }>(target: T, resolve: () => number): T {
-  let cached: number | null = null;
-  Object.defineProperty(target, 'docPos', {
+type LinePosition = { docPos: number; previewOffset?: number };
+
+function defineLazyDocPos<T extends { docPos: number; previewOffset?: number }>(
+  target: T,
+  resolve: () => LinePosition
+): T {
+  let cached: LinePosition | null = null;
+  const read = () => (cached ??= resolve());
+  Object.defineProperty(target, 'docPos', { configurable: true, enumerable: true, get: () => read().docPos });
+  Object.defineProperty(target, 'previewOffset', {
     configurable: true,
     enumerable: true,
-    get: () => {
-      if (cached == null) cached = resolve();
-      return cached;
-    },
+    get: () => read().previewOffset,
   });
   return target;
 }
 
-/** Bloğun içinde, verilen satırın başına denk gelen belge konumu */
+/**
+ * Konum kutusu (imleç/harf) verilen satırda mı? Dikey ORTASINA bakılır: satır aralığı yazı
+ * boyundan küçükken (ör. 18px yazı, satır aralığı 1) harf kutusu satır kutusunun üstüne ve altına
+ * taşar; üst kenar karşılaştırması ekran ölçeğine göre tutup tutmuyordu.
+ */
+function lineRelation(rect: { top: number; bottom: number }, rootTop: number, lineTop: number, lineBottom: number) {
+  const middle = (rect.top + rect.bottom) / 2 - rootTop;
+  if (middle < lineTop) return 'before' as const;
+  if (middle >= lineBottom) return 'after' as const;
+  return 'inside' as const;
+}
+
+/** Alan önizlemesinde (değer metni) verilen satırda başlayan ilk karakterin sırası */
+function findPreviewLineOffset(preview: Element, rootTop: number, lineTop: number, lineBottom: number): number | null {
+  const walker = document.createTreeWalker(preview, NodeFilter.SHOW_TEXT);
+  const range = document.createRange();
+  let offset = 0;
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const text = node.textContent ?? '';
+    for (let i = 0; i < text.length; i++) {
+      range.setStart(node, i);
+      range.setEnd(node, i + 1);
+      const rect = Array.from(range.getClientRects()).find((r) => r.height > 0);
+      if (!rect) continue;
+      const relation = lineRelation(rect, rootTop, lineTop, lineBottom);
+      if (relation === 'inside') return offset + i;
+      if (relation === 'after') return null;
+    }
+    offset += text.length;
+  }
+  return null;
+}
+
+/**
+ * Bloğun içinde, verilen satırın başına denk gelen belge konumu.
+ *
+ * Önizlenen alanın kaynağı ({{alan}}) display:none'dır: içindeki konumların ekranda yeri yoktur
+ * (coordsAtPos boş kutu döner). Alanın yerini aralığın başındaki önizleme değeri tutar: değer bu
+ * satırda başlıyorsa satır alanın başından, değerin ortasında başlıyorsa (değer satırlara bölünmüş)
+ * o karakterden başlar (previewOffset).
+ */
 function findDocumentPosAtLine(
   view: EditorView,
+  blockElement: HTMLElement,
   blockStartPos: number,
   blockEndPos: number,
   lineTop: number,
   lineBottom: number
-): number {
+): LinePosition {
   const editorDom = view.dom as HTMLElement;
   const rootRect = editorDom.getBoundingClientRect();
   const rootTop = rootRect.top - editorDom.scrollTop;
+  const hidden = getHiddenPlaceholderRanges(view.state, blockStartPos, blockEndPos);
+  // Önizleme widget'ları gizli aralıklarla aynı (belge) sırada
+  const previews = hidden.length ? Array.from(blockElement.querySelectorAll('.editor-placeholder-preview')) : [];
+
   for (let pos = blockStartPos; pos <= blockEndPos; pos++) {
-    let top: number;
+    const rangeIndex = hidden.findIndex((range) => pos >= range.from && pos < range.to);
+    if (rangeIndex >= 0) {
+      const range = hidden[rangeIndex];
+      const preview = previews[rangeIndex];
+      if (preview) {
+        const offset = findPreviewLineOffset(preview, rootTop, lineTop, lineBottom);
+        if (offset === 0) return { docPos: range.from };
+        if (offset != null) return { docPos: range.from, previewOffset: offset };
+        const first = preview.getClientRects()[0];
+        if (first && lineRelation(first, rootTop, lineTop, lineBottom) === 'after') break;
+      }
+      pos = range.to - 1;
+      continue;
+    }
+    let relation: ReturnType<typeof lineRelation>;
     try {
-      top = view.coordsAtPos(pos).top - rootTop;
+      const coords = view.coordsAtPos(pos);
+      // Gizli öğe içindeki konum: kutusu yok
+      if (coords.bottom - coords.top < 0.5) continue;
+      relation = lineRelation(coords, rootTop, lineTop, lineBottom);
     } catch {
       continue;
     }
-    if (top >= lineTop - 1 && top < lineBottom - 1) return pos;
-    if (top >= lineBottom) break;
+    if (relation === 'inside') return { docPos: pos };
+    if (relation === 'after') break;
   }
-  return blockStartPos;
+  return { docPos: blockStartPos };
 }
 
 function readMargins(element: HTMLElement) {
@@ -157,7 +230,7 @@ function collectTextBlockUnits(
     };
     if (index === 0 || !resolveLinePositions) return unit;
     return defineLazyDocPos(unit, () =>
-      findDocumentPosAtLine(view, contentStart, contentEnd, line.offsetTop, line.offsetTop + line.height)
+      findDocumentPosAtLine(view, element, contentStart, contentEnd, line.offsetTop, line.offsetTop + line.height)
     );
   });
 }
@@ -280,9 +353,10 @@ function createGapDecoration(view: EditorView, target: PageGapTarget, index: num
 /**
  * Sayfalama için doğal (aralıksız) yerleşimi ölçer.
  *
- * Windows ekran ölçeği %100 değilse (ör. %125) Chromium yerleşimi fiziksel piksellerde yapar:
- * 1px tablo çizgisi 0,8px'e iner, satırlar PDF'tekinden kısa ölçülür ve sayfa sonu kararları
- * PDF'ten ayrışır (metin kırılımı etkilenmez). Bu durumda kağıda geçici olarak
+ * Windows ekran ölçeği %100 değilse (ör. %125) Chromium yazı tipinin ascent/descent değerlerini
+ * fiziksel piksele yuvarlar: karışık puntolu ya da satır aralığı < 1 satırlar ve liste maddeleri
+ * kesirli px farklı yükseklikte çıkar, birikince sayfa sonu kararları PDF'ten ayrışabilir (satır
+ * kırılımı etkilenmez; tablo çizgileri artık yerleşime girmez — documentTheme.css). Bu durumda kağıda geçici olarak
  * "zoom: 1/devicePixelRatio" verilip yerleşim PDF'teki (DSF=1) gibi yeniden ölçülür: kırılım
  * kararları bu ölçümle, eklenecek boşluklar ise ekrandaki konumla hesaplanır.
  */
@@ -315,13 +389,18 @@ function measureNaturalLayout(view: EditorView, paper: HTMLElement): LayoutUnit[
   if (!consistent) return visual;
 
   return pdfLike.map((unit, index) =>
-    defineLazyDocPos({ ...unit, visualOffsetTop: visual[index].offsetTop }, () => visual[index].docPos)
+    defineLazyDocPos({ ...unit, visualOffsetTop: visual[index].offsetTop }, () => ({
+      docPos: visual[index].docPos,
+      previewOffset: visual[index].previewOffset,
+    }))
   );
 }
 
-function buildDecorationSet(view: EditorView): DecorationSet {
+type PaginationResult = { decorations: DecorationSet; previewSplits: PreviewSplit[] };
+
+function buildDecorationSet(view: EditorView): PaginationResult | null {
   const paper = (view.dom as HTMLElement).closest('.template-editor-paper');
-  if (!(paper instanceof HTMLElement)) return DecorationSet.empty;
+  if (!(paper instanceof HTMLElement)) return null;
 
   const metrics = readPageMetrics(paper);
   let result: ReturnType<typeof paginateNaturalLayout>;
@@ -344,11 +423,20 @@ function buildDecorationSet(view: EditorView): DecorationSet {
 
   applyEditorPageLayout(view, paper, result.contentEnd, result.pageCount, metrics);
 
+  // Satırı alan değerinin ortasında başlayan kırılım: aralığı önizleme eklentisi değerin içine koyar
+  const previewSplits: PreviewSplit[] = targets
+    .filter((target) => target.previewOffset != null)
+    .map((target) => ({
+      from: target.docPos,
+      offset: target.previewOffset as number,
+      height: Math.round(target.height * 100) / 100,
+    }));
   const decorations = targets
+    .filter((target) => target.previewOffset == null)
     .map((target, index) => createGapDecoration(view, target, index))
     .filter((deco): deco is Decoration => deco != null);
 
-  return DecorationSet.create(view.state.doc, decorations);
+  return { decorations: DecorationSet.create(view.state.doc, decorations), previewSplits };
 }
 
 function applyEditorPageLayout(
@@ -444,9 +532,11 @@ export const EditorPagination = Extension.create({
             if (!view.dom.isConnected) return;
 
             const next = buildDecorationSet(view);
+            if (!next) return;
             const current = editorPaginationPluginKey.getState(view.state) ?? DecorationSet.empty;
+            const currentSplits = getPreviewSplits(view.state);
 
-            if (decorationSetsEqual(current, next)) {
+            if (decorationSetsEqual(current, next.decorations) && previewSplitsEqual(currentSplits, next.previewSplits)) {
               refinePass = 0;
               return;
             }
@@ -454,7 +544,8 @@ export const EditorPagination = Extension.create({
             view.dispatch(
               view.state.tr
                 .setMeta('addToHistory', false)
-                .setMeta(editorPaginationPluginKey, { decorations: next })
+                .setMeta(editorPaginationPluginKey, { decorations: next.decorations })
+                .setMeta(editorWidgetPreviewPluginKey, { previewSplits: next.previewSplits })
             );
 
             refinePass += 1;

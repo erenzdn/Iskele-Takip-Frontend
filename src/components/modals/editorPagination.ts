@@ -47,10 +47,17 @@ export type LayoutUnit = {
    * verilir; eklenecek boşluğun yüksekliği ise görünen konuma göre hesaplanır.
    */
   visualOffsetTop?: number;
+  /**
+   * Satır, docPos'taki alan önizlemesinin ({{alan}} değeri) İÇİNDE başlıyorsa değerin kaçıncı
+   * karakterinden başladığı. Değerin belgede konumu yoktur; aralık değerin içine yerleşir.
+   */
+  previewOffset?: number;
 };
 
 export type PageGapTarget = {
   docPos: number;
+  /** Bkz. LayoutUnit.previewOffset — aralık alan önizlemesinin bu karakterinden önce */
+  previewOffset?: number;
   kind: 'block' | 'table-row' | 'page-break';
   /** Eklenecek boşluk: sayfa sonuna kalan alan + alt kenar + sayfa arası + üst kenar */
   height: number;
@@ -296,10 +303,12 @@ export function paginateNaturalLayout(
       const height = gapHeightFor(breakAt.unit, breakAt.top, nextPageStart, breakAt.siblingBefore);
       const visualHeight = gapHeightFor(breakAt.unit, breakAt.visualTop, nextPageStart, breakAt.siblingBefore);
       const breakUnit = breakAt.unit;
+      const previewOffset = breakUnit.previewOffset;
       targets.push({
         docPos: breakUnit.docPos,
         kind: breakUnit.kind === 'table-row' ? 'table-row' : 'block',
         height: visualHeight,
+        ...(previewOffset != null ? { previewOffset } : {}),
       });
       // Gerçek kayma = kırılan birimin vardığı yer − eski yeri. Kardeş aralıkta bu, aralık
       // yüksekliğinden "birleşmeyen pay" kadar fazladır; aralık yüksekliğini toplamak sonraki
@@ -390,8 +399,8 @@ export function dedupeGapTargets(targets: PageGapTarget[]): PageGapTarget[] {
   const seen = new Set<string>();
   const result: PageGapTarget[] = [];
 
-  for (const target of targets.sort((a, b) => a.docPos - b.docPos)) {
-    const key = `${target.kind}:${target.docPos}`;
+  for (const target of targets.sort((a, b) => a.docPos - b.docPos || (a.previewOffset ?? -1) - (b.previewOffset ?? -1))) {
+    const key = `${target.kind}:${target.docPos}:${target.previewOffset ?? ''}`;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(target);
@@ -428,6 +437,7 @@ export function gapTargetsEqual(a: PageGapTarget[], b: PageGapTarget[]): boolean
   return a.every(
     (target, index) =>
       target.docPos === b[index]?.docPos &&
+      target.previewOffset === b[index]?.previewOffset &&
       target.kind === b[index]?.kind &&
       Math.abs(target.height - (b[index]?.height ?? 0)) < 0.5
   );
