@@ -3,6 +3,8 @@ import {
   MagnifyingGlassIcon,
   CaretRightIcon,
   CaretDownIcon,
+  CaretUpIcon,
+  CaretUpDownIcon,
   CheckCircleIcon,
 } from '@phosphor-icons/react';
 import { Inventory, MaterialCategory, SubCategory } from '../models';
@@ -183,6 +185,19 @@ export interface ItemPickerPanelProps {
 
 type SelectionType = 'all' | { categoryId: number } | { categoryId: number; subCategoryId: number };
 
+type SortKey = 'code' | 'name' | 'unit' | 'category' | 'stock' | 'price';
+type SortState = { key: SortKey; dir: 'asc' | 'desc' } | null;
+
+const trCollator = new Intl.Collator('tr-TR', { numeric: true, sensitivity: 'base' });
+
+/** Boş değerler (—, '') yöne bakılmaksızın en sona. */
+function compareText(a: string, b: string, dir: 1 | -1): number {
+  const ae = !a || a === '—';
+  const be = !b || b === '—';
+  if (ae || be) return ae === be ? 0 : ae ? 1 : -1;
+  return trCollator.compare(a, b) * dir;
+}
+
 export default function ItemPickerPanel({
   items: rawItems,
   onItemSelect,
@@ -201,6 +216,7 @@ export default function ItemPickerPanel({
   const [selectedLetter, setSelectedLetter] = useState<string | null>(null);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [activeItemId, setActiveItemId] = useState<number | null>(null);
+  const [sort, setSort] = useState<SortState>(null);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const rowRefs = useRef<Map<number, HTMLTableRowElement | null>>(new Map());
   const searchInputRef = useRef<HTMLInputElement | null>(null);
@@ -316,19 +332,105 @@ export default function ItemPickerPanel({
     return map;
   }, [filteredBySelection]);
 
+  const isSalePricing = displayMode === 'quote' && quotePricing === 'sale';
+  const getPrice = useCallback(
+    (i: ItemRecord): number => {
+      if (isSalePricing) {
+        return currency === 'EUR' ? getUnitPriceEur(i) : currency === 'USD' ? getUnitPriceUsd(i) : getUnitPrice(i);
+      }
+      return currency === 'EUR'
+        ? getMonthlyPriceEur(i)
+        : currency === 'USD'
+          ? getMonthlyPriceUsd(i)
+          : getMonthlyPrice(i);
+    },
+    [isSalePricing, currency]
+  );
+
+  /** Başlık tıklaması: artan → azalan → varsayılan (ada göre). */
+  const toggleSort = (key: SortKey) => {
+    setSort((prev) => {
+      if (!prev || prev.key !== key) return { key, dir: 'asc' };
+      if (prev.dir === 'asc') return { key, dir: 'desc' };
+      return null;
+    });
+  };
+
   const q = searchText.trim().toLocaleLowerCase('tr-TR');
   const filteredItems = useMemo(() => {
-    if (!q) return filteredByLetter;
-    return filteredByLetter.filter((item) => {
-      const i = item as ItemRecord;
-      return (
-        getName(i).toLocaleLowerCase('tr-TR').includes(q) ||
-        getNameEn(i).toLocaleLowerCase('tr-TR').includes(q) ||
-        getCode(i).toLocaleLowerCase('tr-TR').includes(q) ||
-        getCatName(i).toLocaleLowerCase('tr-TR').includes(q)
-      );
-    });
-  }, [filteredByLetter, q]);
+    const searched = !q
+      ? filteredByLetter
+      : filteredByLetter.filter((item) => {
+          const i = item as ItemRecord;
+          return (
+            getName(i).toLocaleLowerCase('tr-TR').includes(q) ||
+            getNameEn(i).toLocaleLowerCase('tr-TR').includes(q) ||
+            getCode(i).toLocaleLowerCase('tr-TR').includes(q) ||
+            getCatName(i).toLocaleLowerCase('tr-TR').includes(q)
+          );
+        });
+    if (!sort) return searched;
+    const dir = sort.dir === 'asc' ? 1 : -1;
+    const cmp = (a: ItemRecord, b: ItemRecord): number => {
+      switch (sort.key) {
+        case 'code':
+          return compareText(getCode(a), getCode(b), dir);
+        case 'name':
+          return compareText(getName(a), getName(b), dir);
+        case 'unit':
+          return compareText(getUnitName(a), getUnitName(b), dir);
+        case 'category':
+          return compareText(getCatName(a), getCatName(b), dir);
+        case 'stock':
+          return (getStock(a) - getStock(b)) * dir;
+        case 'price':
+          return (getPrice(a) - getPrice(b)) * dir;
+      }
+    };
+    // Eşitlikte ada göre sabit ikincil sıralama.
+    return [...searched].sort(
+      (a, b) =>
+        cmp(a as ItemRecord, b as ItemRecord) ||
+        trCollator.compare(getName(a as ItemRecord), getName(b as ItemRecord))
+    );
+  }, [filteredByLetter, q, sort, getPrice]);
+
+  const renderSortHeader = (key: SortKey, label: string, align: 'left' | 'right', extraClass = '') => {
+    const active = sort?.key === key ? sort.dir : null;
+    const Icon = active === 'asc' ? CaretUpIcon : active === 'desc' ? CaretDownIcon : CaretUpDownIcon;
+    return (
+      <th
+        className={`text-${align} px-3 py-2 font-semibold border-b border-background-border ${extraClass} ${
+          active ? 'text-text-primary' : 'text-text-secondary'
+        }`}
+        aria-sort={active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none'}
+      >
+        <button
+          type="button"
+          onClick={() => toggleSort(key)}
+          onMouseDown={(e) => e.preventDefault()}
+          className={`inline-flex items-center gap-1 select-none hover:text-text-primary ${
+            align === 'right' ? 'flex-row-reverse' : ''
+          }`}
+          title={
+            active === 'asc'
+              ? 'Azalan sırala'
+              : active === 'desc'
+                ? 'Sıralamayı kaldır'
+                : 'Artan sırala'
+          }
+        >
+          <span>{label}</span>
+          <Icon
+            size={12}
+            weight="bold"
+            className={active ? 'text-primary' : 'opacity-40'}
+            aria-hidden
+          />
+        </button>
+      </th>
+    );
+  };
 
   useEffect(() => {
     if (filteredItems.length === 0) {
@@ -600,24 +702,12 @@ export default function ItemPickerPanel({
           <DataTable tableId="ItemPickerPanel" className="w-full text-sm border-collapse text-text-primary" aria-label={displayMode === 'quote' ? 'Teklif ürün listesi' : 'Sözleşme ürün listesi'}>
             <thead className="sticky top-0 bg-background-secondary z-10">
               <tr>
-                <th className="text-left px-3 py-2 font-semibold text-text-secondary border-b border-background-border">
-                  Ürün Kodu
-                </th>
-                <th className="text-left px-3 py-2 font-semibold text-text-secondary border-b border-background-border">
-                  Ürün Adı
-                </th>
-                <th className="text-left px-3 py-2 font-semibold text-text-secondary border-b border-background-border w-20">
-                  Birim
-                </th>
-                <th className="text-left px-3 py-2 font-semibold text-text-secondary border-b border-background-border">
-                  Kategori
-                </th>
-                <th className="text-right px-3 py-2 font-semibold text-text-secondary border-b border-background-border w-20">
-                  Stok
-                </th>
-                <th className="text-right px-3 py-2 font-semibold text-text-secondary border-b border-background-border w-28">
-                  {displayMode === 'quote' && quotePricing === 'sale' ? 'Birim' : 'Fiyat'}
-                </th>
+                {renderSortHeader('code', 'Ürün Kodu', 'left')}
+                {renderSortHeader('name', 'Ürün Adı', 'left')}
+                {renderSortHeader('unit', 'Birim', 'left', 'w-20')}
+                {renderSortHeader('category', 'Kategori', 'left')}
+                {renderSortHeader('stock', 'Stok', 'right', 'w-20')}
+                {renderSortHeader('price', isSalePricing ? 'Birim' : 'Fiyat', 'right', 'w-28')}
               </tr>
             </thead>
             <tbody>
