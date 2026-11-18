@@ -22,6 +22,8 @@ import {
   RulerIcon,
 } from '@phosphor-icons/react';
 import ConfirmModal from '../components/modals/ConfirmModal';
+import DocumentCategoryManagerPanel from '../components/documentCategories/DocumentCategoryManagerPanel';
+import { useDocumentCategoryStore } from '../services/documentCategoryService';
 import { adminService } from '../services/adminService';
 import { inventoryService, ExchangeRateResponse, PricingPresetResponse } from '../services/inventoryService';
 import { useAuthStore } from '../store/authStore';
@@ -259,10 +261,16 @@ function formatTrDateTime(raw?: unknown) {
   }).format(dt);
 }
 
-type SettingsTab = 'general' | 'archives' | 'tables' | 'finance' | 'system';
+type SettingsTab = 'general' | 'categories' | 'archives' | 'tables' | 'finance' | 'system';
 
 const TABS: { id: SettingsTab; label: string; description: string; icon: ReactNode }[] = [
   { id: 'general', label: 'Genel', description: 'Tema ve birimler', icon: <InfoIcon size={18} weight="duotone" /> },
+  {
+    id: 'categories',
+    label: 'Kategoriler',
+    description: 'Teklif ve sözleşme kategorileri',
+    icon: <TagIcon size={18} weight="duotone" />,
+  },
   { id: 'archives', label: 'Arşiv', description: 'Görünürlük tercihleri', icon: <ArchiveIcon size={18} weight="duotone" /> },
   { id: 'tables', label: 'Tablolar', description: 'Sütun görünümü', icon: <ColumnsIcon size={18} weight="duotone" /> },
   { id: 'finance', label: 'Finans', description: 'Kur ve oranlar', icon: <CurrencyCircleDollar size={18} weight="duotone" /> },
@@ -343,6 +351,32 @@ function ToggleRow({
         />
       </button>
     </label>
+  );
+}
+
+function DocumentCategoriesSettings() {
+  const count = useDocumentCategoryStore((s) => s.categories.length);
+  const loaded = useDocumentCategoryStore((s) => s.loaded);
+  return (
+    <SettingsSection
+      icon={<TagIcon size={18} weight="duotone" />}
+      title="Teklif ve Sözleşme Kategorileri"
+      description="Tekliflerinizi ve sözleşmelerinizi gruplamak için kategoriler oluşturun. Kategoriler teklif ve sözleşmelerde ortaktır; teklif sözleşmeye dönüşünce kategorileri de taşınır. Listelerde Kategori filtresiyle hızlıca arayabilirsiniz."
+      action={
+        loaded ? (
+          <span className="inline-flex items-center rounded-lg border border-background-border bg-background-elevated/60 px-2.5 py-1 text-xs font-medium text-text-secondary">
+            {count} kategori
+          </span>
+        ) : null
+      }
+    >
+      <DocumentCategoryManagerPanel />
+      <p className="mt-4 text-[11px] text-text-secondary/80 leading-relaxed">
+        Bir teklife veya sözleşmeye kategori atamak için listede Kategori sütununa tıklayın, satıra sağ tıklayıp
+        "Kategorileri Düzenle"yi seçin ya da kaydın detayındaki başlıktan düzenleyin. Silinen bir kategori yalnızca
+        kayıtların üzerinden kaldırılır; teklif ve sözleşmeler silinmez.
+      </p>
+    </SettingsSection>
   );
 }
 
@@ -845,8 +879,8 @@ export default function SystemSettingsPage() {
                         <TagIcon size={18} />
                       </span>
                       <span>
-                        <span className="block text-sm font-medium text-text-primary">Kategori Yönetimi</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Ürün grupları ve kategori iskontoları</span>
+                        <span className="block text-sm font-medium text-text-primary">Ürün Kategorileri</span>
+                        <span className="block text-xs text-text-secondary mt-0.5">Envanter ürün grupları ve kategori iskontoları</span>
                       </span>
                     </span>
                     <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
@@ -962,6 +996,8 @@ export default function SystemSettingsPage() {
               </SettingsSection>
             </>
           )}
+
+          {activeTab === 'categories' && <DocumentCategoriesSettings />}
 
           {activeTab === 'archives' && (
             <SettingsSection
