@@ -33,6 +33,7 @@ import { firstValidationError, normalizeText, validateDate, validateNumber, vali
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
 import { LINE_ITEM_COL, LINE_ITEM_COL_SPAN } from '../../constants/lineItemTableColumns';
 import StockErrorPanel from '../StockErrorPanel';
+import QuickStockEntryModal from './QuickStockEntryModal';
 import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
@@ -199,6 +200,9 @@ export default function QuoteDetailModal({
     Record<number, { WarehouseId: number; Quantity: number; WarehouseName?: string }[]>
   >({});
   const [convertStocksLoading, setConvertStocksLoading] = useState(false);
+  /** Dönüşüm ekranından çıkmadan hızlı stok girişi */
+  const [showQuickTransfer, setShowQuickTransfer] = useState(false);
+  const [convertStocksRefreshKey, setConvertStocksRefreshKey] = useState(0);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [showDeleteReasonModal, setShowDeleteReasonModal] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
@@ -2064,6 +2068,27 @@ export default function QuoteDetailModal({
     }
   };
 
+  /**
+   * Kayıtlı tekliflerde kalemin ItemName'i boş gelebilir; tablo gibi envanter listesinden çözümle.
+   * Sırayla: envanter adı → kalemdeki ad → kalem adı override → ürün kodu → #ItemId.
+   */
+  const resolveInventoryLineLabel = (line: {
+    ItemId: number;
+    ItemName?: string | null;
+    ItemNameEn?: string | null;
+    ItemNameOverride?: string | null;
+    ItemCode?: string | null;
+    Item?: { ItemName?: string | null; ItemNameEn?: string | null } | null;
+  }): string => {
+    const inv = availableItems.find((i) => i.ItemId === line.ItemId);
+    const name =
+      (inv?.ItemName || line.Item?.ItemName || line.ItemName || line.ItemNameOverride || '').trim();
+    const en = inv?.ItemNameEn ?? line.ItemNameEn ?? line.Item?.ItemNameEn ?? null;
+    if (name) return formatInventoryLineBilingualLabel(name, en);
+    const code = (inv?.ItemCode || line.ItemCode || '').trim();
+    return code ? `Ürün ${code}` : `Ürün #${line.ItemId}`;
+  };
+
   const getConvertStockForWarehouse = (itemId: number, warehouseId: number): number | null => {
     const stocks = convertItemStocks[itemId];
     if (!stocks) return null;
@@ -2114,7 +2139,47 @@ export default function QuoteDetailModal({
     return () => {
       cancelled = true;
     };
-  }, [showConvertModal, quoteItems, warehouses, decrementStock]);
+  }, [showConvertModal, quoteItems, warehouses, decrementStock, convertStocksRefreshKey]);
+
+  const quickTransferLines = useMemo(
+    () =>
+      quoteItems.flatMap((i) =>
+        i.kind === 'inventory'
+          ? [{ ItemId: i.ItemId, label: resolveInventoryLineLabel(i) }]
+          : []
+      ),
+    [quoteItems, availableItems]
+  );
+
+  /** Hedef depoda, seçili dönüşüm moduna göre kalemin ihtiyaç duyduğu miktar. */
+  const getQuickTransferRequired = (itemId: number, targetWarehouseId: number): number => {
+    const total = quoteItems
+      .filter((i) => i.kind === 'inventory' && i.ItemId === itemId)
+      .reduce((sum, i) => sum + (Number(i.Quantity) || 0), 0);
+    if (convertMode === 'perItem') {
+      const assignments = perItemAssignments[itemId];
+      if (assignments && assignments.length > 0) {
+        return assignments
+          .filter((a) => a.WarehouseId === targetWarehouseId)
+          .reduce((sum, a) => sum + (Number(a.Quantity) || 0), 0);
+      }
+    }
+    return total;
+  };
+
+  /** Hata mesajındaki ürüne/depoya göre varsayılan hedef depo. */
+  const getQuickTransferInitialTarget = (): number | null => {
+    if (convertMode === 'defaultWarehouse') {
+      return defaultWarehouseIdForConvert ? Number(defaultWarehouseIdForConvert) : null;
+    }
+    const msg = convertModalError ?? '';
+    const named = warehouses.find((w) => msg.includes(`"${w.WarehouseName}"`));
+    if (named) return named.WarehouseId;
+    const firstAssigned = Object.values(perItemAssignments).flat()[0];
+    return firstAssigned?.WarehouseId ?? null;
+  };
+
+  const canCreateStockReceipt = (currentUser?.permissions ?? []).includes('stockReceipts_create');
 
   const handleReduceConvertQuantity = (available: number) => {
     const itemName = extractFirstQuotedName(convertModalError ?? '');
@@ -2123,8 +2188,7 @@ export default function QuoteDetailModal({
     const item = quoteItems.find(
       (i) =>
         i.kind === 'inventory' &&
-        (i.ItemName === itemName ||
-          formatInventoryLineBilingualLabel(i.ItemName, i.ItemNameEn, i.Item).includes(itemName))
+        (i.ItemName === itemName || resolveInventoryLineLabel(i).includes(itemName))
     );
     if (!item || item.kind !== 'inventory') return;
 
@@ -2279,7 +2343,7 @@ export default function QuoteDetailModal({
           const total = itemAssignments.reduce((s, a) => s + a.Quantity, 0);
           if (total !== item.Quantity) {
             setConvertModalError(
-              `"${formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)}" için atanan toplam miktar (${total}) teklif miktarı (${item.Quantity}) ile eşleşmiyor.`
+              `"${resolveInventoryLineLabel(item)}" için atanan toplam miktar (${total}) teklif miktarı (${item.Quantity}) ile eşleşmiyor.`
             );
             return;
           }
@@ -4230,6 +4294,26 @@ export default function QuoteDetailModal({
         onCancel={() => setShowUnsavedConfirm(false)}
       />
 
+      {showConvertModal && showQuickTransfer && (
+        <QuickStockEntryModal
+          warehouses={warehouses}
+          lines={quickTransferLines}
+          getRequiredQuantity={getQuickTransferRequired}
+          defaultWarehouseId={getQuickTransferInitialTarget()}
+          description={
+            activeQuote?.QuoteCode
+              ? `Teklif ${activeQuote.QuoteCode} sözleşme dönüşümü için stok girişi`
+              : 'Teklif sözleşme dönüşümü için stok girişi'
+          }
+          onClose={() => setShowQuickTransfer(false)}
+          onSaved={() => {
+            setConvertModalError(null);
+            setConvertStocksRefreshKey((k) => k + 1);
+            invalidateData('inventory');
+          }}
+        />
+      )}
+
       {/* Sözleşmeye Dönüştür - Depo Atama Modal */}
       {showConvertModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[60] p-4">
@@ -4249,6 +4333,11 @@ export default function QuoteDetailModal({
                 onRetry={handleConvertToContract}
                 onReduceQuantity={convertMode === 'perItem' ? handleReduceConvertQuantity : undefined}
                 onDismiss={() => setConvertModalError(null)}
+                onStockTransfer={
+                  canCreateStockReceipt && decrementStock !== false && quickTransferLines.length > 0
+                    ? () => setShowQuickTransfer(true)
+                    : undefined
+                }
               />
             )}
 
@@ -4420,11 +4509,7 @@ export default function QuoteDetailModal({
                             Number(defaultWarehouseIdForConvert)
                           );
                           if (stock == null) return null;
-                          const label = formatInventoryLineBilingualLabel(
-                            item.ItemName,
-                            item.ItemNameEn,
-                            item.Item
-                          );
+                          const label = resolveInventoryLineLabel(item);
                           const insufficient = item.Quantity > stock;
                           return (
                             <p
@@ -4468,7 +4553,7 @@ export default function QuoteDetailModal({
                   return (
                     <div key={item.ItemId} className="card p-4">
                       <div className="font-medium mb-2">
-                        {formatInventoryLineBilingualLabel(item.ItemName, item.ItemNameEn, item.Item)} — Toplam:{' '}
+                        {resolveInventoryLineLabel(item)} — Toplam:{' '}
                         {item.Quantity} adet
                         {assignments.length > 0 && (
                           <span

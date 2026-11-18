@@ -13,6 +13,8 @@ interface StockErrorPanelProps {
   onDismiss?: () => void;
   retryLabel?: string;
   showStockTransferLink?: boolean;
+  /** Verilirse sayfadan çıkmadan hızlı stok ekleme penceresi açılır (link yerine). */
+  onStockTransfer?: () => void;
 }
 
 export default function StockErrorPanel({
@@ -22,6 +24,7 @@ export default function StockErrorPanel({
   onDismiss,
   retryLabel = 'Tekrar dene',
   showStockTransferLink = true,
+  onStockTransfer,
 }: StockErrorPanelProps) {
   if (!message.trim()) return null;
 
@@ -101,7 +104,11 @@ export default function StockErrorPanel({
             Miktarı düşür ({quantities.available} adet)
           </button>
         )}
-        {showStockTransferLink && (
+        {onStockTransfer ? (
+          <button type="button" onClick={onStockTransfer} className="btn-secondary text-xs py-1 px-2">
+            Stok ekle
+          </button>
+        ) : showStockTransferLink && (
           <Link
             to="/stock-receipts"
             className="btn-secondary text-xs py-1 px-2 inline-flex items-center"
