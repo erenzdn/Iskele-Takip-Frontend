@@ -14,6 +14,7 @@ import {
   NotePencilIcon,
   PhoneIcon,
   PlusCircleIcon,
+  TagIcon,
   TrashIcon,
   WrenchIcon,
 } from '@phosphor-icons/react';
@@ -241,6 +242,13 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       enabledWhen: (target) => Boolean(isContractTarget(target) && target.rawData.ContractCode),
     },
     {
+      id: 'contract-categories',
+      label: 'Kategorileri Düzenle',
+      icon: <TagIcon size={iconSize} />,
+      requiredPermissions: ['contracts_update'],
+      handlerKey: 'contract.categories',
+    },
+    {
       id: 'contract-return-tab',
       label: 'Iade Al Sekmesine Git',
       icon: <ClockIcon size={iconSize} />,
@@ -313,6 +321,13 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       icon: <CopySimpleIcon size={iconSize} />,
       handlerKey: 'quote.copyCode',
       enabledWhen: (target) => Boolean(isQuoteTarget(target) && target.rawData.QuoteCode),
+    },
+    {
+      id: 'quote-categories',
+      label: 'Kategorileri Düzenle',
+      icon: <TagIcon size={iconSize} />,
+      requiredPermissions: ['quotes_update'],
+      handlerKey: 'quote.categories',
     },
     {
       id: 'quote-clone',

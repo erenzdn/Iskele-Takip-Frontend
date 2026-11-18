@@ -95,6 +95,7 @@ import { LINE_ITEM_COL, LINE_ITEM_COL_SPAN } from '../../constants/lineItemTable
 import { normalizeContractDetailPrice } from '../../utils/linePriceMetadata';
 import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
 import DataTable from '../DataTable';
+import DocumentCategoryHeaderControl from '../documentCategories/DocumentCategoryHeaderControl';
 
 type InventoryLineItem = Extract<ContractLineItem, { kind: 'inventory' }>;
 
@@ -2533,6 +2534,15 @@ export default function ContractDetailModal({
               Aktif
             </span>
           )}
+          {!isNew && effectiveContract?.ContractId ? (
+            <DocumentCategoryHeaderControl
+              key={`contract-${effectiveContract.ContractId}`}
+              type="contract"
+              id={effectiveContract.ContractId}
+              label={effectiveContract.ContractCode || `#${effectiveContract.ContractId}`}
+              categories={effectiveContract.Categories}
+            />
+          ) : null}
           <span className="hidden md:inline text-[11px] text-text-secondary truncate">
             {currentUser?.fullName || currentUser?.username || ''}
           </span>

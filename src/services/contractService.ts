@@ -224,6 +224,8 @@ export interface ContractListQuery {
   type?: ContractQuoteType;
   search?: string;
   includeArchived?: boolean;
+  /** Seçilen kategorilerden herhangi birine sahip sözleşmeler; 0 = kategorisiz. */
+  categoryIds?: number[];
   limit?: number;
   offset?: number;
 }
@@ -248,6 +250,7 @@ function buildContractsEndpoint(query?: ContractListQuery): string {
   const s = query?.search?.trim();
   if (s) sp.set('search', s);
   if (query?.includeArchived) sp.set('includeArchived', 'true');
+  if (query?.categoryIds?.length) sp.set('categoryIds', query.categoryIds.join(','));
   if (query?.limit != null) sp.set('limit', String(query.limit));
   if (query?.offset != null) sp.set('offset', String(query.offset));
   const qs = sp.toString();

@@ -30,6 +30,7 @@ export type ContextMenuActionHandlerKey =
   | 'contract.copyCode'
   | 'contract.archive'
   | 'contract.unarchive'
+  | 'contract.categories'
   | 'quote.open'
   | 'quote.preview'
   | 'quote.copyCode'
@@ -38,7 +39,8 @@ export type ContextMenuActionHandlerKey =
   | 'quote.convert'
   | 'quote.openContract'
   | 'quote.clone'
-  | 'quote.delete';
+  | 'quote.delete'
+  | 'quote.categories';
 
 export interface ScaffoldRowTarget {
   entityType: 'scaffold';

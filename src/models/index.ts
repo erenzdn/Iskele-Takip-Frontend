@@ -277,8 +277,24 @@ export interface CheckFilters {
   dateTo?: string;
 }
 
+/** Teklif / sözleşme kategorisi (kullanıcı tanımlı etiket; envanter kategorisinden ayrı). */
+export interface DocumentCategoryRef {
+  DocumentCategoryId: number;
+  Name: string;
+  /** #RRGGBB */
+  Color: string;
+}
+
+export interface DocumentCategory extends DocumentCategoryRef {
+  SortOrder: number;
+  QuoteCount?: number;
+  ContractCount?: number;
+}
+
 export interface Contract {
   ContractId: number;
+  /** Kullanıcı tanımlı kategoriler (liste ve detay yanıtında gelir). */
+  Categories?: DocumentCategoryRef[];
   ContractCode?: string;
   CustomerId: number;
   CustomerAuthorizedContactId?: number | null;
@@ -1200,6 +1216,8 @@ export enum QuoteStatus {
 
 export interface Quote {
   QuoteId: number;
+  /** Kullanıcı tanımlı kategoriler (liste ve detay yanıtında gelir). */
+  Categories?: DocumentCategoryRef[];
   QuoteCode?: string;
   /** Teklif konusu (backend: Subject, nullable, max 255) */
   Subject?: string | null;

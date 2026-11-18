@@ -10,6 +10,7 @@ import { useAuthStore } from '../store/authStore';
 import {
   Contract,
   ContractQuoteType,
+  DocumentCategoryRef,
   Customer,
   ConstructionSite,
   Quote,
@@ -39,6 +40,12 @@ import {
   type QuoteRowTarget,
 } from '../context-menu';
 import DataTable from '../components/DataTable';
+import DocumentCategoryChips from '../components/documentCategories/DocumentCategoryChips';
+import DocumentCategoryFilter from '../components/documentCategories/DocumentCategoryFilter';
+import DocumentCategoryPickerModal, {
+  type CategorizableEntity,
+} from '../components/documentCategories/DocumentCategoryPickerModal';
+import DocumentCategoryManagerModal from '../components/documentCategories/DocumentCategoryManagerModal';
 
 type TabType = 'active' | 'completed' | 'cancelled' | 'archived' | 'quotes' | 'quotesConverted';
 
@@ -68,6 +75,9 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     user?.permissions?.includes('contracts_archive') ||
     user?.permissions?.includes('contracts_delete')
   );
+  const canUpdateQuotes = Boolean(user?.permissions?.includes('quotes_update'));
+  const canUpdateContracts = Boolean(user?.permissions?.includes('contracts_update'));
+  const canManageCategories = canUpdateQuotes || canUpdateContracts;
   const scopeType: ContractQuoteType = contractScope === 'sale' ? 'SALE' : 'RENTAL';
   const isSaleScope = contractScope === 'sale';
   const [activeTab, setActiveTab] = useState<TabType>('quotes');
@@ -95,6 +105,12 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   const [quotesError, setQuotesError] = useState<string | null>(null);
   const [contractsError, setContractsError] = useState<string | null>(null);
   const [overdueOnly, setOverdueOnly] = useState(false);
+  /** Teklif ve sözleşme sekmelerinde ortak kategori filtresi (0 = kategorisiz). */
+  const [categoryFilter, setCategoryFilter] = useState<number[]>([]);
+  const [categoryPickerTarget, setCategoryPickerTarget] = useState<
+    (CategorizableEntity & { categoryIds: number[] }) | null
+  >(null);
+  const [showCategoryManager, setShowCategoryManager] = useState(false);
   const [showArchiveModal, setShowArchiveModal] = useState(false);
   const [archiveTarget, setArchiveTarget] = useState<{ contractId: number; contractCode?: string } | null>(null);
   const [archiveReason, setArchiveReason] = useState('');
@@ -176,6 +192,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           quoteType: scopeType,
           status: statusArg,
           search: debouncedQuoteSearch.trim() || undefined,
+          categoryIds: categoryFilter.length ? categoryFilter : undefined,
         });
         setQuotesRaw(quotesData || []);
       } else {
@@ -192,6 +209,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           status: contractStatus,
           type: scopeType,
           search: debouncedContractSearch.trim() || undefined,
+          categoryIds: categoryFilter.length ? categoryFilter : undefined,
         });
         setContractsRaw(contractsData || []);
       }
@@ -213,6 +231,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     quoteStatusFilter,
     debouncedContractSearch,
     debouncedQuoteSearch,
+    categoryFilter,
   ]);
 
   useEffect(() => {
@@ -574,6 +593,58 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     }
   };
 
+  const openCategoryPicker = (args: CategorizableEntity & { categories?: DocumentCategoryRef[] }) => {
+    setCategoryPickerTarget({
+      type: args.type,
+      id: args.id,
+      label: args.label,
+      categoryIds: (args.categories ?? []).map((c) => c.DocumentCategoryId),
+    });
+  };
+
+  /** Kayıt sonrası satırı yerinde güncelle; aktif filtre varsa liste filtreye göre yenilensin. */
+  const handleCategoriesSaved = (categories: DocumentCategoryRef[]) => {
+    const target = categoryPickerTarget;
+    if (!target) return;
+    if (target.type === 'quote') {
+      setQuotesRaw((prev) => prev.map((q) => (q.QuoteId === target.id ? { ...q, Categories: categories } : q)));
+    } else {
+      setContractsRaw((prev) =>
+        prev.map((c) => (c.ContractId === target.id ? { ...c, Categories: categories } : c))
+      );
+    }
+    if (categoryFilter.length > 0) void loadData();
+  };
+
+  const filterByCategory = (category: DocumentCategoryRef) => {
+    setCategoryFilter([category.DocumentCategoryId]);
+  };
+
+  const renderCategoryCell = (
+    entity: CategorizableEntity,
+    categories: DocumentCategoryRef[] | undefined,
+    canEdit: boolean
+  ) => (
+    <td
+      className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0"
+      onClick={
+        canEdit
+          ? (event) => {
+              event.stopPropagation();
+              openCategoryPicker({ ...entity, categories });
+            }
+          : undefined
+      }
+      title={canEdit ? 'Kategorileri düzenlemek için tıklayın · rozete tıklayınca o kategoriye göre filtreler' : undefined}
+    >
+      <DocumentCategoryChips
+        categories={categories}
+        onChipClick={filterByCategory}
+        emptyLabel={canEdit ? '+ ekle' : '-'}
+      />
+    </td>
+  );
+
   const openContractContextMenu = (event: MouseEvent<HTMLTableRowElement>, contract: Contract) => {
     event.preventDefault();
     openContextMenu({
@@ -659,6 +730,17 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           if (!contract || !isContractArchived(contract)) return;
           openUnarchiveConfirm(contract);
         },
+        'contract.categories': (target) => {
+          const row = target as ContractRowTarget;
+          const contract = contracts.find((item) => item.ContractId === row.entityId);
+          if (!contract) return;
+          openCategoryPicker({
+            type: 'contract',
+            id: contract.ContractId,
+            label: contract.ContractCode || `#${contract.ContractId}`,
+            categories: contract.Categories,
+          });
+        },
         'contract.copyCode': async (target) => {
           const row = target as ContractRowTarget;
           if (!row.rawData.ContractCode) {
@@ -688,6 +770,17 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           const quote = quotes.find((item) => item.QuoteId === row.entityId);
           if (!quote) return;
           await handleQuotePreview(quote);
+        },
+        'quote.categories': (target) => {
+          const row = target as QuoteRowTarget;
+          const quote = quotes.find((item) => item.QuoteId === row.entityId);
+          if (!quote) return;
+          openCategoryPicker({
+            type: 'quote',
+            id: quote.QuoteId,
+            label: quote.QuoteCode || quote.Subject || `#${quote.QuoteId}`,
+            categories: quote.Categories,
+          });
         },
         'quote.copyCode': async (target) => {
           const row = target as QuoteRowTarget;
@@ -821,6 +914,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               <tr>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">ID</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Kod</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Kategori</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Müşteri</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Şantiye</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Başlangıç</th>
@@ -846,6 +940,15 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                 >
                   <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0">#{contract.ContractId}</td>
                   <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 text-text-primary">{contract.ContractCode || <span className="text-text-secondary">-</span>}</td>
+                  {renderCategoryCell(
+                    {
+                      type: 'contract',
+                      id: contract.ContractId,
+                      label: contract.ContractCode || `#${contract.ContractId}`,
+                    },
+                    contract.Categories,
+                    canUpdateContracts
+                  )}
                   <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0">
                     {(() => {
                       const rowCust = customerMap.get(contract.CustomerId);
@@ -938,6 +1041,7 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">ID</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Kod</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Konu</th>
+                <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Kategori</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Müşteri</th>
                 <th className="text-left py-0.5 px-1.5 font-medium text-text-secondary whitespace-nowrap border-r border-background-border last:border-r-0 bg-background-hover leading-none">Şantiye</th>
                 {!isSaleScope && (
@@ -971,6 +1075,15 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
                   >
                     {quote.Subject ? quote.Subject : <span className="text-text-secondary">-</span>}
                   </td>
+                  {renderCategoryCell(
+                    {
+                      type: 'quote',
+                      id: quote.QuoteId,
+                      label: quote.QuoteCode || quote.Subject || `#${quote.QuoteId}`,
+                    },
+                    quote.Categories,
+                    canUpdateQuotes
+                  )}
                   <td className="py-px px-1.5 align-middle border-r border-background-border/60 last:border-r-0 font-medium text-text-primary">
                     {quote.CustomerName ?? (quote.CustomerId != null ? customerMap.get(quote.CustomerId)?.Name : undefined) ?? '—'}
                   </td>
@@ -1080,11 +1193,17 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               Sadece geciken
             </label>
           )}
+          <DocumentCategoryFilter
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            onManage={canManageCategories ? () => setShowCategoryManager(true) : undefined}
+          />
           <button
             type="button"
             onClick={() => {
               setSearchText('');
               setOverdueOnly(false);
+              setCategoryFilter([]);
             }}
             className="btn-secondary py-1.5 px-3 text-sm"
           >
@@ -1126,11 +1245,17 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
               <option value="rejected">Reddedilen</option>
             </select>
           )}
+          <DocumentCategoryFilter
+            value={categoryFilter}
+            onChange={setCategoryFilter}
+            onManage={canManageCategories ? () => setShowCategoryManager(true) : undefined}
+          />
           <button
             type="button"
             onClick={() => {
               setQuoteSearchText('');
               setQuoteStatusFilter('all');
+              setCategoryFilter([]);
             }}
             className="btn-secondary py-1.5 px-3 text-sm"
           >
@@ -1160,6 +1285,21 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
       ) : (
         renderContractsTable()
       )}
+
+      <DocumentCategoryPickerModal
+        open={categoryPickerTarget != null}
+        entity={categoryPickerTarget}
+        initialCategoryIds={categoryPickerTarget?.categoryIds ?? []}
+        onClose={() => setCategoryPickerTarget(null)}
+        onSaved={handleCategoriesSaved}
+        onManage={canManageCategories ? () => setShowCategoryManager(true) : undefined}
+      />
+
+      <DocumentCategoryManagerModal
+        open={showCategoryManager}
+        onClose={() => setShowCategoryManager(false)}
+        onChanged={() => void loadData()}
+      />
 
       <PdfPreviewModal
         open={showPdfPreview}

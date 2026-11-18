@@ -64,6 +64,7 @@ import {
 import { addCalendarDays, calendarDaysBetween, todayDateInput } from '../../utils/dateInput';
 import { sortByStoredLineOrder } from '../../utils/lineItemOrder';
 import DataTable from '../DataTable';
+import DocumentCategoryHeaderControl from '../documentCategories/DocumentCategoryHeaderControl';
 
 interface QuoteDetailModalProps {
   quote: Quote | null;
@@ -2769,6 +2770,15 @@ export default function QuoteDetailModal({
             {quoteType === 'SALE' ? 'Satış' : 'Kiralama'}
           </span>
           {!isNew && getStatusBadge()}
+          {savedQuoteId && (
+            <DocumentCategoryHeaderControl
+              key={`quote-${savedQuoteId}`}
+              type="quote"
+              id={savedQuoteId}
+              label={quoteDocLabel}
+              categories={activeQuote?.Categories}
+            />
+          )}
           {isClonedDraft && (
             <span
               className="inline-flex items-center gap-1 rounded border border-amber-500/40 bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-200"

@@ -151,6 +151,8 @@ export type QuoteListQuery = {
   quoteType?: ContractQuoteType;
   search?: string;
   includeConverted?: boolean;
+  /** Seçilen kategorilerden herhangi birine sahip teklifler; 0 = kategorisiz. */
+  categoryIds?: number[];
 };
 
 function buildQuotesListPath(query?: QuoteListQuery): string {
@@ -160,6 +162,7 @@ function buildQuotesListPath(query?: QuoteListQuery): string {
   const s = query?.search?.trim();
   if (s) sp.set('search', s);
   if (query?.includeConverted === true) sp.set('includeConverted', 'true');
+  if (query?.categoryIds?.length) sp.set('categoryIds', query.categoryIds.join(','));
   const qs = sp.toString();
   return qs ? `/quotes?${qs}` : '/quotes';
 }
@@ -223,7 +226,14 @@ export const quoteService = {
     } catch (error) {
       // Bazı backend sürümlerinde /quotes (parametresiz) 500 dönebilir.
       // status, type veya includeConverted ile filtre varsa birleştirme denemesi yapılmaz.
-      if (query?.status != null || query?.quoteType != null || query?.includeConverted) throw error;
+      if (
+        query?.status != null ||
+        query?.quoteType != null ||
+        query?.includeConverted ||
+        query?.categoryIds?.length
+      ) {
+        throw error;
+      }
       const failures: unknown[] = [];
       const s = query?.search?.trim();
       const base: QuoteListQuery = s ? { search: s } : {};
