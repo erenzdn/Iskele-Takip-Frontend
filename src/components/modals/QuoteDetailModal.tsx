@@ -40,7 +40,7 @@ import { packageService } from '../../services/packageService';
 import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
 import QuoteTemplateEditorModal from './QuoteTemplateEditorModal';
-import PdfPreviewModal from './PdfPreviewModal';
+import DocumentStudioModal, { type DocumentStudioKind } from './DocumentStudioModal';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
@@ -246,8 +246,9 @@ export default function QuoteDetailModal({
   const [editingTemplate, setEditingTemplate] = useState<QuoteTemplate | null>(null);
   const [isNewTemplate, setIsNewTemplate] = useState(false);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
-  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
-  const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [showDocumentStudio, setShowDocumentStudio] = useState(false);
+  /** Şablon kaydedilince Belge Merkezi önizlemelerini tazelemek için. */
+  const [templateRevision, setTemplateRevision] = useState(0);
   const [isAddingMaterialTable, setIsAddingMaterialTable] = useState(false);
   const [showManualLineModal, setShowManualLineModal] = useState(false);
   const [packages, setPackages] = useState<QuotePackage[]>([]);
@@ -2439,40 +2440,6 @@ export default function QuoteDetailModal({
     </>
   );
 
-  const handlePreviewDocument = async () => {
-    if (!activeQuote || !selectedTemplateId) {
-      toast.warning('Önizleme için bir şablon seçmelisiniz');
-      return;
-    }
-    try {
-      setIsBusy(true);
-      const blob = await quoteService.previewDocumentAsync(activeQuote.QuoteId, Number(selectedTemplateId));
-      if (blob.size === 0) {
-        toast.error('Sunucu boş yanıt döndürdü (boyut: 0).');
-        return;
-      }
-      const isPdf = blob.type === 'application/pdf' || blob.type === '';
-      if (!isPdf && blob.size < 10000) {
-        const text = await blob.text();
-        try {
-          const j = JSON.parse(text);
-          toast.error('Önizleme hatası: ' + (j.message || text.slice(0, 200)));
-        } catch {
-          toast.error('Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)'));
-        }
-        return;
-      }
-      const url = window.URL.createObjectURL(blob);
-      setPdfPreviewUrl(url);
-      setShowPdfPreview(true);
-    } catch (error) {
-      console.error('Preview document error:', error);
-      toast.error(getApiErrorMessage(error) || 'Önizleme hatası');
-    } finally {
-      setIsBusy(false);
-    }
-  };
-
   const handleCloneQuoteClick = () => {
     if (!activeQuote?.QuoteId || isCloning || isBusy) return;
     setShowCloneConfirm(true);
@@ -2672,18 +2639,10 @@ export default function QuoteDetailModal({
     }
   };
 
-  const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
-    if (!activeQuote || !selectedTemplateId) {
-      toast.warning('Döküman oluşturmak için bir şablon seçmelisiniz');
-      return;
-    }
+  const downloadQuoteDocument = async (templateId: number, format: 'pdf' | 'docx') => {
+    if (!activeQuote) return;
     try {
-      setIsBusy(true);
-      const blob = await quoteService.generateDocumentAsync(
-        activeQuote.QuoteId,
-        Number(selectedTemplateId),
-        format
-      );
+      const blob = await quoteService.generateDocumentAsync(activeQuote.QuoteId, templateId, format);
       if (blob.size === 0) {
         toast.error('Belge oluşturulamadı (sunucu boş yanıt döndü).');
         return;
@@ -2691,24 +2650,87 @@ export default function QuoteDetailModal({
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `teklif_${activeQuote.QuoteId}.${format}`;
+      a.download = `teklif_${activeQuote.QuoteCode || activeQuote.QuoteId}.${format}`;
       a.click();
       window.URL.revokeObjectURL(url);
     } catch (error) {
       console.error('Generate document error:', error);
       toast.error(getApiErrorMessage(error) || 'Döküman oluşturma hatası');
+    }
+  };
+
+  const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
+    if (!activeQuote || !selectedTemplateId) {
+      toast.warning('Döküman oluşturmak için bir şablon seçmelisiniz');
+      return;
+    }
+    try {
+      setIsBusy(true);
+      await downloadQuoteDocument(Number(selectedTemplateId), format);
     } finally {
       setIsBusy(false);
     }
   };
 
-  const closePdfPreview = () => {
-    setShowPdfPreview(false);
-    if (pdfPreviewUrl) {
-      window.URL.revokeObjectURL(pdfPreviewUrl);
-      setPdfPreviewUrl(null);
+  const openQuoteTemplateEditor = async (templateId: number | null) => {
+    if (templateId == null) {
+      setEditingTemplate(null);
+      setIsNewTemplate(true);
+      setIsTemplateEditorOpen(true);
+      return;
+    }
+    try {
+      setLoadingTemplate(true);
+      const fullTemplate = await quoteTemplateService.getByIdAsync(templateId);
+      setEditingTemplate(fullTemplate);
+      setIsNewTemplate(false);
+      setIsTemplateEditorOpen(true);
+    } catch (error) {
+      console.error('Şablon yükleme hatası:', error);
+      toast.error(getApiErrorMessage(error));
+    } finally {
+      setLoadingTemplate(false);
     }
   };
+
+  const savedQuoteId = !isNew && activeQuote?.QuoteId ? activeQuote.QuoteId : null;
+  const quoteDocLabel = activeQuote?.QuoteCode || (savedQuoteId ? `#${savedQuoteId}` : '');
+
+  const documentStudioKinds: DocumentStudioKind[] = [
+    {
+      id: 'quote',
+      label: 'Teklif',
+      hint: savedQuoteId
+        ? `Teklif ${quoteDocLabel} verisiyle gösteriliyor.`
+        : 'Teklif henüz kaydedilmedi; önizleme örnek veriyle gösteriliyor.',
+      templates,
+      selectedTemplateId,
+      onSelect: (templateId) => setSelectedTemplateId(templateId),
+      render: (templateId) =>
+        savedQuoteId
+          ? quoteService.previewDocumentAsync(savedQuoteId, templateId)
+          : quoteTemplateService.previewAsync(templateId),
+      download: savedQuoteId ? downloadQuoteDocument : undefined,
+      onEdit: (templateId) => void openQuoteTemplateEditor(templateId),
+      onCreate: () => void openQuoteTemplateEditor(null),
+      onCopy: async (templateId) => {
+        const source = templates.find((t) => t.TemplateId === templateId);
+        try {
+          const res = await quoteTemplateService.copyAsync(
+            templateId,
+            source ? `${source.TemplateName} (Kopya)` : undefined
+          );
+          await loadTemplates();
+          setSelectedTemplateId(res.TemplateId);
+          toast.success('Şablon kopyalandı');
+        } catch (error) {
+          toast.error(getApiErrorMessage(error));
+        }
+      },
+      emptyText: 'Henüz teklif şablonu yok. "Yeni" ile oluşturun.',
+    },
+  ];
+
 
   const getStatusBadge = () => {
     if (converted) {
@@ -3092,44 +3114,15 @@ export default function QuoteDetailModal({
                       </option>
                     ))}
                   </select>
-                  {!isReadOnly && selectedTemplateId && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const template = templates.find((t) => t.TemplateId === Number(selectedTemplateId));
-                        if (!template) return;
-                        try {
-                          setLoadingTemplate(true);
-                          const fullTemplate = await quoteTemplateService.getByIdAsync(template.TemplateId);
-                          setEditingTemplate(fullTemplate);
-                          setIsNewTemplate(false);
-                          setIsTemplateEditorOpen(true);
-                        } catch (error) {
-                          console.error('Şablon yükleme hatası:', error);
-                          toast.error(getApiErrorMessage(error));
-                        } finally {
-                          setLoadingTemplate(false);
-                        }
-                      }}
-                      disabled={loadingTemplate}
-                      className={`btn-secondary shrink-0 ${compactBtn}`}
-                    >
-                      {loadingTemplate ? '...' : 'Düzenle'}
-                    </button>
-                  )}
-                  {!isReadOnly && (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingTemplate(null);
-                        setIsNewTemplate(true);
-                        setIsTemplateEditorOpen(true);
-                      }}
-                      className={`btn-secondary shrink-0 ${compactBtn}`}
-                    >
-                      Yeni
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => setShowDocumentStudio(true)}
+                    disabled={loadingTemplate}
+                    className={`btn-secondary shrink-0 ${compactBtn}`}
+                    title="Belge Merkezi: şablon seç, düzenle ve gerçek veriyle önizle"
+                  >
+                    Belgeler
+                  </button>
                 </div>
               </div>
               {isNew && !isReadOnly && (
@@ -3287,8 +3280,14 @@ export default function QuoteDetailModal({
                 )}
                 {!isNew && activeQuote && selectedTemplateId && (
                   <>
-                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className={`btn-primary ${compactBtn}`}>
-                      {isBusy ? 'Yükleniyor...' : 'Önizle'}
+                    <button
+                      type="button"
+                      onClick={() => setShowDocumentStudio(true)}
+                      disabled={isBusy}
+                      className={`btn-primary ${compactBtn}`}
+                      title="Belge Merkezi'nde önizle"
+                    >
+                      Önizle
                     </button>
                     <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>
                       PDF
@@ -4736,26 +4735,48 @@ export default function QuoteDetailModal({
           <QuoteTemplateEditorModal
             template={editingTemplate}
             isNew={isNewTemplate}
+            recordPreview={
+              savedQuoteId
+                ? {
+                    label: `Teklif ${quoteDocLabel} ile önizle`,
+                    render: (content) => quoteService.previewDraftDocumentAsync(savedQuoteId, content),
+                  }
+                : undefined
+            }
             onClose={() => {
               setIsTemplateEditorOpen(false);
               setEditingTemplate(null);
+              setTemplateRevision((r) => r + 1);
               loadTemplates();
             }}
             onSave={(templateId) => {
               setSelectedTemplateId(templateId);
               setIsTemplateEditorOpen(false);
               setEditingTemplate(null);
+              setTemplateRevision((r) => r + 1);
               loadTemplates();
             }}
           />,
           portalTarget
         )}
-      <PdfPreviewModal
-        open={showPdfPreview}
-        pdfUrl={pdfPreviewUrl}
-        title="Teklif Önizleme"
-        downloadFileName={`teklif_${activeQuote?.QuoteId ?? ''}.pdf`}
-        onClose={closePdfPreview}
+      <DocumentStudioModal
+        open={showDocumentStudio}
+        title={`Belge Merkezi · Teklif ${quoteDocLabel}`.trim()}
+        subtitle={activeQuote?.CustomerName}
+        kinds={documentStudioKinds}
+        activeKindId="quote"
+        onActiveKindChange={() => undefined}
+        onClose={() => setShowDocumentStudio(false)}
+        onManageTemplates={() => {
+          setShowDocumentStudio(false);
+          navigate('/document-templates?tab=quote');
+        }}
+        refreshToken={`${templateRevision}:${activeQuote?.UpdatedAt ?? ''}`}
+        notice={
+          savedQuoteId && isDirty && !isReadOnly
+            ? 'Kaydedilmemiş değişiklikler önizlemeye yansımaz. Güncel hâli görmek için önce teklifi kaydedin.'
+            : null
+        }
       />
       {showCreatePackageModal && (
         <div className="fixed inset-0 bg-black bg-opacity-60 flex items-center justify-center z-[70] p-4">

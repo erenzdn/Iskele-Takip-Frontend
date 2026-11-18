@@ -256,6 +256,13 @@ export type TipTapPlaceholderGroup = {
   items: TipTapPlaceholderItem[];
 };
 
+/** Şablon editöründe gerçek kayıt verisiyle önizleme (teklif/sözleşme içinden açıldığında). */
+export type TemplateRecordPreview = {
+  /** Önizle düğmesi etiketi, örn. "Teklif #12 ile önizle". */
+  label: string;
+  render: (content: unknown) => Promise<Blob>;
+};
+
 type TipTapTemplateEditorLayoutProps = {
   editor: Editor;
   pageTitle: string;
@@ -264,6 +271,10 @@ type TipTapTemplateEditorLayoutProps = {
   namePlaceholder: string;
   isBusy: boolean;
   onPreview: () => void;
+  /** Önizle düğmesinin etiketi (örn. "Teklifle önizle"). */
+  previewLabel?: string;
+  /** Önizle düğmesinin ipucu metni. */
+  previewHint?: string;
   onSave: () => void;
   onClose: () => void;
   pageMargins: PageMargins;
@@ -295,6 +306,8 @@ export default function TipTapTemplateEditorLayout({
   namePlaceholder,
   isBusy,
   onPreview,
+  previewLabel = 'Önizle',
+  previewHint,
   onSave,
   onClose,
   pageMargins,
@@ -449,10 +462,11 @@ export default function TipTapTemplateEditorLayout({
               type="button"
               onClick={onPreview}
               disabled={isBusy}
+              title={previewHint}
               className="btn-secondary !py-2 !px-3 text-xs flex items-center gap-1.5"
             >
               <EyeIcon size={16} />
-              {isBusy ? 'Hazırlanıyor…' : 'Önizle'}
+              {isBusy ? 'Hazırlanıyor…' : previewLabel}
             </button>
             <button
               type="button"

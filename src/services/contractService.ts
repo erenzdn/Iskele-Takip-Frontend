@@ -447,6 +447,11 @@ export const contractService = {
     return apiClient.postBlob(`/contracts/${contractId}/preview-document`, { templateId });
   },
 
+  /** Kaydedilmemiş şablon içeriğini bu kaydın gerçek verisiyle önizler (PDF). */
+  async previewDraftDocumentAsync(contractId: number, content: unknown): Promise<Blob> {
+    return apiClient.postBlob(`/contracts/${contractId}/preview-document`, { content });
+  },
+
   async getAuditLogsByContractAsync(contractId: number): Promise<AuditLog[]> {
     return apiClient.get<AuditLog[]>(`/contracts/${contractId}/audit-logs`);
   },

@@ -468,4 +468,9 @@ export const quoteService = {
   async previewDocumentAsync(quoteId: number, templateId: number): Promise<Blob> {
     return apiClient.postBlob(`/quotes/${quoteId}/preview-document`, { templateId });
   },
+
+  /** Kaydedilmemiş şablon içeriğini bu kaydın gerçek verisiyle önizler (PDF). */
+  async previewDraftDocumentAsync(quoteId: number, content: unknown): Promise<Blob> {
+    return apiClient.postBlob(`/quotes/${quoteId}/preview-document`, { content });
+  },
 };

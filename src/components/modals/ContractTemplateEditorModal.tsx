@@ -26,6 +26,7 @@ import { EditorPagination } from './EditorPaginationExtension';
 import { EditorWidgetPreview } from './EditorWidgetPreviewExtension';
 import { EditorTabKey } from './EditorTabKeyExtension';
 import TipTapTemplateEditorLayout, {
+  type TemplateRecordPreview,
   type TipTapPlaceholderGroup,
 } from './TipTapTemplateEditorLayout';
 import {
@@ -45,6 +46,11 @@ interface ContractTemplateEditorModalProps {
   isNew: boolean;
   onClose: () => void;
   onSave?: (templateId: number) => void;
+  /**
+   * Verilirse editördeki "Önizle", kaydedilmemiş içeriği örnek veri yerine
+   * bu kaydın (teklif/sözleşme) gerçek verisiyle önizler.
+   */
+  recordPreview?: TemplateRecordPreview;
 }
 
 const PLACEHOLDER_GROUPS: TipTapPlaceholderGroup[] = [
@@ -65,6 +71,7 @@ export default function ContractTemplateEditorModal({
   isNew,
   onClose,
   onSave,
+  recordPreview,
 }: ContractTemplateEditorModalProps) {
   const [templateName, setTemplateName] = useState('');
   const [isBusy, setIsBusy] = useState(false);
@@ -338,7 +345,18 @@ export default function ContractTemplateEditorModal({
         pageMargins
       );
 
-      const blob = await contractTemplateService.previewContentAsync(clonedContent);
+      let blob: Blob;
+      if (recordPreview) {
+        try {
+          blob = await recordPreview.render(clonedContent);
+        } catch (error) {
+          console.warn('Gerçek veriyle önizleme başarısız, örnek veriye düşülüyor:', error);
+          toast.warning('Kayıt verisiyle önizleme yapılamadı; örnek veriyle gösteriliyor.');
+          blob = await contractTemplateService.previewContentAsync(clonedContent);
+        }
+      } else {
+        blob = await contractTemplateService.previewContentAsync(clonedContent);
+      }
 
       if (blob.size === 0) {
         toast.error('PDF önizlemesi oluşturulamadı (sunucu boş yanıt döndü).');
@@ -388,6 +406,12 @@ export default function ContractTemplateEditorModal({
       namePlaceholder="Örn: Standart Kiralama Sözleşmesi"
       isBusy={isBusy}
       onPreview={handlePreview}
+      previewLabel={recordPreview ? recordPreview.label : 'Önizle'}
+      previewHint={
+        recordPreview
+          ? 'Kaydetmeden, bu kaydın gerçek verisiyle PDF önizlemesi'
+          : 'Kaydetmeden, örnek veriyle PDF önizlemesi'
+      }
       onSave={handleSave}
       onClose={onClose}
       pageMargins={pageMargins}

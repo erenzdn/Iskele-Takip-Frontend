@@ -17,6 +17,7 @@ import {
   ReturnCondition,
   ContractPriceCalculation,
   ContractTemplate,
+  QuoteTemplate,
   DeliveryMode,
   Warehouse,
   resolveContractQuoteType,
@@ -33,8 +34,11 @@ import { inventoryService } from '../../services/inventoryService';
 import { warehouseService } from '../../services/warehouseService';
 import { siteService } from '../../services/siteService';
 import { contractTemplateService } from '../../services/contractTemplateService';
+import { quoteTemplateService } from '../../services/quoteTemplateService';
+import { quoteService } from '../../services/quoteService';
 import ContractTemplateEditorModal from './ContractTemplateEditorModal';
-import PdfPreviewModal from './PdfPreviewModal';
+import DocumentStudioModal, { type DocumentStudioKind } from './DocumentStudioModal';
+import QuoteTemplateEditorModal from './QuoteTemplateEditorModal';
 import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
@@ -286,8 +290,14 @@ export default function ContractDetailModal({
   const [warehouseStockCache, setWarehouseStockCache] = useState<Record<string, number>>({});
   const [saveStockError, setSaveStockError] = useState<string | null>(null);
   const [contractPriceError, setContractPriceError] = useState<string | null>(null);
-  const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
-  const [showPdfPreview, setShowPdfPreview] = useState(false);
+  const [showDocumentStudio, setShowDocumentStudio] = useState(false);
+  const [studioKind, setStudioKind] = useState<'contract' | 'extre' | 'quote'>('contract');
+  /** Şablon kaydedilince / sözleşme yenilenince Belge Merkezi önizlemelerini tazelemek için. */
+  const [templateRevision, setTemplateRevision] = useState(0);
+  const [quoteTemplates, setQuoteTemplates] = useState<QuoteTemplate[]>([]);
+  const [selectedQuoteTemplateId, setSelectedQuoteTemplateId] = useState<number | ''>('');
+  const [quoteTemplatesLoaded, setQuoteTemplatesLoaded] = useState(false);
+  const [editingQuoteTemplate, setEditingQuoteTemplate] = useState<{ template: QuoteTemplate | null } | null>(null);
   const [loadingTemplate, setLoadingTemplate] = useState(false);
   const [isEnsuringExtresiTemplate, setIsEnsuringExtresiTemplate] = useState(false);
   const [isAddingMaterialTable, setIsAddingMaterialTable] = useState(false);
@@ -601,16 +611,14 @@ export default function ContractDetailModal({
     }
   };
 
-  const handleDocumentKindChange = async (nextKind: ContractDocumentKind) => {
-    setDocumentKind(nextKind);
-    if (nextKind !== 'extre') return;
-
+  /** Kullanım Extresi şablonu yoksa oluşturur ve seçer. Başarısızsa false döner. */
+  const ensureExtreTemplateSelected = async (): Promise<boolean> => {
     const partitioned = partitionContractTemplates(templates);
     if (partitioned.extreTemplates.length > 0) {
       if (!selectedExtreTemplateId) {
         setSelectedExtreTemplateId(pickDefaultTemplateId(partitioned.extreTemplates));
       }
-      return;
+      return true;
     }
 
     try {
@@ -618,13 +626,21 @@ export default function ContractDetailModal({
       const template = await contractTemplateService.ensureKullanimExtresiTemplateAsync();
       await loadTemplates();
       setSelectedExtreTemplateId(template.TemplateId);
+      return true;
     } catch (error) {
       console.error('Kullanım Extresi şablon hatası:', error);
       toast.error(getApiErrorMessage(error) || 'Kullanım Extresi şablonu oluşturulamadı');
-      setDocumentKind('contract');
+      return false;
     } finally {
       setIsEnsuringExtresiTemplate(false);
     }
+  };
+
+  const handleDocumentKindChange = async (nextKind: ContractDocumentKind) => {
+    setDocumentKind(nextKind);
+    if (nextKind !== 'extre') return;
+    const ok = await ensureExtreTemplateSelected();
+    if (!ok) setDocumentKind('contract');
   };
 
   useEffect(() => {
@@ -2246,93 +2262,216 @@ export default function ContractDetailModal({
     </>
   );
 
+  const triggerBlobDownload = (blob: Blob, fileName: string) => {
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.click();
+    window.URL.revokeObjectURL(url);
+  };
+
+  const downloadContractDocument = async (
+    templateId: number,
+    format: 'pdf' | 'docx',
+    kind: ContractDocumentKind = documentKind
+  ) => {
+    if (!contract) return;
+    try {
+      const blob = await contractService.generateDocumentAsync(contract.ContractId, templateId, format);
+      if (blob.size === 0) {
+        toast.error('Belge oluşturulamadı (sunucu boş yanıt döndü).');
+        return;
+      }
+      const code = effectiveContract?.ContractCode || contract.ContractId;
+      triggerBlobDownload(blob, `${kind === 'extre' ? 'extre' : 'sozlesme'}_${code}.${format}`);
+    } catch (error) {
+      console.error('Generate document error:', error);
+      toast.error(getApiErrorMessage(error) || 'Döküman oluşturma hatası');
+    }
+  };
+
   const handleGenerateDocument = async (format: 'pdf' | 'docx' = 'pdf') => {
     if (!contract || !activeTemplateId) {
       toast.warning('Döküman oluşturmak için bir şablon seçmelisiniz');
       return;
     }
-
     try {
       setIsBusy(true);
-      const blob = await contractService.generateDocumentAsync(
-        contract.ContractId,
-        Number(activeTemplateId),
-        format
-      );
-
-      if (blob.size === 0) {
-        toast.error('Belge oluşturulamadı (sunucu boş yanıt döndü).');
-        return;
-      }
-
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `sozlesme_${contract.ContractId}.${format}`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-    } catch (error) {
-      console.error('Generate document error:', error);
-      toast.error(getApiErrorMessage(error) || 'Döküman oluşturma hatası');
+      await downloadContractDocument(Number(activeTemplateId), format);
     } finally {
       setIsBusy(false);
     }
   };
 
-  const handlePreviewDocument = async () => {
-    if (!contract || !activeTemplateId) {
-      toast.warning('Önizleme için bir şablon seçmelisiniz');
+  const openContractTemplateEditor = async (templateId: number | null) => {
+    if (templateId == null) {
+      setEditingTemplate(null);
+      setIsNewTemplate(true);
+      setIsTemplateEditorOpen(true);
       return;
     }
-
     try {
-      setIsBusy(true);
-      const blob = await contractService.previewDocumentAsync(
-        contract.ContractId,
-        Number(activeTemplateId)
-      );
-      // Backend tanı: gelen yanıtın tipi ve boyutu (konsolda kontrol edin)
-      console.log('[PDF Önizleme] Blob:', { size: blob.size, type: blob.type });
-
-      if (blob.size === 0) {
-        toast.error(
-          'Sunucu boş yanıt döndürdü (boyut: 0). Backend preview-document endpoint\'ini kontrol edin.'
-        );
-        return;
-      }
-      const isPdf = blob.type === 'application/pdf' || blob.type === '';
-      if (!isPdf && blob.size < 10000) {
-        const text = await blob.text();
-        try {
-          const j = JSON.parse(text);
-          toast.error('Önizleme hatası (sunucu PDF değil): ' + (j.message || text.slice(0, 200)));
-        } catch {
-          toast.error(
-            'Sunucu PDF döndürmedi. Content-Type: ' + (blob.type || '(boş)') + '. Backend\'i kontrol edin.'
-          );
-        }
-        return;
-      }
-      if (!isPdf) {
-        console.warn('[PDF Önizleme] Content-Type PDF değil:', blob.type, '- yine de açmayı deniyoruz.');
-      }
-      const url = window.URL.createObjectURL(blob);
-      setPdfPreviewUrl(url);
-      setShowPdfPreview(true);
+      setLoadingTemplate(true);
+      const fullTemplate = await contractTemplateService.getByIdAsync(templateId);
+      setEditingTemplate(fullTemplate);
+      setIsNewTemplate(false);
+      setIsTemplateEditorOpen(true);
     } catch (error) {
-      console.error('Preview document error:', error);
-      toast.error(getApiErrorMessage(error) || 'Önizleme hatası');
+      console.error('Şablon yükleme hatası:', error);
+      toast.error(getApiErrorMessage(error));
     } finally {
-      setIsBusy(false);
+      setLoadingTemplate(false);
     }
   };
 
-  const closePdfPreview = () => {
-    setShowPdfPreview(false);
-    if (pdfPreviewUrl) {
-      window.URL.revokeObjectURL(pdfPreviewUrl);
-      setPdfPreviewUrl(null);
+  const loadQuoteTemplates = async () => {
+    try {
+      const list = await quoteTemplateService.getAllAsync();
+      setQuoteTemplates(list);
+      setSelectedQuoteTemplateId((prev) => prev || pickDefaultTemplateId(list));
+    } catch (error) {
+      console.error('Load quote templates error:', error);
+      setQuoteTemplates([]);
+    } finally {
+      setQuoteTemplatesLoaded(true);
     }
+  };
+
+  const openQuoteTemplateEditor = async (templateId: number | null) => {
+    if (templateId == null) {
+      setEditingQuoteTemplate({ template: null });
+      return;
+    }
+    try {
+      setLoadingTemplate(true);
+      setEditingQuoteTemplate({ template: await quoteTemplateService.getByIdAsync(templateId) });
+    } catch (error) {
+      console.error('Şablon yükleme hatası:', error);
+      toast.error(getApiErrorMessage(error));
+    } finally {
+      setLoadingTemplate(false);
+    }
+  };
+
+  const openDocumentStudio = () => {
+    setStudioKind(isRentalContract ? documentKind : 'contract');
+    setShowDocumentStudio(true);
+  };
+
+  useEffect(() => {
+    if (showDocumentStudio && sourceQuoteId && !quoteTemplatesLoaded) {
+      void loadQuoteTemplates();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [showDocumentStudio, sourceQuoteId, quoteTemplatesLoaded]);
+
+  // Sözleşme verisi yenilendiğinde (kaydet, iade, zeyilname…) önizlemeler tazelensin.
+  useEffect(() => {
+    setTemplateRevision((r) => r + 1);
+  }, [fullContract]);
+
+  const savedContractId = !isNew && contract?.ContractId ? contract.ContractId : null;
+  const contractDocLabel =
+    effectiveContract?.ContractCode || (savedContractId ? `#${savedContractId}` : '');
+  const { contractTemplates: contractKindTemplates, extreTemplates: extreKindTemplates } =
+    partitionContractTemplates(templates);
+
+  const copyContractTemplate = async (templateId: number, kind: ContractDocumentKind) => {
+    const source = templates.find((t) => t.TemplateId === templateId);
+    try {
+      const res = await contractTemplateService.copyAsync(
+        templateId,
+        source ? `${source.TemplateName} (Kopya)` : undefined
+      );
+      await loadTemplates();
+      if (kind === 'extre') setSelectedExtreTemplateId(res.TemplateId);
+      else setSelectedContractTemplateId(res.TemplateId);
+      toast.success('Şablon kopyalandı');
+    } catch (error) {
+      toast.error(getApiErrorMessage(error));
+    }
+  };
+
+  const contractRender = (templateId: number) =>
+    savedContractId
+      ? contractService.previewDocumentAsync(savedContractId, templateId)
+      : contractTemplateService.previewAsync(templateId);
+  const contractDataHint = savedContractId
+    ? `Sözleşme ${contractDocLabel} verisiyle gösteriliyor.`
+    : 'Sözleşme henüz kaydedilmedi; önizleme örnek veriyle gösteriliyor.';
+
+  const documentStudioKinds: DocumentStudioKind[] = [
+    {
+      id: 'contract',
+      label: 'Sözleşme',
+      hint: contractDataHint,
+      templates: contractKindTemplates,
+      selectedTemplateId: selectedContractTemplateId,
+      onSelect: (id) => setSelectedContractTemplateId(id),
+      render: contractRender,
+      download: savedContractId ? (id, format) => downloadContractDocument(id, format, 'contract') : undefined,
+      onEdit: (id) => void openContractTemplateEditor(id),
+      onCreate: () => void openContractTemplateEditor(null),
+      onCopy: (id) => copyContractTemplate(id, 'contract'),
+      emptyText: 'Henüz sözleşme şablonu yok. "Yeni" ile oluşturun.',
+    },
+    ...(isRentalContract
+      ? [
+          {
+            id: 'extre',
+            label: 'Kullanım Extresi',
+            hint: contractDataHint,
+            templates: extreKindTemplates,
+            selectedTemplateId: selectedExtreTemplateId,
+            onSelect: (id: number) => setSelectedExtreTemplateId(id),
+            render: contractRender,
+            download: savedContractId
+              ? (id: number, format: 'pdf' | 'docx') => downloadContractDocument(id, format, 'extre')
+              : undefined,
+            onEdit: (id: number) => void openContractTemplateEditor(id),
+            onCopy: (id: number) => copyContractTemplate(id, 'extre'),
+            onActivate: async () => {
+              await ensureExtreTemplateSelected();
+            },
+            emptyText: 'Kullanım Extresi şablonu bulunamadı.',
+          } satisfies DocumentStudioKind,
+        ]
+      : []),
+    ...(sourceQuoteId
+      ? [
+          {
+            id: 'quote',
+            label: 'Teklif',
+            hint: `Bağlı teklif ${sourceQuoteCode || `#${sourceQuoteId}`} verisiyle gösteriliyor.`,
+            templates: quoteTemplates,
+            selectedTemplateId: selectedQuoteTemplateId,
+            onSelect: (id: number) => setSelectedQuoteTemplateId(id),
+            render: (id: number) => quoteService.previewDocumentAsync(sourceQuoteId, id),
+            download: async (id: number, format: 'pdf' | 'docx') => {
+              try {
+                const blob = await quoteService.generateDocumentAsync(sourceQuoteId, id, format);
+                if (blob.size === 0) {
+                  toast.error('Belge oluşturulamadı (sunucu boş yanıt döndü).');
+                  return;
+                }
+                triggerBlobDownload(blob, `teklif_${sourceQuoteCode || sourceQuoteId}.${format}`);
+              } catch (error) {
+                toast.error(getApiErrorMessage(error) || 'Döküman oluşturma hatası');
+              }
+            },
+            onEdit: (id: number) => void openQuoteTemplateEditor(id),
+            onCreate: () => void openQuoteTemplateEditor(null),
+            emptyText: quoteTemplatesLoaded ? 'Henüz teklif şablonu yok.' : 'Yükleniyor…',
+          } satisfies DocumentStudioKind,
+        ]
+      : []),
+  ];
+
+  const handleStudioKindChange = (kindId: string) => {
+    const next = kindId as 'contract' | 'extre' | 'quote';
+    setStudioKind(next);
+    if (next !== 'quote') setDocumentKind(next);
   };
 
   const handleOpenSourceQuote = () => {
@@ -3544,41 +3683,14 @@ export default function ContractDetailModal({
                       </option>
                     ))}
                   </select>
-                  {activeTemplateId && (
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        const template = visibleTemplates.find((t) => t.TemplateId === Number(activeTemplateId));
-                        if (!template) return;
-                        try {
-                          setLoadingTemplate(true);
-                          const fullTemplate = await contractTemplateService.getByIdAsync(template.TemplateId);
-                          setEditingTemplate(fullTemplate);
-                          setIsNewTemplate(false);
-                          setIsTemplateEditorOpen(true);
-                        } catch (error) {
-                          console.error('Şablon yükleme hatası:', error);
-                          toast.error(getApiErrorMessage(error));
-                        } finally {
-                          setLoadingTemplate(false);
-                        }
-                      }}
-                      disabled={loadingTemplate}
-                      className={`btn-secondary shrink-0 ${compactBtn}`}
-                    >
-                      {loadingTemplate ? '...' : 'Düzenle'}
-                    </button>
-                  )}
                   <button
                     type="button"
-                    onClick={() => {
-                      setEditingTemplate(null);
-                      setIsNewTemplate(true);
-                      setIsTemplateEditorOpen(true);
-                    }}
+                    onClick={openDocumentStudio}
+                    disabled={loadingTemplate || isEnsuringExtresiTemplate}
                     className={`btn-secondary shrink-0 ${compactBtn}`}
+                    title="Belge Merkezi: şablon seç, düzenle ve gerçek veriyle önizle"
                   >
-                    Yeni
+                    Belgeler
                   </button>
                 </div>
               </div>
@@ -3683,8 +3795,14 @@ export default function ContractDetailModal({
                 )}
                 {!isNew && contract && activeTemplateId && (
                   <>
-                    <button type="button" onClick={handlePreviewDocument} disabled={isBusy} className={`btn-primary ${compactBtn}`}>
-                      {isBusy ? 'Yükleniyor...' : 'Önizle'}
+                    <button
+                      type="button"
+                      onClick={openDocumentStudio}
+                      disabled={isBusy}
+                      className={`btn-primary ${compactBtn}`}
+                      title="Belge Merkezi'nde önizle"
+                    >
+                      Önizle
                     </button>
                     <button type="button" onClick={() => handleGenerateDocument('pdf')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>PDF</button>
                     <button type="button" onClick={() => handleGenerateDocument('docx')} disabled={isBusy} className={`btn-secondary ${compactBtn}`}>Word</button>
@@ -4670,16 +4788,47 @@ export default function ContractDetailModal({
         <ContractTemplateEditorModal
           template={editingTemplate}
           isNew={isNewTemplate}
+          recordPreview={
+            savedContractId
+              ? {
+                  label: `Sözleşme ${contractDocLabel} ile önizle`,
+                  render: (content) => contractService.previewDraftDocumentAsync(savedContractId, content),
+                }
+              : undefined
+          }
           onClose={() => {
             setIsTemplateEditorOpen(false);
             setEditingTemplate(null);
+            setTemplateRevision((r) => r + 1);
             loadTemplates();
           }}
           onSave={(templateId) => {
             setActiveTemplateId(templateId);
             setIsTemplateEditorOpen(false);
             setEditingTemplate(null);
+            setTemplateRevision((r) => r + 1);
             loadTemplates();
+          }}
+        />
+      )}
+      {editingQuoteTemplate && sourceQuoteId && (
+        <QuoteTemplateEditorModal
+          template={editingQuoteTemplate.template}
+          isNew={editingQuoteTemplate.template == null}
+          recordPreview={{
+            label: `Teklif ${sourceQuoteCode || `#${sourceQuoteId}`} ile önizle`,
+            render: (content) => quoteService.previewDraftDocumentAsync(sourceQuoteId, content),
+          }}
+          onClose={() => {
+            setEditingQuoteTemplate(null);
+            setTemplateRevision((r) => r + 1);
+            void loadQuoteTemplates();
+          }}
+          onSave={(templateId) => {
+            setSelectedQuoteTemplateId(templateId);
+            setEditingQuoteTemplate(null);
+            setTemplateRevision((r) => r + 1);
+            void loadQuoteTemplates();
           }}
         />
       )}
@@ -4736,12 +4885,24 @@ export default function ContractDetailModal({
           }}
         />
       )}
-      <PdfPreviewModal
-        open={showPdfPreview}
-        pdfUrl={pdfPreviewUrl}
-        title={`Sözleşme #${contract?.ContractId ?? ''} Önizleme`}
-        downloadFileName={`sozlesme_${contract?.ContractId ?? ''}.pdf`}
-        onClose={closePdfPreview}
+      <DocumentStudioModal
+        open={showDocumentStudio}
+        title={`Belge Merkezi · Sözleşme ${contractDocLabel}`.trim()}
+        subtitle={effectiveContract?.CustomerName}
+        kinds={documentStudioKinds}
+        activeKindId={studioKind}
+        onActiveKindChange={handleStudioKindChange}
+        onClose={() => setShowDocumentStudio(false)}
+        onManageTemplates={() => {
+          setShowDocumentStudio(false);
+          navigate(studioKind === 'quote' ? '/document-templates?tab=quote' : '/document-templates?tab=contract');
+        }}
+        refreshToken={templateRevision}
+        notice={
+          savedContractId && !isReadOnly
+            ? 'Düzenleme modundasınız; kaydedilmemiş değişiklikler önizlemeye yansımaz.'
+            : null
+        }
       />
       {openHistoryDetailId != null &&
         historyPopoverPos &&
