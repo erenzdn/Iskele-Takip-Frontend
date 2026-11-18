@@ -1,4 +1,5 @@
 ﻿import { useState, useEffect, useMemo, useCallback, useRef, type MouseEvent } from 'react';
+import { SortIndicator, sortRows, toSortNumber, useTableSort } from '../hooks/useTableSort';
 import { MagnifyingGlassIcon, PackageIcon } from '@phosphor-icons/react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { inventoryService } from '../services/inventoryService';
@@ -220,6 +221,38 @@ export default function InventoryPage() {
       return matchesSubCategory && matchesMin && matchesMax && matchesLanguage && matchesStockStatus;
     });
   }, [allInventory, selectedSubCategories, subCategoryRows, minAvailable, maxAvailable, selectedLanguage, stockStatus]);
+
+  const { sort: inventorySort, toggleSort: toggleInventorySort } = useTableSort<InventoryColumnKey>();
+  const sortedInventory = useMemo(
+    () =>
+      sortRows(filteredInventory, inventorySort, (item, key) => {
+        switch (key) {
+          case 'itemCode':
+            return item.ItemCode;
+          case 'itemName':
+            return selectedLanguage === 'tr' ? item.ItemName : item.ItemNameEn || item.ItemName;
+          case 'weight':
+            return toSortNumber(item.Weight);
+          case 'unit':
+            return item.UnitName;
+          case 'monthlyListPrice':
+            return toSortNumber(item.MonthlyListPrice);
+          case 'unitPriceTry':
+            return toSortNumber(item.UnitPrice ?? item.PurchasePrice);
+          case 'unitPriceUsd':
+            return toSortNumber(item.UnitPriceUsd);
+          case 'unitPriceEur':
+            return toSortNumber(item.UnitPriceEur);
+          case 'status':
+            return Number(item.TotalStock) - Number(item.OnRent) - Number(item.Reserved ?? 0);
+          case 'audit':
+            return item.CreatedAt ? new Date(item.CreatedAt) : null;
+          default:
+            return null;
+        }
+      }),
+    [filteredInventory, inventorySort, selectedLanguage]
+  );
 
   const selectAllFiltered = useCallback(() => {
     setSelectionMode(true);
@@ -857,74 +890,101 @@ export default function InventoryPage() {
                   ) : null}
                   {isInventoryColVisible('itemCode') ? (
                     <th
-                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('itemCode')}
+                      onClick={() => toggleInventorySort('itemCode')}
+                      aria-sort={inventorySort.key === 'itemCode' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Ürün Kodu
+                      <SortIndicator active={inventorySort.key === 'itemCode'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('itemName') ? (
                     <th
-                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('itemName')}
+                      onClick={() => toggleInventorySort('itemName')}
+                      aria-sort={inventorySort.key === 'itemName' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Ürün Adı
+                      <SortIndicator active={inventorySort.key === 'itemName'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('weight') ? (
                     <th
-                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('weight')}
+                      onClick={() => toggleInventorySort('weight')}
+                      aria-sort={inventorySort.key === 'weight' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Ağırlık
+                      <SortIndicator active={inventorySort.key === 'weight'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('unit') ? (
                     <th
-                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('unit')}
+                      onClick={() => toggleInventorySort('unit')}
+                      aria-sort={inventorySort.key === 'unit' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Ana Birim
+                      <SortIndicator active={inventorySort.key === 'unit'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('monthlyListPrice') ? (
                     <th
-                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('monthlyListPrice')}
+                      onClick={() => toggleInventorySort('monthlyListPrice')}
+                      aria-sort={inventorySort.key === 'monthlyListPrice' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Aylık Liste (₺)
+                      <SortIndicator active={inventorySort.key === 'monthlyListPrice'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('unitPriceTry') ? (
                     <th
-                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('unitPriceTry')}
+                      onClick={() => toggleInventorySort('unitPriceTry')}
+                      aria-sort={inventorySort.key === 'unitPriceTry' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Birim (₺)
+                      <SortIndicator active={inventorySort.key === 'unitPriceTry'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('unitPriceUsd') ? (
                     <th
-                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('unitPriceUsd')}
+                      onClick={() => toggleInventorySort('unitPriceUsd')}
+                      aria-sort={inventorySort.key === 'unitPriceUsd' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Birim ($)
+                      <SortIndicator active={inventorySort.key === 'unitPriceUsd'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('unitPriceEur') ? (
                     <th
-                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-right py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('unitPriceEur')}
+                      onClick={() => toggleInventorySort('unitPriceEur')}
+                      aria-sort={inventorySort.key === 'unitPriceEur' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Birim (€)
+                      <SortIndicator active={inventorySort.key === 'unitPriceEur'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {isInventoryColVisible('status') ? (
                     <th
-                      className="text-center py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-center py-0.5 px-1.5 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('status')}
+                      onClick={() => toggleInventorySort('status')}
+                      aria-sort={inventorySort.key === 'status' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Durum
+                      <SortIndicator active={inventorySort.key === 'status'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                   {showArchived && canDelete ? (
@@ -934,16 +994,19 @@ export default function InventoryPage() {
                   ) : null}
                   {isInventoryColVisible('audit') ? (
                     <th
-                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary bg-background-hover truncate"
+                      className="text-left py-0.5 px-1.5 font-medium text-text-secondary bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={inventoryColWidthStyle('audit')}
+                      onClick={() => toggleInventorySort('audit')}
+                      aria-sort={inventorySort.key === 'audit' ? (inventorySort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Kayıt Bilgisi
+                      <SortIndicator active={inventorySort.key === 'audit'} dir={inventorySort.dir} />
                     </th>
                   ) : null}
                 </tr>
               </thead>
               <tbody>
-                {filteredInventory.map((item, index) => {
+                {sortedInventory.map((item, index) => {
                   const archived = isInventoryArchived(item);
                   const availableStock = item.TotalStock - item.OnRent - (item.Reserved ?? 0);
                   const stockPercentage = item.TotalStock > 0 ? (availableStock / item.TotalStock) * 100 : 0;

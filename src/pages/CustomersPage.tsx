@@ -22,6 +22,9 @@ import {
 import { useContextMenu, useContextMenuHandlers, type CustomerModalInitialTab, type CustomerRowTarget } from '../context-menu';
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
+import { SortIndicator, sortRows, useTableSort } from '../hooks/useTableSort';
+
+type CustomerSortKey = 'id' | 'name' | 'phone' | 'taxId' | 'email';
 
 export default function CustomersPage() {
   const navigate = useNavigate();
@@ -50,6 +53,10 @@ export default function CustomersPage() {
   const [hadFirstLoad, setHadFirstLoad] = useState(false);
   const hadFirstLoadRef = useRef(false);
   const { openContextMenu } = useContextMenu();
+  const { sort: customerSort, toggleSort: toggleCustomerSort } = useTableSort<CustomerSortKey>({
+    key: 'name',
+    dir: 'asc',
+  });
 
   const fetchCustomers = useCallback(async () => {
     const q = debouncedSearch.trim() || undefined;
@@ -60,6 +67,8 @@ export default function CustomersPage() {
         search: q,
         limit: pageLimit,
         offset,
+        sortBy: customerSort.key ?? undefined,
+        sortDir: customerSort.dir,
       });
       setCustomers(page.items);
       setTotalCustomers(page.total);
@@ -73,11 +82,11 @@ export default function CustomersPage() {
         setHadFirstLoad(true);
       }
     }
-  }, [debouncedSearch, offset, pageLimit]);
+  }, [debouncedSearch, offset, pageLimit, customerSort]);
 
   useEffect(() => {
     setOffset(0);
-  }, [debouncedSearch]);
+  }, [debouncedSearch, customerSort]);
 
   useEffect(() => {
     void fetchCustomers();
@@ -190,9 +199,23 @@ export default function CustomersPage() {
     )
   );
 
-  const displayedCustomers = customers
-    .slice()
-    .sort((a, b) => (a.Name || '').localeCompare(b.Name || '', 'tr-TR'));
+  // Sunucu sıralı sayfa döndürür; eski API sürümü sortBy'ı yok sayarsa sayfa içi sıralama yine doğru görünür.
+  const displayedCustomers = sortRows(customers, customerSort, (customer, key) => {
+    switch (key) {
+      case 'id':
+        return Number(customer.CustomerId);
+      case 'name':
+        return customer.Name;
+      case 'phone':
+        return customer.PhoneNumber;
+      case 'taxId':
+        return customer.TaxId;
+      case 'email':
+        return customer.Email;
+      default:
+        return null;
+    }
+  });
 
   const hasPrev = offset > 0;
   const hasNext = offset + pageLimit < totalCustomers;
@@ -253,42 +276,57 @@ export default function CustomersPage() {
                 <tr>
                   {isCustomerColVisible('id') ? (
                     <th
-                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={customerColWidthStyle('id')}
+                      onClick={() => toggleCustomerSort('id')}
+                      aria-sort={customerSort.key === 'id' ? (customerSort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       ID
+                      <SortIndicator active={customerSort.key === 'id'} dir={customerSort.dir} />
                     </th>
                   ) : null}
                   {isCustomerColVisible('name') ? (
                     <th
-                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={customerColWidthStyle('name')}
+                      onClick={() => toggleCustomerSort('name')}
+                      aria-sort={customerSort.key === 'name' ? (customerSort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Müşteri Adı
+                      <SortIndicator active={customerSort.key === 'name'} dir={customerSort.dir} />
                     </th>
                   ) : null}
                   {isCustomerColVisible('phone') ? (
                     <th
-                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={customerColWidthStyle('phone')}
+                      onClick={() => toggleCustomerSort('phone')}
+                      aria-sort={customerSort.key === 'phone' ? (customerSort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Telefon
+                      <SortIndicator active={customerSort.key === 'phone'} dir={customerSort.dir} />
                     </th>
                   ) : null}
                   {isCustomerColVisible('taxId') ? (
                     <th
-                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={customerColWidthStyle('taxId')}
+                      onClick={() => toggleCustomerSort('taxId')}
+                      aria-sort={customerSort.key === 'taxId' ? (customerSort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       Vergi No
+                      <SortIndicator active={customerSort.key === 'taxId'} dir={customerSort.dir} />
                     </th>
                   ) : null}
                   {isCustomerColVisible('email') ? (
                     <th
-                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate"
+                      className="text-left py-1 px-2 font-medium text-text-secondary border-r border-background-border last:border-r-0 bg-background-hover truncate cursor-pointer select-none hover:text-text-primary"
                       style={customerColWidthStyle('email')}
+                      onClick={() => toggleCustomerSort('email')}
+                      aria-sort={customerSort.key === 'email' ? (customerSort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
                     >
                       E-posta
+                      <SortIndicator active={customerSort.key === 'email'} dir={customerSort.dir} />
                     </th>
                   ) : null}
                   {isCustomerColVisible('preferredContact') ? (

@@ -28,6 +28,9 @@ export interface CustomerListQuery {
   includeArchived?: boolean;
   limit?: number;
   offset?: number;
+  /** Sunucu tarafı sıralama (beyaz liste: id, name, phone, taxId, email). */
+  sortBy?: 'id' | 'name' | 'phone' | 'taxId' | 'email';
+  sortDir?: 'asc' | 'desc';
 }
 
 interface CustomerQueryOptions {
@@ -56,6 +59,8 @@ function buildCustomersEndpoint(query?: CustomerListQuery): string {
   if (query?.includeArchived) sp.set('includeArchived', 'true');
   if (query?.limit != null) sp.set('limit', String(query.limit));
   if (query?.offset != null) sp.set('offset', String(query.offset));
+  if (query?.sortBy) sp.set('sortBy', query.sortBy);
+  if (query?.sortBy && query?.sortDir) sp.set('sortDir', query.sortDir);
   const qs = sp.toString();
   return qs ? `/customers?${qs}` : '/customers';
 }
