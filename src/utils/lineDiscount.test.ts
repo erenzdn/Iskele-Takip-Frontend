@@ -402,15 +402,21 @@ describe('lineDiscount.encodeLinePricingForPersistence', () => {
     expect(lineNetFromGross(encoded.price * 10, encoded.discountPercent)).toBe(1499.5);
   });
 
-  it('1.450 gibi yuvarlak tutarı 4 haneli % ile korur', () => {
+  it('1.450 gibi yuvarlak tutarı 10 haneli % ile korur', () => {
     const pct = ((1500 - 1450) / 1500) * 100;
     const encoded = encodeLinePricingForPersistence({
       currentPrice: 150,
       quantity: 10,
       discountPercent: pct,
     });
-    expect(encoded).toMatchObject({ price: 150, discountPercent: 3.3333, priceChanged: false });
+    expect(encoded).toMatchObject({ price: 150, discountPercent: 3.3333333333, priceChanged: false });
     expect(lineNetFromGross(1500, encoded.discountPercent)).toBe(1450);
+  });
+
+  it('alt toplamdan çözülen 6 haneli yüzde kayıtta kırpılmaz (110.000,00 → 109.999,96 olmaz)', () => {
+    const pct = 31.645473;
+    const encoded = encodeLinePricingForPersistence({ currentPrice: 1000, quantity: 1, discountPercent: pct });
+    expect(encoded.discountPercent).toBe(pct);
   });
 
   it('4 hane yetmezse fiyat override ile kodlar', () => {

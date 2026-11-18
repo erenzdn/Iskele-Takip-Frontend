@@ -4,13 +4,14 @@
  *
  * Net (yeşil toplam) yazıldığında yüzde, hedef kuruşu birebir üretecek kadar
  * incelikte saklanır. 2 hane yetiyorsa (ör. %10) 2 hanede kalır.
- * Backend QuoteDetails/ContractDetails.Iskonto = NUMERIC(7,4) → kayıtta en fazla 4 hane.
+ * Backend Quotes/QuoteDetails/Contracts/ContractDetails.Iskonto = NUMERIC(14,10) → kayıtta en fazla 10 hane;
+ * ekrandaki yüzde kayıttan sonra aynen geri gelir, toplam kaymaz.
  */
 
 export const MONEY_DECIMALS = 2;
 export const PERCENT_DECIMALS = 2;
-/** Backend NUMERIC(7,4) ile hizalı kayıt hassasiyeti. */
-export const PERSISTED_PERCENT_DECIMALS = 4;
+/** Backend NUMERIC(14,10) ile hizalı kayıt hassasiyeti (= PERCENT_MAX_DECIMALS). */
+export const PERSISTED_PERCENT_DECIMALS = 10;
 /** Kuruşluk net farkını yüzdeye çevirmek için üst sınır (1 kuruş / ~10^8). */
 export const PERCENT_MAX_DECIMALS = 10;
 
@@ -19,6 +20,15 @@ export function roundTo(value: number, decimals: number): number {
   if (!Number.isFinite(value)) return 0;
   const f = 10 ** decimals;
   return Math.round((value + Number.EPSILON) * f) / f;
+}
+
+/**
+ * Para tutarını kuruşa yuvarlar; önce 6 haneye sabitleyerek kayan nokta gürültüsünü siler.
+ * (fiyat/30)×adet×gün ile fiyat×adet×(gün/30) aynı tutardır ama float'ta yarım kuruş sınırında
+ * farklı yöne düşebilir. Backend lineIskonto.moneyRound ile birebir aynı kural.
+ */
+export function roundMoney(value: number): number {
+  return roundTo(roundTo(value, 6), MONEY_DECIMALS);
 }
 
 /** 0–100 aralığı; ondalık hassasiyeti korunur. */
@@ -70,7 +80,7 @@ export function parseDiscountInput(raw: string): number | null {
 export function lineNetFromGross(gross: number, discountPercent: number): number {
   const g = Number.isFinite(gross) ? Math.max(0, gross) : 0;
   const pct = clampDiscountRange(discountPercent);
-  return roundTo(g * (1 - pct / 100), MONEY_DECIMALS);
+  return roundMoney(g * (1 - pct / 100));
 }
 
 export type NetToDiscountResult = {
@@ -313,41 +323,19 @@ function persistedPercent(pct: number): number {
   return roundTo(clampDiscountRange(pct), PERSISTED_PERCENT_DECIMALS);
 }
 
-function netAtPrice(price: number, quantity: number, pct: number): number {
-  return lineNetFromGross(Math.max(0, price) * Math.max(0, quantity), pct);
-}
-
 /**
- * Backend Iskonto NUMERIC(7,4); 4 haneli % ile hedef net elde edilir.
- * 
- * Sektör standardı: İskonto yüzdesi değiştirilir, fiyat sabittir (snapshot integrity).
- * Fiyat değişikliği sadece backend'in iskonto hassasiyetiyle hedef net üretilemediğinde
- * ve kullanıcı açıkça fiyat override yapmışsa yapılır.
- * 
- * Bu yaklaşım data integrity'yi korur ve backend validation'larını bozmaz.
+ * Backend Iskonto NUMERIC(14,10); ekranda üretilen yüzde (en fazla 10 hane) aynen saklanır.
+ * Sektör standardı: iskonto yüzdesi taşır, fiyat sabittir (snapshot integrity).
  */
 export function encodeLinePricingForPersistence(params: {
   currentPrice: number;
   quantity: number;
   discountPercent: number;
 }): EncodedLinePricing {
-  const qty = Number.isFinite(params.quantity) ? params.quantity : 0;
   const currentPrice = Number.isFinite(params.currentPrice) ? Math.max(0, params.currentPrice) : 0;
-  const pctIn = clampDiscountRange(params.discountPercent);
-  const targetNet = lineNetFromGross(currentPrice * Math.max(0, qty), pctIn);
-
-  if (qty <= 0) {
-    return { discountPercent: persistedPercent(pctIn), price: currentPrice, priceChanged: false };
-  }
-
-  // 1. Önce 4 haneli iskonto ile dene (backend NUMERIC(7,4) desteği)
-  const pct4 = persistedPercent(pctIn);
-  if (netAtPrice(currentPrice, qty, pct4) === targetNet) {
-    return { discountPercent: pct4, price: currentPrice, priceChanged: false };
-  }
-
-  // 2. Eğer iskonto ile hedef net üretilemiyorsa, kullanıcı muhtemelen 
-  //    manuel olarak fiyat override yapmıştır. Bu durumda da fiyatı koru.
-  //    Backend validation'ları için snapshot fiyatlar değişmemeli.
-  return { discountPercent: pct4, price: currentPrice, priceChanged: false };
+  return {
+    discountPercent: persistedPercent(params.discountPercent),
+    price: currentPrice,
+    priceChanged: false,
+  };
 }

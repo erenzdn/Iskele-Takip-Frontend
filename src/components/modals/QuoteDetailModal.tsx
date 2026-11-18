@@ -1157,6 +1157,7 @@ export default function QuoteDetailModal({
           quoteItems.map((item) => ({
             gross: getLineTotal(item, MONTHLY_PRICING_DAYS),
             discountPercent: getRowDiscountPercent(item),
+            scalesWithDays: item.kind !== 'manual',
           })),
           billedDays,
           MONTHLY_PRICING_DAYS,
@@ -1406,13 +1407,13 @@ export default function QuoteDetailModal({
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
-  const handleGlobalIskontoChange = (value: number) => {
+  const handleGlobalIskontoChange = (value: number, lineDiscounts?: number[]) => {
     const pct = clampDiscountRange(value);
     setIskonto(pct);
     setItemIskonto(() => {
       const next: Record<string, number> = {};
-      quoteItems.forEach((i) => {
-        next[lineNetInputKey(i)] = pct;
+      quoteItems.forEach((i, index) => {
+        next[lineNetInputKey(i)] = clampDiscountRange(lineDiscounts?.[index] ?? pct);
       });
       return next;
     });
@@ -1481,13 +1482,15 @@ export default function QuoteDetailModal({
         break;
       case 'rounding':
         toast.info(
-          `Kuruş yuvarlaması nedeniyle ${label.toLocaleLowerCase('tr-TR')} ${formatMoney(result.achievedTotal, currency)} oldu.`
+          kind === 'grand'
+            ? `KDV sonrası bu kuruş hiçbir iskonto oranıyla oluşamıyor; genel toplam en yakın tutar olan ${formatMoney(result.achievedTotal, currency)} yapıldı.`
+            : `Kuruş yuvarlaması nedeniyle ${label.toLocaleLowerCase('tr-TR')} ${formatMoney(result.achievedTotal, currency)} oldu.`
         );
         break;
       default:
         break;
     }
-    handleGlobalIskontoChange(result.discountPercent);
+    handleGlobalIskontoChange(result.discountPercent, result.lineDiscounts);
   };
 
   const currentUser = useAuthStore((s) => s.user);
@@ -1507,10 +1510,15 @@ export default function QuoteDetailModal({
     const pendingTarget =
       resolveTargetTotalDraft('grand', targetTotalInputs.grand) ??
       resolveTargetTotalDraft('net', targetTotalInputs.net);
-    const pendingTargetPercent =
-      pendingTarget && pendingTarget.reason !== 'gross_zero' && pendingTarget.reason !== 'invalid_target'
-        ? pendingTarget.discountPercent
-        : null;
+    const pendingTargetUsable =
+      pendingTarget && pendingTarget.reason !== 'gross_zero' && pendingTarget.reason !== 'invalid_target';
+    const pendingTargetPercent = pendingTargetUsable ? pendingTarget.discountPercent : null;
+    const pendingTargetLines: Record<string, number> = {};
+    if (pendingTargetUsable) {
+      quoteItems.forEach((item, index) => {
+        pendingTargetLines[lineNetInputKey(item)] = pendingTarget.lineDiscounts[index] ?? pendingTarget.discountPercent;
+      });
+    }
     return commitQuotePricingDrafts({
       items: quoteItems,
       lineKey: lineNetInputKey,
@@ -1518,7 +1526,7 @@ export default function QuoteDetailModal({
       drafts:
         pendingTargetPercent != null
           ? {
-              itemIskonto: {},
+              itemIskonto: pendingTargetLines,
               iskontoInputs: {},
               lineNetInputs: {},
               globalIskontoInput: null,

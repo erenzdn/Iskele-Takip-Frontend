@@ -5,6 +5,7 @@ import {
   lineIskontoFromApi,
   lineNetFromGross,
   parseMoneyInput,
+  PERSISTED_PERCENT_DECIMALS,
   roundTo,
   encodeLinePricingForPersistence,
   type LinePricingDraftState,
@@ -105,10 +106,10 @@ function saveQuote(params: {
 
 function storedPct(raw: number | undefined, fallback: number): number {
   const n = raw == null ? fallback : Number(raw);
-  return roundTo(Number.isFinite(n) ? n : fallback, 4);
+  return roundTo(Number.isFinite(n) ? n : fallback, PERSISTED_PERCENT_DECIMALS);
 }
 
-/** API iskontoyu NUMERIC(7,4) ile saklar; yeniden açılışta kayıtlı fiyat + yuvarlanmış % kullanılır. */
+/** API iskontoyu NUMERIC(14,10) ile saklar; yeniden açılışta kayıtlı fiyat + yuvarlanmış % kullanılır. */
 function reopenFromSaved(
   detail: {
     Iskonto?: number;

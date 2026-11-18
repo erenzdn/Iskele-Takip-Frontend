@@ -21,3 +21,35 @@ describe('computeRentalPeriodBreakdown', () => {
     expect(full.discountAmount).toBe(450);
   });
 });
+
+describe('kiralama tam dönem: manuel kalem tek seferlik', () => {
+  it('60 günde envanter 2 katına çıkar, manuel nakliye 1 kez sayılır (backend ile aynı)', () => {
+    const b = computeRentalPeriodBreakdown(
+      [
+        { gross: 10000, discountPercent: 10 },
+        { gross: 5000, discountPercent: 10, scalesWithDays: false },
+      ],
+      60,
+      30,
+      20
+    );
+    expect(b.subtotal).toBe(25000);
+    expect(b.discountedTotal).toBe(22500);
+    expect(b.vatAmount).toBe(4500);
+    expect(b.grandTotal).toBe(27000);
+  });
+
+  it('kısmi ay: satır neti = kuruşa yuvarlanmış aylık net × gün/30, toplam bir kez yuvarlanır', () => {
+    const b = computeRentalPeriodBreakdown(
+      [
+        { gross: 1000.01, discountPercent: 0 },
+        { gross: 1000.01, discountPercent: 0 },
+      ],
+      45,
+      30,
+      20
+    );
+    // 1000,01 × 1,5 = 1500,015 (satır başına yuvarlansaydı 1500,02 + 1500,02 = 3000,04)
+    expect(b.discountedTotal).toBe(3000.03);
+  });
+});

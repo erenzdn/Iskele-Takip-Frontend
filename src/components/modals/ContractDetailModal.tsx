@@ -44,8 +44,8 @@ import ConfirmModal from './ConfirmModal';
 import ProductPickerModal from './ProductPickerModal';
 import { getApiErrorMessage, getApiFieldErrors, getUserFacingApiErrorMessage, isArchivedInventoryApiError, userMessageForCustomerRelatedApiError } from '../../utils/apiError';
 import { formatInventoryLineBilingualLabel, formatMoney, formatShortDateTime } from '../../utils/formatters';
-import { clampDiscountRange, discountPercentFromNet, formatDiscountPercent, lineDiscountAmount, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
-import { computeRentalPeriodBreakdown, solveUniformDiscountForTarget, type TargetTotalKind } from '../../utils/quoteTargetTotal';
+import { clampDiscountRange, discountPercentFromNet, formatDiscountPercent, lineIskontoFromApi, lineNetFromGross, parseDiscountInput, roundTo } from '../../utils/lineDiscount';
+import { computePriceBreakdown, computeRentalPeriodBreakdown, solveUniformDiscountForTarget, type TargetTotalKind } from '../../utils/quoteTargetTotal';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, normalizeText, validateDate, validateNumber, validateRequired } from '../../utils/validation';
 import { extractFirstQuotedName, isStockErrorMessage } from '../../utils/parseStockError';
@@ -1205,16 +1205,15 @@ export default function ContractDetailModal({
     [addendumExtrasGroups]
   );
 
-  const buildPriceBreakdown = (days: number) => {
-    const subtotal = contractItems.reduce((sum, item) => sum + getLineTotal(item, days), 0);
-    const discountAmount = contractItems.reduce((sum, item) => {
-      return sum + lineDiscountAmount(getLineTotal(item, days), getRowDiscountPercent(item));
-    }, 0);
-    const discountedTotal = subtotal - discountAmount;
-    const vatAmount = discountedTotal * (vatRate / 100);
-    const grandTotal = discountedTotal + vatAmount;
-    return { subtotal, discountAmount, discountedTotal, vatAmount, grandTotal };
-  };
+  /** Ortak özet kuralı (computePriceBreakdown): hedef tutar çözücüsüyle aynı hesap. */
+  const buildPriceBreakdown = (days: number) =>
+    computePriceBreakdown(
+      contractItems.map((item) => ({
+        gross: getLineTotal(item, days),
+        discountPercent: getRowDiscountPercent(item),
+      })),
+      vatRate
+    );
 
   const monthlyPriceBreakdown = buildPriceBreakdown(MONTHLY_PRICING_DAYS);
   const fullContractPriceBreakdown =
@@ -1223,6 +1222,7 @@ export default function ContractDetailModal({
           contractItems.map((item) => ({
             gross: getLineTotal(item, MONTHLY_PRICING_DAYS),
             discountPercent: getRowDiscountPercent(item),
+            scalesWithDays: item.kind !== 'manual',
           })),
           billedDays,
           MONTHLY_PRICING_DAYS,
@@ -1538,13 +1538,13 @@ export default function ContractDetailModal({
   };
 
   /** Üstteki iskonto değişince tüm satırlara uygula */
-  const handleGlobalIskontoChange = (value: number) => {
+  const handleGlobalIskontoChange = (value: number, lineDiscounts?: number[]) => {
     const pct = clampDiscountRange(value);
     setIskonto(pct);
     setItemIskonto(() => {
       const next: Record<string, number> = {};
-      contractItems.forEach((i) => {
-        next[lineNetInputKey(i)] = pct;
+      contractItems.forEach((i, index) => {
+        next[lineNetInputKey(i)] = clampDiscountRange(lineDiscounts?.[index] ?? pct);
       });
       return next;
     });
@@ -1590,7 +1590,11 @@ export default function ContractDetailModal({
     ) {
       return null;
     }
-    return pending.discountPercent;
+    const lines = new Map<string, number>();
+    contractItems.forEach((item, index) => {
+      lines.set(lineNetInputKey(item), pending.lineDiscounts[index] ?? pending.discountPercent);
+    });
+    return { header: pending.discountPercent, lines };
   };
 
   const applyTargetTotal = (kind: TargetTotalKind) => {
@@ -1628,13 +1632,15 @@ export default function ContractDetailModal({
         break;
       case 'rounding':
         toast.info(
-          `Kuruş yuvarlaması nedeniyle ${label.toLocaleLowerCase('tr-TR')} ${formatCurrency(result.achievedTotal)} oldu.`
+          kind === 'grand'
+            ? `KDV sonrası bu kuruş hiçbir iskonto oranıyla oluşamıyor; genel toplam en yakın tutar olan ${formatCurrency(result.achievedTotal)} yapıldı.`
+            : `Kuruş yuvarlaması nedeniyle ${label.toLocaleLowerCase('tr-TR')} ${formatCurrency(result.achievedTotal)} oldu.`
         );
         break;
       default:
         break;
     }
-    handleGlobalIskontoChange(result.discountPercent);
+    handleGlobalIskontoChange(result.discountPercent, result.lineDiscounts);
   };
 
   const handleSave = async () => {
@@ -1643,9 +1649,10 @@ export default function ContractDetailModal({
       return;
     }
     const source = fullContract ?? contract;
-    const uniformPct = pendingUniformDiscount();
-    const headerDiscount = uniformPct ?? iskonto;
-    const lineDiscount = (item: ContractLineItem) => uniformPct ?? getRowDiscountPercent(item);
+    const pendingTarget = pendingUniformDiscount();
+    const headerDiscount = pendingTarget?.header ?? iskonto;
+    const lineDiscount = (item: ContractLineItem) =>
+      pendingTarget?.lines.get(lineNetInputKey(item)) ?? getRowDiscountPercent(item);
     const validationError = firstValidationError([
       validateRequired(String(selectedCustomerId || ''), 'Müşteri'),
       validateRequired(String(selectedAuthorizedContactId || ''), 'Merkez yetkili'),
