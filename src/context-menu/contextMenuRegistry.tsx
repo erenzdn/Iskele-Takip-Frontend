@@ -1,5 +1,16 @@
 import {
   ArchiveIcon,
+  ArrowCounterClockwiseIcon,
+  PaperclipIcon,
+  XCircleIcon,
+  ArrowSquareOutIcon,
+  ArrowUDownLeftIcon,
+  CalendarDotsIcon,
+  CalendarPlusIcon,
+  ClockCounterClockwiseIcon,
+  FilesIcon,
+  ReceiptIcon,
+  TruckIcon,
   BuildingsIcon,
   CheckCircleIcon,
   CircleIcon,
@@ -19,7 +30,13 @@ import {
   WrenchIcon,
 } from '@phosphor-icons/react';
 import { isInventoryArchived } from '../models';
-import type { ContextMenuActionConfig, ContextMenuEnvironment, ContextMenuKey, ContextMenuTarget } from './types';
+import type {
+  ContextMenuActionConfig,
+  ContextMenuEnvironment,
+  ContextMenuKey,
+  ContextMenuTarget,
+  ShipmentRowTarget,
+} from './types';
 
 const iconSize = 16;
 const isScaffoldTarget = (target: ContextMenuTarget) => target.entityType === 'scaffold';
@@ -28,6 +45,25 @@ const isScaffoldArchived = (target: ContextMenuTarget) =>
 const isCustomerTarget = (target: ContextMenuTarget) => target.entityType === 'customer';
 const isContractTarget = (target: ContextMenuTarget) => target.entityType === 'contract';
 const isQuoteTarget = (target: ContextMenuTarget) => target.entityType === 'quote';
+const isShipmentTarget = (target: ContextMenuTarget): target is ShipmentRowTarget =>
+  target.entityType === 'shipment';
+/** Açık (tamamlanmamış, iptal/arşiv olmayan) kiralama sözleşmesi */
+const isActiveRental = (target: ContextMenuTarget) =>
+  Boolean(
+    isContractTarget(target) &&
+      target.rawData.IsRental &&
+      !target.rawData.IsCompleted &&
+      !target.rawData.IsCancelled &&
+      !target.rawData.IsArchived
+  );
+const isShipmentModeContract = (target: ContextMenuTarget) =>
+  Boolean(isContractTarget(target) && target.rawData.IsShipmentMode);
+const pendingShipmentQty = (target: ContextMenuTarget) =>
+  isContractTarget(target) ? Number(target.rawData.PendingShipmentQuantity) || 0 : 0;
+const shippedQty = (target: ContextMenuTarget) =>
+  isContractTarget(target) ? Number(target.rawData.ShippedQuantityTotal) || 0 : 0;
+const hasAnyPermission = (env: ContextMenuEnvironment, permissions: string[]) =>
+  permissions.some((permission) => env.permissions.includes(permission));
 
 const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
   scaffoldRow: [
@@ -230,15 +266,100 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
   contractRow: [
     {
       id: 'contract-open',
-      label: 'Sozlesme Detayi',
+      label: 'Sözleşmeyi Aç',
       icon: <ClipboardTextIcon size={iconSize} />,
       handlerKey: 'contract.open',
     },
     {
+      id: 'contract-ship',
+      label: 'Sevk Et',
+      icon: <TruckIcon size={iconSize} />,
+      handlerKey: 'contract.ship',
+      // Sevkiyatlar sekmesi contracts_view ister; fiş penceresi o sekmede açılır
+      requiredPermissions: ['shipments_create', 'contracts_view'],
+      visibleWhen: (target) => isActiveRental(target) && isShipmentModeContract(target),
+      enabledWhen: (target) => pendingShipmentQty(target) > 0,
+      hint: (target) => {
+        const pending = pendingShipmentQty(target);
+        return pending > 0 ? `${pending} adet bekliyor` : 'Tamamı sevk edildi';
+      },
+    },
+    {
+      id: 'contract-return-tab',
+      label: 'İade Al',
+      icon: <ArrowUDownLeftIcon size={iconSize} />,
+      handlerKey: 'contract.returnTab',
+      visibleWhen: (target) => isActiveRental(target),
+      enabledWhen: (target) => !isShipmentModeContract(target) || shippedQty(target) > 0,
+      hint: (target) =>
+        isShipmentModeContract(target) && shippedQty(target) <= 0 ? 'Henüz sevk yok' : undefined,
+    },
+    {
+      id: 'contract-goto',
+      label: 'Sekmeye Git',
+      icon: <ArrowSquareOutIcon size={iconSize} />,
+      children: [
+        {
+          id: 'contract-goto-shipments',
+          label: 'Sevkiyatlar',
+          icon: <TruckIcon size={iconSize} />,
+          handlerKey: 'contract.goto.shipments',
+          requiredPermissions: ['contracts_view'],
+          visibleWhen: (target) => isShipmentModeContract(target),
+        },
+        {
+          id: 'contract-goto-returns',
+          label: 'İade Geçmişi',
+          icon: <ClockCounterClockwiseIcon size={iconSize} />,
+          handlerKey: 'contract.goto.returns',
+          visibleWhen: (target) => isContractTarget(target) && target.rawData.IsRental,
+        },
+        {
+          id: 'contract-goto-billing',
+          label: 'Faturalama Planı',
+          icon: <CalendarDotsIcon size={iconSize} />,
+          handlerKey: 'contract.goto.billing',
+          requiredPermissions: ['contracts_view'],
+        },
+        {
+          id: 'contract-goto-invoices',
+          label: 'Faturalar',
+          icon: <ReceiptIcon size={iconSize} />,
+          handlerKey: 'contract.goto.invoices',
+          visibleWhen: (_target, env) =>
+            hasAnyPermission(env, ['contracts_view', 'contracts_invoice']),
+        },
+        {
+          id: 'contract-goto-addenda',
+          label: 'Zeyilnameler',
+          icon: <FilesIcon size={iconSize} />,
+          handlerKey: 'contract.goto.addenda',
+          requiredPermissions: ['contracts_view'],
+        },
+        {
+          id: 'contract-goto-extensions',
+          label: 'Uzatmalar',
+          icon: <CalendarPlusIcon size={iconSize} />,
+          handlerKey: 'contract.goto.extensions',
+          visibleWhen: (target, env) =>
+            isContractTarget(target) &&
+            target.rawData.IsRental &&
+            hasAnyPermission(env, ['contracts_view', 'contracts_extend']),
+        },
+        {
+          id: 'contract-goto-history',
+          label: 'Geçmiş',
+          icon: <ClockIcon size={iconSize} />,
+          handlerKey: 'contract.goto.history',
+        },
+      ],
+    },
+    {
       id: 'contract-copy-code',
-      label: 'Kod Kopyala',
+      label: 'Kodu Kopyala',
       icon: <CopySimpleIcon size={iconSize} />,
       handlerKey: 'contract.copyCode',
+      separatorBefore: true,
       enabledWhen: (target) => Boolean(isContractTarget(target) && target.rawData.ContractCode),
     },
     {
@@ -249,57 +370,44 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       handlerKey: 'contract.categories',
     },
     {
-      id: 'contract-return-tab',
-      label: 'Iade Al Sekmesine Git',
-      icon: <ClockIcon size={iconSize} />,
-      handlerKey: 'contract.returnTab',
-      enabledWhen: (target) =>
-        Boolean(
-          isContractTarget(target) &&
-            target.rawData.IsRental &&
-            !target.rawData.IsCompleted &&
-            !target.rawData.IsCancelled &&
-            !target.rawData.IsArchived
-        ),
+      id: 'contract-complete',
+      label: 'Sözleşmeyi Tamamla',
+      icon: <CheckCircleIcon size={iconSize} />,
+      handlerKey: 'contract.complete',
+      separatorBefore: true,
+      visibleWhen: (target) => isActiveRental(target),
+      confirm: {
+        title: 'Sözleşme tamamlansın mı?',
+        message: (target) => `"${target.itemName}" sözleşmesini tamamlamak istediğinize emin misiniz?`,
+        confirmLabel: 'Tamamla',
+      },
     },
     {
       id: 'contract-archive',
-      label: 'Arsivle',
+      label: 'Arşivle',
       icon: <ArchiveIcon size={iconSize} />,
       handlerKey: 'contract.archive',
-      enabledWhen: (target) =>
+      separatorBefore: true,
+      visibleWhen: (target, env) =>
         Boolean(
           isContractTarget(target) &&
             !target.rawData.IsArchived &&
-            (target.rawData.IsCompleted || target.rawData.IsCancelled)
+            (target.rawData.IsCompleted || target.rawData.IsCancelled) &&
+            hasAnyPermission(env, ['contracts_archive', 'contracts_delete'])
         ),
     },
     {
       id: 'contract-unarchive',
-      label: 'Geri Getir',
+      label: 'Arşivden Geri Getir',
       icon: <ArrowsCounterClockwiseIcon size={iconSize} />,
       handlerKey: 'contract.unarchive',
-      enabledWhen: (target) =>
-        Boolean(isContractTarget(target) && target.rawData.IsArchived),
-    },
-    {
-      id: 'contract-complete',
-      label: 'Sozlesmeyi Tamamla',
-      icon: <CheckCircleIcon size={iconSize} />,
-      handlerKey: 'contract.complete',
-      enabledWhen: (target) =>
+      separatorBefore: true,
+      visibleWhen: (target, env) =>
         Boolean(
           isContractTarget(target) &&
-            target.rawData.IsRental &&
-            !target.rawData.IsCompleted &&
-            !target.rawData.IsCancelled &&
-            !target.rawData.IsArchived
+            target.rawData.IsArchived &&
+            hasAnyPermission(env, ['contracts_archive', 'contracts_delete'])
         ),
-      confirm: {
-        title: 'Sozlesme tamamlansin mi?',
-        message: (target) => `"${target.itemName}" sozlesmesini tamamlamak istediginize emin misiniz?`,
-        confirmLabel: 'Tamamla',
-      },
     },
   ],
   quoteRow: [
@@ -411,6 +519,100 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       },
     },
   ],
+  shipmentRow: [
+    {
+      id: 'shipment-details',
+      label: 'Ayrıntılar ve Belgeler',
+      icon: <PaperclipIcon size={iconSize} />,
+      handlerKey: 'shipment.details',
+      hint: (target) => {
+        if (!isShipmentTarget(target) || target.rawData.IsCancelled) return undefined;
+        const count = target.rawData.AttachmentCount ?? 0;
+        if (!target.rawData.HasSignedWaybill) return 'İrsaliye eksik';
+        return count > 0 ? `${count} ek` : undefined;
+      },
+    },
+    {
+      id: 'shipment-open-contract',
+      label: 'Sözleşmeyi Aç',
+      icon: <ClipboardTextIcon size={iconSize} />,
+      handlerKey: 'shipment.openContract',
+    },
+    {
+      id: 'shipment-preview',
+      label: 'Sevk Fişi PDF',
+      icon: <FilePdfIcon size={iconSize} />,
+      handlerKey: 'shipment.preview',
+    },
+    {
+      id: 'shipment-confirm-delivery',
+      label: 'Teslimi Onayla',
+      icon: <CheckCircleIcon size={iconSize} />,
+      handlerKey: 'shipment.confirmDelivery',
+      requiredPermissions: ['shipments_confirm_delivery'],
+      separatorBefore: true,
+      visibleWhen: (target) =>
+        isShipmentTarget(target) && !target.rawData.IsCancelled && !target.rawData.IsDelivered,
+    },
+    {
+      id: 'shipment-edit-delivery',
+      label: 'Teslim Bilgisini Düzelt',
+      icon: <NotePencilIcon size={iconSize} />,
+      handlerKey: 'shipment.editDelivery',
+      requiredPermissions: ['shipments_confirm_delivery'],
+      separatorBefore: true,
+      visibleWhen: (target) =>
+        isShipmentTarget(target) && !target.rawData.IsCancelled && target.rawData.IsDelivered,
+    },
+    {
+      id: 'shipment-undo-delivery',
+      label: 'Teslim Onayını Geri Al',
+      icon: <ArrowCounterClockwiseIcon size={iconSize} />,
+      handlerKey: 'shipment.undoDelivery',
+      requiredPermissions: ['shipments_confirm_delivery'],
+      visibleWhen: (target) =>
+        isShipmentTarget(target) && !target.rawData.IsCancelled && target.rawData.IsDelivered,
+      confirm: {
+        title: 'Teslim onayı geri alınsın mı?',
+        message: (target) =>
+          `"${target.itemName}" fişinin teslim onayı kaldırılacak ve fiş "Teslim bekliyor" durumuna dönecek. Kira hesabı etkilenmez; yüklenen belgeler silinmez.`,
+        confirmLabel: 'Geri Al',
+      },
+    },
+    {
+      id: 'shipment-copy',
+      label: 'Kopyala',
+      icon: <CopySimpleIcon size={iconSize} />,
+      separatorBefore: true,
+      children: [
+        {
+          id: 'shipment-copy-no',
+          label: 'Fiş No',
+          icon: <CopySimpleIcon size={iconSize} />,
+          handlerKey: 'shipment.copyNo',
+        },
+        {
+          id: 'shipment-copy-waybill',
+          label: 'İrsaliye No',
+          icon: <CopySimpleIcon size={iconSize} />,
+          handlerKey: 'shipment.copyWaybill',
+          enabledWhen: (target) => Boolean(isShipmentTarget(target) && target.rawData.ExternalWaybillNo),
+          hint: (target) =>
+            isShipmentTarget(target) && !target.rawData.ExternalWaybillNo ? 'Girilmemiş' : undefined,
+        },
+      ],
+    },
+    {
+      id: 'shipment-cancel',
+      label: 'Fişi İptal Et',
+      icon: <XCircleIcon size={iconSize} />,
+      intent: 'danger',
+      handlerKey: 'shipment.cancel',
+      requiredPermissions: ['shipments_cancel'],
+      separatorBefore: true,
+      visibleWhen: (target) => isShipmentTarget(target) && !target.rawData.IsCancelled,
+    },
+  ],
 };
 
 function hasRequiredPermissions(requiredPermissions: string[] | undefined, permissions: string[]) {
@@ -421,7 +623,9 @@ function hasRequiredPermissions(requiredPermissions: string[] | undefined, permi
 export function resolveContextMenuActions(
   menuKey: ContextMenuKey,
   target: ContextMenuTarget,
-  env: ContextMenuEnvironment
+  env: ContextMenuEnvironment,
+  /** Verilirse yalnızca karşılığı olan işlemler gösterilir */
+  availableHandlers?: ReadonlySet<string>
 ): ContextMenuActionConfig[] {
   const source = registry[menuKey] ?? [];
 
@@ -430,11 +634,13 @@ export function resolveContextMenuActions(
       .filter((action) => {
         if (!hasRequiredPermissions(action.requiredPermissions, env.permissions)) return false;
         if (action.visibleWhen && !action.visibleWhen(target, env)) return false;
+        if (availableHandlers && action.handlerKey && !availableHandlers.has(action.handlerKey)) return false;
         return true;
       })
       .map((action) => ({
         ...action,
         disabled: action.enabledWhen ? !action.enabledWhen(target, env) : false,
+        hintText: action.hint ? action.hint(target, env) : undefined,
         children: action.children ? resolve(action.children) : undefined,
       }))
       .filter((action) => (action.children ? action.children.length > 0 || Boolean(action.handlerKey) : true));

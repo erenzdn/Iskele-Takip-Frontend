@@ -7,6 +7,12 @@ export type CustomerTabState = {
 
 export type ContractTabState = {
   initialTab?: 'info' | 'billing' | 'shipments' | 'return' | 'returns' | 'history' | 'addenda' | 'extensions' | 'invoices';
+  /**
+   * Sekme açılınca bir kez çalışacak kısa yol (ör. listeden "Sevk Et").
+   * `nonce` her istekte değişir: aynı kısa yol tekrar seçilebilir ve kalıcı saklanan
+   * sekme uygulama yeniden açılınca işlemi tekrarlamaz.
+   */
+  quickAction?: { kind: 'createShipment'; nonce: number };
 };
 
 export type QuoteTabState = {

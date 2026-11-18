@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 
-export type ContextMenuKey = 'scaffoldRow' | 'customerRow' | 'contractRow' | 'quoteRow';
+export type ContextMenuKey = 'scaffoldRow' | 'customerRow' | 'contractRow' | 'quoteRow' | 'shipmentRow';
 export type CustomerModalInitialTab = 'info' | 'sites' | 'history';
 
 export type ContextMenuIntent = 'default' | 'danger';
@@ -25,6 +25,14 @@ export type ContextMenuActionHandlerKey =
   | 'customer.copyEmail'
   | 'customer.delete'
   | 'contract.open'
+  | 'contract.ship'
+  | 'contract.goto.shipments'
+  | 'contract.goto.returns'
+  | 'contract.goto.billing'
+  | 'contract.goto.invoices'
+  | 'contract.goto.addenda'
+  | 'contract.goto.extensions'
+  | 'contract.goto.history'
   | 'contract.returnTab'
   | 'contract.complete'
   | 'contract.copyCode'
@@ -40,7 +48,16 @@ export type ContextMenuActionHandlerKey =
   | 'quote.openContract'
   | 'quote.clone'
   | 'quote.delete'
-  | 'quote.categories';
+  | 'quote.categories'
+  | 'shipment.details'
+  | 'shipment.openContract'
+  | 'shipment.preview'
+  | 'shipment.confirmDelivery'
+  | 'shipment.editDelivery'
+  | 'shipment.undoDelivery'
+  | 'shipment.copyNo'
+  | 'shipment.copyWaybill'
+  | 'shipment.cancel';
 
 export interface ScaffoldRowTarget {
   entityType: 'scaffold';
@@ -87,6 +104,12 @@ export interface ContractRowTarget {
     IsCancelled?: boolean;
     IsArchived?: boolean;
     IsRental: boolean;
+    /** Sevkiyat (SHIPMENT) teslim modundaki kiralama sözleşmesi */
+    IsShipmentMode?: boolean;
+    /** Sevk bekleyen (rezerve) toplam miktar */
+    PendingShipmentQuantity?: number;
+    /** Sevk edilmiş toplam miktar */
+    ShippedQuantityTotal?: number;
     ListTab?: 'active' | 'completed' | 'cancelled' | 'archived' | 'quotes' | 'quotesConverted';
   };
 }
@@ -103,7 +126,28 @@ export interface QuoteRowTarget {
   };
 }
 
-export type ContextMenuTarget = ScaffoldRowTarget | CustomerRowTarget | ContractRowTarget | QuoteRowTarget;
+export interface ShipmentRowTarget {
+  entityType: 'shipment';
+  entityId: number;
+  itemName: string;
+  rawData: {
+    ShipmentId: number;
+    ShipmentNo: string;
+    ContractId: number;
+    IsCancelled: boolean;
+    IsDelivered: boolean;
+    ExternalWaybillNo?: string | null;
+    AttachmentCount?: number;
+    HasSignedWaybill?: boolean;
+  };
+}
+
+export type ContextMenuTarget =
+  | ScaffoldRowTarget
+  | CustomerRowTarget
+  | ContractRowTarget
+  | QuoteRowTarget
+  | ShipmentRowTarget;
 
 export interface ContextMenuEnvironment {
   permissions: string[];
@@ -120,6 +164,12 @@ export interface ContextMenuActionConfig {
   handlerKey?: ContextMenuActionHandlerKey;
   visibleWhen?: (target: ContextMenuTarget, env: ContextMenuEnvironment) => boolean;
   enabledWhen?: (target: ContextMenuTarget, env: ContextMenuEnvironment) => boolean;
+  /** Etiketin sağında gösterilen kısa bilgi (ör. "12 adet bekliyor", "Henüz sevk yok") */
+  hint?: (target: ContextMenuTarget, env: ContextMenuEnvironment) => string | undefined;
+  /** Çözümlenmiş ipucu metni (resolveContextMenuActions doldurur) */
+  hintText?: string;
+  /** Öğenin üstüne ayraç çizgisi koy (gruplama) */
+  separatorBefore?: boolean;
   confirm?: {
     title: string;
     message: (target: ContextMenuTarget) => string;
@@ -134,6 +184,12 @@ export interface OpenContextMenuPayload {
   x: number;
   y: number;
   env?: Partial<ContextMenuEnvironment>;
+  /**
+   * Menüyü açan ekranın işlemleri. Verilirse kayıtlı (useContextMenuHandlers) işlemlerin yerine
+   * bunlar kullanılır; aynı menü türü birden çok açık sekmede olduğunda doğru ekran çalışır.
+   * Karşılığı olmayan öğeler menüde gösterilmez.
+   */
+  handlers?: ContextMenuActionHandlers;
 }
 
 export type ContextMenuActionHandlers = Partial<

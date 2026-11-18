@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, PlusIcon, TruckIcon, XCircleIcon } from '@phosphor-icons/react';
 import type { Attachment, Contract, InventoryContractLineItem, Shipment } from '../../models';
 import { shipmentService } from '../../services/shipmentService';
@@ -6,7 +6,14 @@ import { useAuthStore } from '../../store/authStore';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
 import { formatDate, formatDateTime } from '../../utils/formatters';
-import { getLineShipmentProgress, getRentalStartIso, getShipmentState, SHIPMENT_STATE_LABELS } from '../../utils/shipment';
+import {
+  getLineShipmentProgress,
+  getRentalStartIso,
+  getShipmentState,
+  SHIPMENT_STATE_LABELS,
+} from '../../utils/shipment';
+import { useContextMenu, type ContextMenuActionHandlers } from '../../context-menu';
+import { shipmentContextTarget, shipmentCopyHandlers } from '../../context-menu/shipmentMenu';
 import { useShipmentPdfPreview } from '../../hooks/useShipmentPdfPreview';
 import CreateShipmentModal from '../modals/CreateShipmentModal';
 import CancelShipmentModal from '../modals/CancelShipmentModal';
@@ -24,9 +31,25 @@ interface ContractShipmentsPanelProps {
   canEdit: boolean;
   /** Fiş oluşturma/iptal sonrası sözleşme yeniden yüklensin */
   onChanged: () => void | Promise<void>;
+  /**
+   * Listedeki "Sevk Et" kısa yolu: verilince sevkiyat fişi penceresi bir kez otomatik açılır.
+   * Kalıcı saklanan sekmeler yeniden açıldığında tetiklenmemesi için yalnızca taze istek geçerli.
+   */
+  autoOpenCreateNonce?: number;
 }
 
-export default function ContractShipmentsPanel({ contract, lines, canEdit, onChanged }: ContractShipmentsPanelProps) {
+/** Bu oturumda işlenmiş kısa yol istekleri (sekme yeniden monte olunca tekrar açılmasın) */
+const consumedAutoOpenNonces = new Set<number>();
+/** Bu süreden eski istek, uygulama yeniden açılınca geri yüklenmiş sekmeden gelir; yok sayılır */
+const AUTO_OPEN_MAX_AGE_MS = 60_000;
+
+export default function ContractShipmentsPanel({
+  contract,
+  lines,
+  canEdit,
+  onChanged,
+  autoOpenCreateNonce,
+}: ContractShipmentsPanelProps) {
   const user = useAuthStore((state) => state.user);
   const canCreate = Boolean(user?.permissions?.includes('shipments_create'));
   const canCancel = Boolean(user?.permissions?.includes('shipments_cancel'));
@@ -74,6 +97,27 @@ export default function ContractShipmentsPanel({ contract, lines, canEdit, onCha
     }),
     { contracted: 0, shipped: 0, returned: 0, onSite: 0, pending: 0 }
   );
+  useEffect(() => {
+    const nonce = autoOpenCreateNonce;
+    if (!nonce || consumedAutoOpenNonces.has(nonce)) return;
+    if (Date.now() - nonce > AUTO_OPEN_MAX_AGE_MS) {
+      consumedAutoOpenNonces.add(nonce);
+      return;
+    }
+    // Sözleşme kalemleri gelene kadar bekle
+    if (lines.length === 0) return;
+    consumedAutoOpenNonces.add(nonce);
+    if (!canEdit) {
+      toast.warning('Sözleşme aktif değil; sevkiyat fişi oluşturulamaz.');
+    } else if (!canCreate) {
+      toast.error('Sevkiyat fişi oluşturma yetkiniz yok.');
+    } else if (totals.pending <= 0) {
+      toast.info('Bu sözleşmede sevk bekleyen malzeme kalmadı.');
+    } else {
+      setShowCreate(true);
+    }
+  }, [autoOpenCreateNonce, lines.length, canEdit, canCreate, totals.pending]);
+
   const state = getShipmentState(contract);
   const rentalStart = getRentalStartIso(contract);
   const shippedPct = totals.contracted > 0 ? Math.round((totals.shipped / totals.contracted) * 100) : 0;
@@ -96,18 +140,43 @@ export default function ContractShipmentsPanel({ contract, lines, canEdit, onCha
     setShipments((prev) => prev.map((s) => (s.ShipmentId === updated.ShipmentId ? { ...s, ...updated, items: s.items } : s)));
   };
 
-  const undoDelivery = async () => {
-    if (!undoTarget) return;
+  const undoDelivery = async (target: Shipment | null = undoTarget) => {
+    if (!target) return;
     try {
       setUndoing(true);
-      replaceShipment(await shipmentService.undoDeliveryAsync(undoTarget.ShipmentId));
-      toast.success(`${undoTarget.ShipmentNo} teslim onayı geri alındı.`);
+      replaceShipment(await shipmentService.undoDeliveryAsync(target.ShipmentId));
+      toast.success(`${target.ShipmentNo} teslim onayı geri alındı.`);
       setUndoTarget(null);
     } catch (err) {
       toast.error(getApiErrorMessage(err) || 'Teslim onayı geri alınamadı.');
     } finally {
       setUndoing(false);
     }
+  };
+
+  const { openContextMenu } = useContextMenu();
+
+  /** Fiş satırı sağ tık menüsü: satırdaki düğmelerle aynı işlemler + kopyalama */
+  const openShipmentMenu = (event: MouseEvent<HTMLTableRowElement>, shipment: Shipment) => {
+    event.preventDefault();
+    const handlers: ContextMenuActionHandlers = {
+      'shipment.details': () => setExpandedId(shipment.ShipmentId),
+      'shipment.preview': () => void openPreview(shipment),
+      'shipment.confirmDelivery': () => setDeliveryTarget(shipment),
+      'shipment.editDelivery': () => setDeliveryTarget(shipment),
+      // Onay menüde soruluyor; burada doğrudan geri al
+      'shipment.undoDelivery': () => undoDelivery(shipment),
+      ...shipmentCopyHandlers(shipment),
+    };
+    // İptal yalnızca aktif sözleşmede (satırdaki düğmeyle aynı kural)
+    if (canEdit && canCancel) handlers['shipment.cancel'] = () => setCancelTarget(shipment);
+    openContextMenu({
+      menuKey: 'shipmentRow',
+      x: event.clientX,
+      y: event.clientY,
+      target: shipmentContextTarget(shipment),
+      handlers,
+    });
   };
 
   const afterMutation = async () => {
@@ -236,6 +305,7 @@ export default function ContractShipmentsPanel({ contract, lines, canEdit, onCha
                       <tr
                         className={`border-b border-background-border/50 cursor-pointer hover:bg-background-panel ${cancelled ? 'opacity-60' : ''}`}
                         onClick={() => setExpandedId(expanded ? null : s.ShipmentId)}
+                        onContextMenu={(event) => openShipmentMenu(event, s)}
                       >
                         <td className={`py-1.5 pr-2 font-medium ${cancelled ? 'line-through' : ''}`}>{s.ShipmentNo}</td>
                         <td className="py-1.5 px-2">{formatDate(s.ShipmentDate)}</td>

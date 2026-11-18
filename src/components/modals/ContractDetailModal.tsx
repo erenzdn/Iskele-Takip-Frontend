@@ -112,6 +112,8 @@ interface ContractDetailModalProps {
   isNew: boolean;
   onClose: () => void;
   initialTab?: ContractDetailTab;
+  /** Listeden gelen tek seferlik kısa yol (ör. "Sevk Et" → sevkiyat fişi penceresi) */
+  quickAction?: ContractTabState['quickAction'];
   /** Yeni sözleşme: menüden gelen varsayılan tip (kiralama / satış sayfası) */
   defaultTypeForNew?: ContractQuoteType;
   /** true ise yeni kayıtta tip seçilemez (ayrı menü sayfaları) */
@@ -150,6 +152,7 @@ export default function ContractDetailModal({
   isNew,
   onClose,
   initialTab = 'info',
+  quickAction,
   defaultTypeForNew,
   lockNewContractType,
   initiallyFullScreen,
@@ -517,7 +520,8 @@ export default function ContractDetailModal({
   useEffect(() => {
     setActiveTab(initialTab);
     setPendingOpenAddendumId(null);
-  }, [initialTab, contract?.ContractId, isNew]);
+    // quickAction.nonce: sekme zaten açıkken aynı sekmeye tekrar yönlendirmede de geç
+  }, [initialTab, contract?.ContractId, isNew, quickAction?.nonce]);
 
   const loadContractLogs = async () => {
     if (!contract?.ContractId) return;
@@ -3298,6 +3302,7 @@ export default function ContractDetailModal({
             contract={effectiveContract}
             lines={contractItems.filter((i): i is InventoryLineItem => i.kind === 'inventory')}
             canEdit={active}
+            autoOpenCreateNonce={quickAction?.kind === 'createShipment' ? quickAction.nonce : undefined}
             onChanged={async () => {
               try {
                 await refreshContract();

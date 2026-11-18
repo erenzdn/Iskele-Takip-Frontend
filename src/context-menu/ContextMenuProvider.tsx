@@ -1,5 +1,6 @@
 import { CaretRightIcon } from '@phosphor-icons/react';
 import {
+  Fragment,
   createContext,
   useCallback,
   useContext,
@@ -30,12 +31,15 @@ interface InternalState {
   menuKey: ContextMenuKey | null;
   target: ContextMenuTarget | null;
   env: Partial<ContextMenuEnvironment> | null;
+  /** Menüyü açan ekranın işlemleri (payload.handlers) */
+  handlers: ContextMenuActionHandlers | null;
 }
 
 interface PendingConfirm {
   action: ContextMenuActionConfig;
   menuKey: ContextMenuKey;
   target: ContextMenuTarget;
+  handlers: ContextMenuActionHandlers | null;
 }
 
 interface ContextMenuApi {
@@ -52,6 +56,7 @@ const initialState: InternalState = {
   menuKey: null,
   target: null,
   env: null,
+  handlers: null,
 };
 
 const ContextMenuContext = createContext<ContextMenuApi | null>(null);
@@ -92,6 +97,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
       menuKey: payload.menuKey,
       target: payload.target,
       env: payload.env ?? null,
+      handlers: payload.handlers ?? null,
     });
   }, []);
 
@@ -104,8 +110,13 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
 
   const actions = useMemo(() => {
     if (!state.menuKey || !state.target) return [];
-    return resolveContextMenuActions(state.menuKey, state.target, { permissions, ...(state.env ?? {}) });
-  }, [permissions, state.env, state.menuKey, state.target]);
+    return resolveContextMenuActions(
+      state.menuKey,
+      state.target,
+      { permissions, ...(state.env ?? {}) },
+      state.handlers ? new Set(Object.keys(state.handlers)) : undefined
+    );
+  }, [permissions, state.env, state.handlers, state.menuKey, state.target]);
 
   useEffect(() => {
     if (!state.isOpen) return;
@@ -172,7 +183,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
   const executeAction = useCallback(
     async (action: ContextMenuActionConfig) => {
       if (!state.menuKey || !state.target || !action.handlerKey) return;
-      const handlers = handlersRef.current.get(state.menuKey);
+      const handlers = state.handlers ?? handlersRef.current.get(state.menuKey) ?? null;
       const fn = handlers?.[action.handlerKey as ContextMenuActionHandlerKey];
       if (!fn) return;
       if (action.confirm) {
@@ -180,6 +191,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
           action,
           menuKey: state.menuKey,
           target: state.target,
+          handlers,
         });
         // Menüyü kapat; onay tıklaması "dışarı tık" sayılmasın.
         setState(initialState);
@@ -189,12 +201,12 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
       await Promise.resolve(fn(state.target));
       closeContextMenu();
     },
-    [closeContextMenu, state.menuKey, state.target]
+    [closeContextMenu, state.handlers, state.menuKey, state.target]
   );
 
   const executeConfirmedAction = useCallback(async () => {
     if (!pendingConfirm?.action.handlerKey) return;
-    const handlers = handlersRef.current.get(pendingConfirm.menuKey);
+    const handlers = pendingConfirm.handlers ?? handlersRef.current.get(pendingConfirm.menuKey);
     const fn = handlers?.[pendingConfirm.action.handlerKey];
     if (!fn) return;
     try {
@@ -223,7 +235,7 @@ export function ContextMenuProvider({ children }: { children: ReactNode }) {
         createPortal(
           <div
             ref={menuRef}
-            className="fixed z-[210] min-w-[220px] max-w-[320px] rounded-lg border border-background-border bg-background-panel/95 py-1 shadow-xl backdrop-blur-sm"
+            className="ctx-menu fixed z-[210] min-w-[220px] max-w-[320px]"
             style={{ left: position.x, top: position.y }}
             role="menu"
           >
@@ -273,54 +285,86 @@ function MenuItems({
 }) {
   return (
     <>
-      {actions.map((action) => {
+      {actions.map((action, index) => {
         const hasChildren = Boolean(action.children?.length);
         const isOpen = submenuPath[level] === action.id;
-        const classes =
-          action.intent === 'danger'
-            ? 'text-text-primary hover:bg-red-500/10 hover:text-red-400'
-            : 'text-text-primary hover:bg-background-hover';
 
         return (
-          <div key={`${level}-${action.id}`} className="relative">
-            <button
-              type="button"
-              role="menuitem"
-              disabled={action.disabled}
-              className={`flex h-9 w-full items-center gap-2 px-3 text-sm transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-not-allowed disabled:opacity-50 ${classes}`}
-              onMouseEnter={() => {
-                if (action.disabled) return;
-                if (hasChildren) {
-                  const next = [...submenuPath.slice(0, level), action.id];
-                  setSubmenuPath(next);
-                }
-              }}
-              onClick={() => {
-                if (action.disabled) return;
-                if (hasChildren) {
-                  const next = [...submenuPath.slice(0, level), action.id];
-                  setSubmenuPath(next);
-                  return;
-                }
-                void onAction(action);
-              }}
-            >
-              <span className="inline-flex w-4 items-center justify-center text-text-secondary">{action.icon}</span>
-              <span className="flex-1 text-left">{action.label}</span>
-              {hasChildren && <CaretRightIcon size={14} className="text-text-secondary" />}
-            </button>
-            {hasChildren && isOpen && action.children && (
-              <div className="absolute left-full top-0 ml-1 min-w-[200px] rounded-lg border border-background-border bg-background-panel py-1 shadow-xl">
-                <MenuItems
-                  actions={action.children}
-                  level={level + 1}
-                  submenuPath={submenuPath}
-                  setSubmenuPath={setSubmenuPath}
-                  onAction={onAction}
-                />
-              </div>
+          <Fragment key={`${level}-${action.id}`}>
+            {action.separatorBefore && index > 0 && (
+              <div role="separator" className="ctx-menu-separator" />
             )}
-          </div>
+            <div className="relative">
+              <button
+                type="button"
+                role="menuitem"
+                disabled={action.disabled}
+                aria-haspopup={hasChildren ? 'menu' : undefined}
+                aria-expanded={hasChildren ? isOpen : undefined}
+                className={`ctx-menu-item ${action.intent === 'danger' ? 'ctx-menu-item--danger' : ''}`}
+                title={action.disabled && action.hintText ? action.hintText : undefined}
+                onMouseEnter={() => {
+                  if (hasChildren && !action.disabled) {
+                    setSubmenuPath([...submenuPath.slice(0, level), action.id]);
+                  } else if (submenuPath.length > level) {
+                    // Alt menüsü olmayan bir öğeye geçince açık alt menüyü kapat
+                    setSubmenuPath(submenuPath.slice(0, level));
+                  }
+                }}
+                onKeyDown={(event) => {
+                  if (event.key === 'ArrowRight' && hasChildren && !action.disabled) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSubmenuPath([...submenuPath.slice(0, level), action.id]);
+                    const wrapper = event.currentTarget.parentElement;
+                    requestAnimationFrame(() => {
+                      wrapper
+                        ?.querySelector<HTMLButtonElement>(':scope > [role="menu"] [role="menuitem"]:not(:disabled)')
+                        ?.focus();
+                    });
+                  } else if (event.key === 'ArrowLeft' && level > 0) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setSubmenuPath(submenuPath.slice(0, level - 1));
+                    const parentButton = event.currentTarget
+                      .closest('[role="menu"]')
+                      ?.parentElement?.querySelector<HTMLButtonElement>(':scope > [role="menuitem"]');
+                    parentButton?.focus();
+                  }
+                }}
+                onClick={() => {
+                  if (action.disabled) return;
+                  if (hasChildren) {
+                    const next = [...submenuPath.slice(0, level), action.id];
+                    setSubmenuPath(next);
+                    return;
+                  }
+                  void onAction(action);
+                }}
+              >
+                <span className="ctx-menu-icon inline-flex w-4 shrink-0 items-center justify-center">{action.icon}</span>
+                <span className="flex-1 truncate text-left">{action.label}</span>
+                {action.hintText && (
+                  <span className="ctx-menu-hint shrink-0 text-[11px]">{action.hintText}</span>
+                )}
+                {hasChildren && <CaretRightIcon size={14} className="ctx-menu-icon shrink-0" />}
+              </button>
+              {hasChildren && isOpen && action.children && (
+                <div
+                  role="menu"
+                  className="ctx-menu absolute left-full -top-1 ml-1.5 min-w-[200px]"
+                >
+                  <MenuItems
+                    actions={action.children}
+                    level={level + 1}
+                    submenuPath={submenuPath}
+                    setSubmenuPath={setSubmenuPath}
+                    onAction={onAction}
+                  />
+                </div>
+              )}
+            </div>
+          </Fragment>
         );
       })}
     </>

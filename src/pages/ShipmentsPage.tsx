@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, TruckIcon } from '@phosphor-icons/react';
 import type { Contract, ContractAwaitingShipment, InventoryContractLineItem, Shipment, Warehouse } from '../models';
@@ -7,13 +7,17 @@ import { warehouseService } from '../services/warehouseService';
 import { contractService } from '../services/contractService';
 import CreateShipmentModal from '../components/modals/CreateShipmentModal';
 import ConfirmDeliveryModal from '../components/modals/ConfirmDeliveryModal';
+import CancelShipmentModal from '../components/modals/CancelShipmentModal';
 import DeliveryStatusBadge from '../components/shipments/DeliveryStatusBadge';
 import { contractDetailsToShipmentLines } from '../utils/shipment';
+import { useContextMenu, type ContextMenuActionHandlers } from '../context-menu';
+import { copyWithToast, shipmentContextTarget, shipmentCopyHandlers } from '../context-menu/shipmentMenu';
+import { invalidateData } from '../store/dataInvalidationStore';
 import { useAuthStore } from '../store/authStore';
 import { PageActions } from '../components/PageActions';
 import EmptyState from '../components/EmptyState';
 import { formatDate } from '../utils/formatters';
-import { contractPath } from '../utils/entityNavigation';
+import { contractPath, type ContractTabState } from '../utils/entityNavigation';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import { useShipmentPdfPreview } from '../hooks/useShipmentPdfPreview';
@@ -44,6 +48,9 @@ export default function ShipmentsPage() {
   const [stateFilter, setStateFilter] = useState<StateFilter>('');
   const [missingWaybill, setMissingWaybill] = useState(false);
   const [deliveryTarget, setDeliveryTarget] = useState<Shipment | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<Shipment | null>(null);
+  const canCancel = Boolean(user?.permissions?.includes('shipments_cancel'));
+  const { openContextMenu } = useContextMenu();
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
   const [warehouses, setWarehouses] = useState<Warehouse[]>([]);
@@ -117,7 +124,78 @@ export default function ShipmentsPage() {
     }
   };
 
-  const openContract = (contractId: number) => navigate(contractPath(contractId), { state: { initialTab: 'shipments' } });
+  const openContract = (contractId: number, initialTab: NonNullable<ContractTabState['initialTab']> = 'shipments') =>
+    navigate(contractPath(contractId), { state: { initialTab } satisfies ContractTabState });
+
+  /** Sevk bekleyen sözleşme satırı: sözleşme menüsü (fiş bu sayfada kesilir) */
+  const openAwaitingMenu = (event: MouseEvent<HTMLTableRowElement>, row: ContractAwaitingShipment) => {
+    event.preventDefault();
+    const goto = (tab: NonNullable<ContractTabState['initialTab']>) => () => openContract(row.ContractId, tab);
+    const handlers: ContextMenuActionHandlers = {
+      'contract.open': goto('info'),
+      'contract.returnTab': goto('return'),
+      'contract.goto.shipments': goto('shipments'),
+      'contract.goto.returns': goto('returns'),
+      'contract.goto.billing': goto('billing'),
+      'contract.goto.invoices': goto('invoices'),
+      'contract.goto.addenda': goto('addenda'),
+      'contract.goto.extensions': goto('extensions'),
+      'contract.goto.history': goto('history'),
+      'contract.copyCode': () => copyWithToast(row.ContractCode, 'Sözleşme kodu'),
+    };
+    if (canCreate) handlers['contract.ship'] = () => openCreateShipment(row.ContractId);
+    openContextMenu({
+      menuKey: 'contractRow',
+      x: event.clientX,
+      y: event.clientY,
+      target: {
+        entityType: 'contract',
+        entityId: row.ContractId,
+        itemName: row.ContractCode || `#${row.ContractId}`,
+        rawData: {
+          ContractId: row.ContractId,
+          ContractCode: row.ContractCode ?? undefined,
+          IsCompleted: false,
+          IsRental: true,
+          IsShipmentMode: true,
+          PendingShipmentQuantity: Number(row.PendingQuantity) || 0,
+          ShippedQuantityTotal: Number(row.ShippedQuantity) || 0,
+        },
+      },
+      handlers,
+    });
+  };
+
+  const undoDelivery = async (shipment: Shipment) => {
+    try {
+      await shipmentService.undoDeliveryAsync(shipment.ShipmentId);
+      toast.success(`${shipment.ShipmentNo} teslim onayı geri alındı.`);
+      void load();
+    } catch (err) {
+      toast.error(getApiErrorMessage(err) || 'Teslim onayı geri alınamadı.');
+    }
+  };
+
+  /** Sevkiyat fişi satırı sağ tık menüsü */
+  const openShipmentMenu = (event: MouseEvent<HTMLTableRowElement>, shipment: Shipment) => {
+    event.preventDefault();
+    const handlers: ContextMenuActionHandlers = {
+      'shipment.openContract': () => openContract(shipment.ContractId),
+      'shipment.preview': () => void openPreview(shipment),
+      'shipment.confirmDelivery': () => setDeliveryTarget(shipment),
+      'shipment.editDelivery': () => setDeliveryTarget(shipment),
+      'shipment.undoDelivery': () => undoDelivery(shipment),
+      ...shipmentCopyHandlers(shipment),
+    };
+    if (canCancel) handlers['shipment.cancel'] = () => setCancelTarget(shipment);
+    openContextMenu({
+      menuKey: 'shipmentRow',
+      x: event.clientX,
+      y: event.clientY,
+      target: shipmentContextTarget(shipment),
+      handlers,
+    });
+  };
 
   if (!canView) {
     return (
@@ -230,7 +308,8 @@ export default function ShipmentsPage() {
                       key={a.ContractId}
                       className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'}`}
                       onClick={() => openContract(a.ContractId)}
-                      title="Sözleşmeyi aç"
+                      onContextMenu={(event) => openAwaitingMenu(event, a)}
+                      title="Sözleşmeyi aç · sağ tık: kısa yollar"
                     >
                       <td className={td}>
                         <span className="font-medium text-primary">{a.ContractCode || `#${a.ContractId}`}</span>
@@ -298,6 +377,7 @@ export default function ShipmentsPage() {
                       key={s.ShipmentId}
                       className={`border-b border-background-border hover:bg-background-hover cursor-pointer ${index % 2 === 0 ? 'bg-background-panel' : 'bg-background-surface'} ${cancelled ? 'opacity-60' : ''}`}
                       onClick={() => openContract(s.ContractId)}
+                      onContextMenu={(event) => openShipmentMenu(event, s)}
                     >
                       <td className={td}>
                         <span className={`font-medium text-primary ${cancelled ? 'line-through' : ''}`}>{s.ShipmentNo}</span>
@@ -364,6 +444,17 @@ export default function ShipmentsPage() {
           }}
           onConfirmed={() => {
             setDeliveryTarget(null);
+            void load();
+          }}
+        />
+      )}
+      {cancelTarget && (
+        <CancelShipmentModal
+          shipment={cancelTarget}
+          onClose={() => setCancelTarget(null)}
+          onCancelled={() => {
+            setCancelTarget(null);
+            invalidateData('contracts');
             void load();
           }}
         />

@@ -76,6 +76,7 @@ export default function ContractDetailPage() {
       contract={contract}
       isNew={isNew}
       initialTab={tabState?.initialTab ?? 'info'}
+      quickAction={tabState?.quickAction}
       defaultTypeForNew={defaultType}
       lockNewContractType
       onCreated={(contractId) => {

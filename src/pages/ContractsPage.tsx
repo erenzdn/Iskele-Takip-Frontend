@@ -29,13 +29,22 @@ import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import EmptyState from '../components/EmptyState';
 import ConfirmModal from '../components/modals/ConfirmModal';
 import { useInvalidation } from '../store/dataInvalidationStore';
-import { contractPath, newContractPath, newQuotePath, quotePath } from '../utils/entityNavigation';
+import {
+  contractPath,
+  newContractPath,
+  newQuotePath,
+  quotePath,
+  type ContractTabState,
+} from '../utils/entityNavigation';
+import { isShipmentContract } from '../utils/shipment';
 import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import { toast } from '../hooks/useToast';
 import { PageActions } from '../components/PageActions';
 import {
   useContextMenu,
   useContextMenuHandlers,
+  type ContextMenuActionHandlers,
+  type ContextMenuTarget,
   type ContractRowTarget,
   type QuoteRowTarget,
 } from '../context-menu';
@@ -312,9 +321,12 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
     else navigate(newContractPath(recordKind));
   };
 
-  const handleOpenContract = (contract: Contract, options?: { initialTab?: 'info' | 'return' | 'returns' | 'history' | 'extensions' | 'invoices' }) => {
+  const handleOpenContract = (contract: Contract, options?: ContractTabState) => {
+    const state: ContractTabState = {};
+    if (options?.initialTab) state.initialTab = options.initialTab;
+    if (options?.quickAction) state.quickAction = options.quickAction;
     navigate(contractPath(contract.ContractId), {
-      state: options?.initialTab ? { initialTab: options.initialTab } : null,
+      state: Object.keys(state).length > 0 ? state : null,
     });
   };
 
@@ -662,9 +674,14 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           IsCancelled: isContractCancelled(contract),
           IsArchived: isContractArchived(contract),
           IsRental: contractScope === 'rental',
+          IsShipmentMode: isShipmentContract(contract),
+          PendingShipmentQuantity: Number(contract.PendingShipmentQuantity) || 0,
+          ShippedQuantityTotal: Number(contract.ShippedQuantityTotal) || 0,
           ListTab: activeTab,
         },
       },
+      // Birden çok liste sekmesi açıkken her satır kendi sayfasının işlemlerini kullansın
+      handlers: contractMenuHandlers,
     });
   };
 
@@ -685,180 +702,205 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
           ConvertedContractId: quote.ConvertedContractId,
         },
       },
+      handlers: quoteMenuHandlers,
     });
   };
 
-  useContextMenuHandlers(
-    'contractRow',
-    useMemo(
-      () => ({
-        'contract.open': (target) => {
-          const row = target as ContractRowTarget;
-          const contract = contracts.find((item) => item.ContractId === row.entityId);
-          if (!contract) return;
-          handleOpenContract(contract, { initialTab: 'info' });
-        },
-        'contract.returnTab': (target) => {
-          const row = target as ContractRowTarget;
-          const contract = contracts.find((item) => item.ContractId === row.entityId);
-          if (!contract) return;
-          handleOpenContract(contract, { initialTab: 'return' });
-        },
-        'contract.complete': async (target) => {
-          const row = target as ContractRowTarget;
-          const contract = contracts.find((item) => item.ContractId === row.entityId);
-          if (
-            !contract ||
-            !isContractActive(contract) ||
-            contractScope !== 'rental'
-          ) {
-            return;
-          }
-          setCompleteTarget({ contractId: contract.ContractId, contractCode: contract.ContractCode ?? undefined });
-          setShowCompleteConfirm(true);
-        },
-        'contract.archive': (target) => {
-          const row = target as ContractRowTarget;
-          const contract = contracts.find((item) => item.ContractId === row.entityId);
-          if (!contract || isContractArchived(contract)) return;
-          if (!isContractCompleted(contract) && !isContractCancelled(contract)) return;
-          openArchiveModal(contract);
-        },
-        'contract.unarchive': (target) => {
-          const row = target as ContractRowTarget;
-          const contract = contracts.find((item) => item.ContractId === row.entityId);
-          if (!contract || !isContractArchived(contract)) return;
-          openUnarchiveConfirm(contract);
-        },
-        'contract.categories': (target) => {
-          const row = target as ContractRowTarget;
-          const contract = contracts.find((item) => item.ContractId === row.entityId);
-          if (!contract) return;
-          openCategoryPicker({
-            type: 'contract',
-            id: contract.ContractId,
-            label: contract.ContractCode || `#${contract.ContractId}`,
-            categories: contract.Categories,
-          });
-        },
-        'contract.copyCode': async (target) => {
-          const row = target as ContractRowTarget;
-          if (!row.rawData.ContractCode) {
-            toast.warning('Sözleşme kodu bulunmuyor.');
-            return;
-          }
-          await navigator.clipboard.writeText(row.rawData.ContractCode);
-          toast.success('Sözleşme kodu kopyalandı.');
-        },
-      }),
-      [contracts, contractScope, loadData, canArchiveContract]
-    )
-  );
+  /** Sağ tık "Sekmeye Git" alt menüsü: sözleşmeyi ilgili sekmesiyle açar */
+  const gotoTabHandlers = useMemo(() => {
+    const open = (tab: NonNullable<ContractTabState['initialTab']>) => (target: ContextMenuTarget) => {
+      const contract = contracts.find((item) => item.ContractId === target.entityId);
+      if (contract) handleOpenContract(contract, { initialTab: tab });
+    };
+    return {
+      'contract.goto.shipments': open('shipments'),
+      'contract.goto.returns': open('returns'),
+      'contract.goto.billing': open('billing'),
+      'contract.goto.invoices': open('invoices'),
+      'contract.goto.addenda': open('addenda'),
+      'contract.goto.extensions': open('extensions'),
+      'contract.goto.history': open('history'),
+    };
+  }, [contracts]);
 
-  useContextMenuHandlers(
-    'quoteRow',
-    useMemo(
-      () => ({
-        'quote.open': (target) => {
-          const row = target as QuoteRowTarget;
-          const quote = quotes.find((item) => item.QuoteId === row.entityId);
-          if (!quote) return;
-          handleOpenQuote(quote);
-        },
-        'quote.preview': async (target) => {
-          const row = target as QuoteRowTarget;
-          const quote = quotes.find((item) => item.QuoteId === row.entityId);
-          if (!quote) return;
-          await handleQuotePreview(quote);
-        },
-        'quote.categories': (target) => {
-          const row = target as QuoteRowTarget;
-          const quote = quotes.find((item) => item.QuoteId === row.entityId);
-          if (!quote) return;
-          openCategoryPicker({
-            type: 'quote',
-            id: quote.QuoteId,
-            label: quote.QuoteCode || quote.Subject || `#${quote.QuoteId}`,
-            categories: quote.Categories,
-          });
-        },
-        'quote.copyCode': async (target) => {
-          const row = target as QuoteRowTarget;
-          if (!row.rawData.QuoteCode) {
-            toast.warning('Teklif kodu bulunmuyor.');
-            return;
-          }
-          await navigator.clipboard.writeText(row.rawData.QuoteCode);
-          toast.success('Teklif kodu kopyalandı.');
-        },
-        'quote.accept': async (target) => {
-          const row = target as QuoteRowTarget;
-          if (row.rawData.Status === 'accepted') return;
-          if (row.rawData.Status === 'draft') {
-            toast.warning('Taslak teklif önce Beklemede durumuna alınmalıdır.');
-            return;
-          }
-          await quoteService.acceptQuoteAsync(row.entityId);
-          toast.success('Teklif kabul edildi.');
-          await loadData();
-        },
-        'quote.rollback': async (target) => {
-          const row = target as QuoteRowTarget;
-          if (row.rawData.Status === 'pending') return;
-          if (row.rawData.Status === 'draft') {
-            toast.warning('Taslak teklif Beklemede durumuna alınamaz; teklifi açıp Teklifi oluştur kullanın.');
-            return;
-          }
-          await quoteService.updateAsync(row.entityId, { Status: QuoteStatus.Pending });
-          toast.success('Teklif beklemede durumuna geri alındı.');
-          await loadData();
-        },
-        'quote.convert': (target) => {
-          const row = target as QuoteRowTarget;
-          const quote = quotes.find((item) => item.QuoteId === row.entityId);
-          if (!quote) return;
-          if (quote.Status !== QuoteStatus.Accepted) {
-            toast.warning('Önce teklifi kabul etmelisiniz.');
-            return;
-          }
-          handleOpenQuote(quote);
-          toast.info('Teklif detayindan "Sözleşmeye Dönüştür" adımını tamamlayabilirsiniz.');
-        },
-        'quote.openContract': async (target) => {
-          const row = target as QuoteRowTarget;
-          const quote = quotes.find((item) => item.QuoteId === row.entityId);
-          if (!quote) return;
-          await openConvertedContractFromQuote(quote);
-        },
-        'quote.clone': async (target) => {
-          const row = target as QuoteRowTarget;
-          await handleQuoteCloneFromRow(row.entityId);
-        },
-        'quote.delete': async (target) => {
-          const row = target as QuoteRowTarget;
-          if (row.rawData.ConvertedContractId) {
-            toast.warning(
-              'Bu teklif sözleşmeye dönüştürülmüş. Sözleşmede İptal Et veya Teklife Geri Al kullanın.'
-            );
-            return;
-          }
-          try {
-            await quoteService.deleteAsync(row.entityId);
-            toast.success('Teklif silindi.');
-            await loadData();
-          } catch (error) {
-            console.error('Delete quote error:', error);
-            if (isConvertedQuoteApiError(error)) {
-              toast.error(getApiErrorMessage(error));
-            } else {
-              toast.error(getUserFacingApiErrorMessage(error, 'quote-delete'));
-            }
-          }
-        },
-      }),
-      [handleQuoteCloneFromRow, handleQuotePreview, loadData, openConvertedContractFromQuote, quotes]
-    )
+  const contractMenuHandlers = useMemo<ContextMenuActionHandlers>(
+    () => ({
+      'contract.open': (target) => {
+        const row = target as ContractRowTarget;
+        const contract = contracts.find((item) => item.ContractId === row.entityId);
+        if (!contract) return;
+        handleOpenContract(contract, { initialTab: 'info' });
+      },
+      'contract.returnTab': (target) => {
+        const row = target as ContractRowTarget;
+        const contract = contracts.find((item) => item.ContractId === row.entityId);
+        if (!contract) return;
+        handleOpenContract(contract, { initialTab: 'return' });
+      },
+      'contract.ship': (target) => {
+        const row = target as ContractRowTarget;
+        const contract = contracts.find((item) => item.ContractId === row.entityId);
+        if (!contract || !isShipmentContract(contract) || !isContractActive(contract)) return;
+        // Sevkiyatlar sekmesi açılır ve sevkiyat fişi penceresi doğrudan gelir
+        handleOpenContract(contract, {
+          initialTab: 'shipments',
+          quickAction: { kind: 'createShipment', nonce: Date.now() },
+        });
+      },
+      ...gotoTabHandlers,
+      'contract.complete': async (target) => {
+        const row = target as ContractRowTarget;
+        const contract = contracts.find((item) => item.ContractId === row.entityId);
+        if (
+          !contract ||
+          !isContractActive(contract) ||
+          contractScope !== 'rental'
+        ) {
+          return;
+        }
+        setCompleteTarget({ contractId: contract.ContractId, contractCode: contract.ContractCode ?? undefined });
+        setShowCompleteConfirm(true);
+      },
+      'contract.archive': (target) => {
+        const row = target as ContractRowTarget;
+        const contract = contracts.find((item) => item.ContractId === row.entityId);
+        if (!contract || isContractArchived(contract)) return;
+        if (!isContractCompleted(contract) && !isContractCancelled(contract)) return;
+        openArchiveModal(contract);
+      },
+      'contract.unarchive': (target) => {
+        const row = target as ContractRowTarget;
+        const contract = contracts.find((item) => item.ContractId === row.entityId);
+        if (!contract || !isContractArchived(contract)) return;
+        openUnarchiveConfirm(contract);
+      },
+      'contract.categories': (target) => {
+        const row = target as ContractRowTarget;
+        const contract = contracts.find((item) => item.ContractId === row.entityId);
+        if (!contract) return;
+        openCategoryPicker({
+          type: 'contract',
+          id: contract.ContractId,
+          label: contract.ContractCode || `#${contract.ContractId}`,
+          categories: contract.Categories,
+        });
+      },
+      'contract.copyCode': async (target) => {
+        const row = target as ContractRowTarget;
+        if (!row.rawData.ContractCode) {
+          toast.warning('Sözleşme kodu bulunmuyor.');
+          return;
+        }
+        await navigator.clipboard.writeText(row.rawData.ContractCode);
+        toast.success('Sözleşme kodu kopyalandı.');
+      },
+    }),
+    [contracts, contractScope, loadData, canArchiveContract, gotoTabHandlers]
   );
+  useContextMenuHandlers('contractRow', contractMenuHandlers);
+
+  const quoteMenuHandlers = useMemo<ContextMenuActionHandlers>(
+    () => ({
+      'quote.open': (target) => {
+        const row = target as QuoteRowTarget;
+        const quote = quotes.find((item) => item.QuoteId === row.entityId);
+        if (!quote) return;
+        handleOpenQuote(quote);
+      },
+      'quote.preview': async (target) => {
+        const row = target as QuoteRowTarget;
+        const quote = quotes.find((item) => item.QuoteId === row.entityId);
+        if (!quote) return;
+        await handleQuotePreview(quote);
+      },
+      'quote.categories': (target) => {
+        const row = target as QuoteRowTarget;
+        const quote = quotes.find((item) => item.QuoteId === row.entityId);
+        if (!quote) return;
+        openCategoryPicker({
+          type: 'quote',
+          id: quote.QuoteId,
+          label: quote.QuoteCode || quote.Subject || `#${quote.QuoteId}`,
+          categories: quote.Categories,
+        });
+      },
+      'quote.copyCode': async (target) => {
+        const row = target as QuoteRowTarget;
+        if (!row.rawData.QuoteCode) {
+          toast.warning('Teklif kodu bulunmuyor.');
+          return;
+        }
+        await navigator.clipboard.writeText(row.rawData.QuoteCode);
+        toast.success('Teklif kodu kopyalandı.');
+      },
+      'quote.accept': async (target) => {
+        const row = target as QuoteRowTarget;
+        if (row.rawData.Status === 'accepted') return;
+        if (row.rawData.Status === 'draft') {
+          toast.warning('Taslak teklif önce Beklemede durumuna alınmalıdır.');
+          return;
+        }
+        await quoteService.acceptQuoteAsync(row.entityId);
+        toast.success('Teklif kabul edildi.');
+        await loadData();
+      },
+      'quote.rollback': async (target) => {
+        const row = target as QuoteRowTarget;
+        if (row.rawData.Status === 'pending') return;
+        if (row.rawData.Status === 'draft') {
+          toast.warning('Taslak teklif Beklemede durumuna alınamaz; teklifi açıp Teklifi oluştur kullanın.');
+          return;
+        }
+        await quoteService.updateAsync(row.entityId, { Status: QuoteStatus.Pending });
+        toast.success('Teklif beklemede durumuna geri alındı.');
+        await loadData();
+      },
+      'quote.convert': (target) => {
+        const row = target as QuoteRowTarget;
+        const quote = quotes.find((item) => item.QuoteId === row.entityId);
+        if (!quote) return;
+        if (quote.Status !== QuoteStatus.Accepted) {
+          toast.warning('Önce teklifi kabul etmelisiniz.');
+          return;
+        }
+        handleOpenQuote(quote);
+        toast.info('Teklif detayindan "Sözleşmeye Dönüştür" adımını tamamlayabilirsiniz.');
+      },
+      'quote.openContract': async (target) => {
+        const row = target as QuoteRowTarget;
+        const quote = quotes.find((item) => item.QuoteId === row.entityId);
+        if (!quote) return;
+        await openConvertedContractFromQuote(quote);
+      },
+      'quote.clone': async (target) => {
+        const row = target as QuoteRowTarget;
+        await handleQuoteCloneFromRow(row.entityId);
+      },
+      'quote.delete': async (target) => {
+        const row = target as QuoteRowTarget;
+        if (row.rawData.ConvertedContractId) {
+          toast.warning(
+            'Bu teklif sözleşmeye dönüştürülmüş. Sözleşmede İptal Et veya Teklife Geri Al kullanın.'
+          );
+          return;
+        }
+        try {
+          await quoteService.deleteAsync(row.entityId);
+          toast.success('Teklif silindi.');
+          await loadData();
+        } catch (error) {
+          console.error('Delete quote error:', error);
+          if (isConvertedQuoteApiError(error)) {
+            toast.error(getApiErrorMessage(error));
+          } else {
+            toast.error(getUserFacingApiErrorMessage(error, 'quote-delete'));
+          }
+        }
+      },
+    }),
+    [handleQuoteCloneFromRow, handleQuotePreview, loadData, openConvertedContractFromQuote, quotes]
+  );
+  useContextMenuHandlers('quoteRow', quoteMenuHandlers);
 
   const renderContractsTable = () => {
     if (contracts.length === 0) {

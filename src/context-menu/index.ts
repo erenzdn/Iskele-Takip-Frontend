@@ -13,4 +13,5 @@ export type {
   OpenContextMenuPayload,
   QuoteRowTarget,
   ScaffoldRowTarget,
+  ShipmentRowTarget,
 } from './types';
