@@ -22,7 +22,6 @@ import {
   formatAddendumRefLabel,
   getAddendumDisplayStatusLabel,
   getAddendumStatusBadgeClass,
-  getChangeTypeLabel,
   getReverseBlockedReason,
   isAddendumEditable,
 } from '../../utils/addendum';
@@ -38,6 +37,15 @@ import AddendumAddProductsModal from './AddendumAddProductsModal';
 import AddendumReverseModal from './AddendumReverseModal';
 import ContractLinesReferenceDrawer from '../contracts/ContractLinesReferenceDrawer';
 import DataTable from '../DataTable';
+import { LINE_ITEM_COL } from '../../constants/lineItemTableColumns';
+import {
+  buildAddendumGridRows,
+  planAddendumPriceOps,
+  planAddendumQtyOps,
+  savedTargetPrice,
+  savedTargetQty,
+  type AddendumGridRow,
+} from '../../utils/addendumQuantityGrid';
 
 function todayDateInputValue(): string {
   return new Date().toISOString().split('T')[0];
@@ -48,6 +56,21 @@ function toDateInputValue(iso: string | null | undefined): string {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return todayDateInputValue();
   return d.toISOString().split('T')[0];
+}
+
+/** "1.250,50" / "1250.5" / "1250,5" → 1250.5; boş/geçersiz → null */
+function parsePriceInput(raw: string): number | null {
+  let t = raw.trim().replace(/\s/g, '');
+  if (t === '') return null;
+  if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
+  const n = Number(t);
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Fiyat kutusunun ilk değeri: Türkçe ondalık, binlik ayırıcısız (örn. 1250,5) */
+function formatPriceInput(n: number): string {
+  const r = Math.round((Number(n) || 0) * 100) / 100;
+  return String(r).replace('.', ',');
 }
 
 function detailSummary(d: AddendumDetail): string {
@@ -124,6 +147,12 @@ export default function AddendumDetailModal({
   const [editingDetail, setEditingDetail] = useState<AddendumDetail | null>(null);
   const [confirmApprove, setConfirmApprove] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  /** Miktar tablosunda kullanıcının yazdığı (henüz kaydedilmemiş) değerler: satır anahtarı → metin */
+  const [qtyInputs, setQtyInputs] = useState<Record<string, string>>({});
+  /** Fiyat düzenleme modu ("Fiyat Değiştir") ve girilen fiyatlar: satır anahtarı → metin */
+  const [priceEditMode, setPriceEditMode] = useState(false);
+  const [priceInputs, setPriceInputs] = useState<Record<string, string>>({});
+  const [confirmDiscardClose, setConfirmDiscardClose] = useState(false);
   const [showRejectModal, setShowRejectModal] = useState(false);
   const [showReverseModal, setShowReverseModal] = useState(false);
   const [rejectionReason, setRejectionReason] = useState('');
@@ -141,6 +170,48 @@ export default function AddendumDetailModal({
     }
     return ids;
   }, [details]);
+  const gridRows = useMemo(
+    () => buildAddendumGridRows(contractLines, details, isRental),
+    [contractLines, details, isRental]
+  );
+  /** Tabloda satırı olmayan (sözleşme kalemi bulunamayan) fiyat değişiklikleri */
+  const otherDetails = useMemo(() => {
+    const gridIds = new Set(
+      gridRows.flatMap((r) => (r.kind === 'contract' ? [r.contractDetailId] : []))
+    );
+    return details.filter(
+      (d) =>
+        d.ChangeType === 'PRICE_CHANGE' &&
+        (d.ContractDetailId == null || !gridIds.has(Number(d.ContractDetailId)))
+    );
+  }, [details, gridRows]);
+  const pendingTargets = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const row of gridRows) {
+      const raw = qtyInputs[row.key];
+      if (raw == null) continue;
+      const n = raw.trim() === '' ? 0 : Math.floor(Number(raw));
+      if (!Number.isFinite(n)) continue;
+      if (Math.max(0, n) !== savedTargetQty(row)) out[row.key] = Math.max(0, n);
+    }
+    return out;
+  }, [gridRows, qtyInputs]);
+  const pendingPriceTargets = useMemo(() => {
+    const out: Record<string, number> = {};
+    for (const row of gridRows) {
+      if (row.kind !== 'contract') continue;
+      const raw = priceInputs[row.key];
+      if (raw == null) continue;
+      const n = parsePriceInput(raw);
+      if (n == null) continue;
+      if (Math.round(n * 100) / 100 !== savedTargetPrice(row, isRental)) out[row.key] = n;
+    }
+    return out;
+  }, [gridRows, priceInputs, isRental]);
+  const pendingCount =
+    Object.keys(pendingTargets).length + Object.keys(pendingPriceTargets).length;
+  /** Tabloda kaydedilmemiş miktar veya fiyat değişikliği var mı */
+  const hasPendingQty = pendingCount > 0;
   const showReverse =
     addendum != null &&
     canReverseAddendum({
@@ -186,6 +257,10 @@ export default function AddendumDetailModal({
       setEditingDetail(null);
       setConfirmApprove(false);
       setConfirmDelete(false);
+      setQtyInputs({});
+      setPriceInputs({});
+      setPriceEditMode(false);
+      setConfirmDiscardClose(false);
       setShowRejectModal(false);
       setShowReverseModal(false);
       setRejectionReason('');
@@ -261,12 +336,13 @@ export default function AddendumDetailModal({
     }
     try {
       setIsBusy(true);
+      if (!(await flushQuantities({ silent: true }))) return;
       const updated = await addendumService.updateAsync(addendum.AddendumId, {
         EffectiveDate: new Date(effectiveDate).toISOString(),
         Reason: reason.trim() || null,
         AddendumCode: addendumCode.trim() || null,
       });
-      setAddendum({ ...updated, details: details });
+      setAddendum((prev) => ({ ...updated, details: prev?.details ?? prev?.Details ?? details }));
       toast.success('Zeyilname kaydedildi');
       await Promise.resolve(onChanged());
     } catch (error) {
@@ -283,6 +359,84 @@ export default function AddendumDetailModal({
     // kaydetmediği değerleri taşıyabilir; sunucudakiyle ezilirse ürün ekleyince tarih geri dönüyordu.
     const full = await addendumService.getByIdAsync(addendum.AddendumId);
     setAddendum(full);
+    return full;
+  };
+
+  /**
+   * Tablodaki bekleyen miktar değişikliklerini zeyilname kalemlerine yazar.
+   * true: her şey kaydedildi (veya bekleyen yoktu).
+   */
+  const flushQuantities = async (opts?: { silent?: boolean }): Promise<boolean> => {
+    if (!addendum || !editable || !hasPendingQty) return true;
+    // Fiyat işlemlerinin anahtarı "p:" ile ayrılır; aynı satırın miktar hatası fiyatı engellemesin.
+    const ops = [
+      ...planAddendumQtyOps(gridRows, pendingTargets),
+      ...planAddendumPriceOps(gridRows, pendingPriceTargets, isRental).map((op) => ({
+        ...op,
+        rowKey: `p:${op.rowKey}`,
+      })),
+    ];
+    const failedKeys = new Set<string>();
+    let firstError: unknown = null;
+    for (const op of ops) {
+      if (failedKeys.has(op.rowKey)) continue;
+      try {
+        if (op.op === 'add') {
+          await addendumService.addDetailAsync(addendum.AddendumId, op.payload);
+        } else if (op.op === 'update') {
+          await addendumService.updateDetailAsync(addendum.AddendumId, op.detailId, op.patch);
+        } else {
+          await addendumService.deleteDetailAsync(addendum.AddendumId, op.detailId);
+        }
+      } catch (error) {
+        console.error('Addendum quantity sync error:', error);
+        failedKeys.add(op.rowKey);
+        firstError ??= error;
+      }
+    }
+    try {
+      await refreshDetails();
+    } catch (error) {
+      console.error('Addendum refresh error:', error);
+    }
+    // Başarılı satırların girişi temizlenir; hatalı satır kullanıcı düzeltsin diye kalır.
+    setQtyInputs((prev) => {
+      const next: Record<string, string> = {};
+      for (const key of failedKeys) if (key in prev) next[key] = prev[key];
+      return next;
+    });
+    setPriceInputs((prev) => {
+      const next: Record<string, string> = {};
+      for (const key of failedKeys) {
+        const k = key.startsWith('p:') ? key.slice(2) : null;
+        if (k && k in prev) next[k] = prev[k];
+      }
+      return next;
+    });
+    await Promise.resolve(onChanged());
+    if (firstError) {
+      toast.error(getUserFacingApiErrorMessage(firstError, 'addendum'));
+      return false;
+    }
+    if (!opts?.silent) toast.success('Değişiklikler kaydedildi');
+    return true;
+  };
+
+  const handleSaveQuantities = async () => {
+    try {
+      setIsBusy(true);
+      await flushQuantities();
+    } finally {
+      setIsBusy(false);
+    }
+  };
+
+  const requestClose = () => {
+    if (editable && hasPendingQty) {
+      setConfirmDiscardClose(true);
+      return;
+    }
+    onClose();
   };
 
   const handleSubmit = async () => {
@@ -291,12 +445,18 @@ export default function AddendumDetailModal({
       toast.warning('Geçerlilik tarihi zorunludur');
       return;
     }
-    if (details.length < 1) {
-      toast.warning('Onaya göndermek için en az bir kalem ekleyin');
-      return;
-    }
     try {
       setIsBusy(true);
+      let currentDetails = details;
+      if (editable && hasPendingQty) {
+        if (!(await flushQuantities({ silent: true }))) return;
+        const fresh = await addendumService.getByIdAsync(addendum.AddendumId);
+        currentDetails = fresh.details ?? fresh.Details ?? [];
+      }
+      if (currentDetails.length < 1) {
+        toast.warning('Onaya göndermek için en az bir ürünün miktarını değiştirin veya ürün ekleyin');
+        return;
+      }
       if (editable) {
         await addendumService.updateAsync(addendum.AddendumId, {
           EffectiveDate: new Date(effectiveDate).toISOString(),
@@ -305,7 +465,7 @@ export default function AddendumDetailModal({
         });
       }
       const updated = await addendumService.submitAsync(addendum.AddendumId);
-      setAddendum({ ...updated, details: updated.details ?? details });
+      setAddendum({ ...updated, details: updated.details ?? currentDetails });
       toast.success('Zeyilname onaya gönderildi');
       await Promise.resolve(onChanged());
     } catch (error) {
@@ -449,6 +609,233 @@ export default function AddendumDetailModal({
     }
   };
 
+  const focusGridInput = (column: 'qty' | 'price', rowIndex: number) => {
+    const el = document.querySelector<HTMLInputElement>(
+      `input[data-addendum-${column}-row="${rowIndex}"]`
+    );
+    if (el) {
+      el.focus();
+      el.select();
+    }
+  };
+
+  const renderGridRow = (row: AddendumGridRow, rowIndex: number) => {
+    const isAdded = row.kind === 'added';
+    const baseQty = isAdded ? 0 : row.currentQty;
+    const savedTarget = savedTargetQty(row);
+    const rawInput = qtyInputs[row.key];
+    const displayValue = rawInput ?? String(savedTarget);
+    const parsed = displayValue.trim() === '' ? 0 : Math.max(0, Math.floor(Number(displayValue)) || 0);
+    const diff = parsed - baseQty;
+    const isPending = row.key in pendingTargets;
+    const savedPrice = row.kind === 'contract' ? savedTargetPrice(row, isRental) : null;
+    const hasSavedPriceChange =
+      row.kind === 'contract' && savedPrice != null && savedPrice !== row.currentPrice;
+    const isPricePending = row.key in pendingPriceTargets;
+    const hasSavedChange = !isAdded && (row.savedDelta !== 0 || hasSavedPriceChange);
+
+    let code = '—';
+    let name = '';
+    let warehouseName = '—';
+    let price: number | null = null;
+    let discount: number | null = null;
+    if (row.kind === 'contract') {
+      const line = row.line;
+      if (line.kind === 'inventory') {
+        code = line.ItemCode || '—';
+        name = line.ItemNameOverride || line.ItemName || `Ürün #${line.ItemId}`;
+        warehouseName =
+          line.WarehouseName ||
+          warehouses.find((w) => w.WarehouseId === line.WarehouseId)?.WarehouseName ||
+          '—';
+        discount = line.Iskonto ?? null;
+      } else {
+        name = line.Description || 'Manuel kalem';
+      }
+      price = row.currentPrice;
+    } else {
+      const d = row.detail;
+      code = d.ItemCode || '—';
+      name = d.IsManual ? d.Description || 'Manuel kalem' : d.ItemName || `Ürün #${d.ItemId ?? '—'}`;
+      warehouseName =
+        d.WarehouseName ||
+        warehouses.find((w) => w.WarehouseId === d.WarehouseId)?.WarehouseName ||
+        '—';
+      price = d.NewUnitPrice ?? null;
+      discount = d.Iskonto ?? null;
+    }
+
+    const rowClass = isPending || isPricePending
+      ? 'bg-amber-500/15'
+      : isAdded
+        ? 'bg-green-500/10'
+        : hasSavedChange
+          ? 'bg-primary/10'
+          : rowIndex % 2 === 0
+            ? 'bg-background-panel'
+            : 'bg-background-secondary/35';
+
+    return (
+      <tr key={row.key} className={rowClass}>
+        <td className="row-index-col">
+          <span className="row-index-num">{rowIndex + 1}</span>
+        </td>
+        <td className="text-text-secondary">
+          {code !== '—' ? <span className="item-code-badge" title={code}>{code}</span> : '—'}
+        </td>
+        <td className="font-medium">
+          <span className="inline-flex items-center gap-1.5 flex-wrap">
+            {name}
+            {isAdded && (
+              <span className="text-[10px] uppercase tracking-wide px-1.5 py-0.5 rounded bg-green-500/20 text-green-300">
+                Yeni ürün
+              </span>
+            )}
+          </span>
+        </td>
+        <td className="text-text-secondary whitespace-nowrap">{warehouseName}</td>
+        <td className="text-right tabular-nums whitespace-nowrap">
+          {row.kind === 'contract' && editable && priceEditMode ? (
+            <input
+              type="text"
+              inputMode="decimal"
+              value={priceInputs[row.key] ?? formatPriceInput(savedPrice ?? row.currentPrice)}
+              data-addendum-price-row={rowIndex}
+              disabled={isBusy}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => {
+                const v = e.target.value.replace(/[^\d.,]/g, '').slice(0, 16);
+                setPriceInputs((prev) => ({ ...prev, [row.key]: v }));
+              }}
+              onKeyDown={(e) => {
+                // Oklar: genel tablo gezinmesi (utils/tableKeyboardNav)
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  focusGridInput('price', rowIndex + 1);
+                } else if (e.key === 'Escape' && priceInputs[row.key] != null) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setPriceInputs((prev) => {
+                    const next = { ...prev };
+                    delete next[row.key];
+                    return next;
+                  });
+                }
+              }}
+              className={`input w-full text-right py-0.5 text-xs tabular-nums ${
+                isPricePending ? 'border-amber-400/70' : ''
+              }`}
+              aria-label={isRental ? 'Yeni aylık fiyat' : 'Yeni birim fiyat'}
+              title={`Mevcut: ${formatMoney(row.currentPrice, currency)}`}
+            />
+          ) : hasSavedPriceChange && savedPrice != null && price != null ? (
+            <span className="inline-flex flex-col items-end leading-tight">
+              <span className="text-[11px] text-text-secondary line-through">
+                {formatMoney(price, currency)}
+              </span>
+              <span className="text-primary font-medium">{formatMoney(savedPrice, currency)}</span>
+            </span>
+          ) : price != null ? (
+            formatMoney(price, currency)
+          ) : (
+            '—'
+          )}
+          {discount != null && discount > 0 && (
+            <span className="ml-1 text-[11px] text-red-300">-%{formatDiscountPercent(discount)}</span>
+          )}
+        </td>
+        <td className="text-right tabular-nums text-text-secondary">{isAdded ? '—' : baseQty}</td>
+        <td className="text-right">
+          {editable ? (
+            <input
+              type="text"
+              inputMode="numeric"
+              value={displayValue}
+              data-addendum-qty-row={rowIndex}
+              disabled={isBusy}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => {
+                const digits = e.target.value.replace(/\D/g, '').slice(0, 9);
+                setQtyInputs((prev) => ({ ...prev, [row.key]: digits }));
+              }}
+              onKeyDown={(e) => {
+                // Oklar: genel tablo gezinmesi (utils/tableKeyboardNav)
+                if (e.key === 'Enter') {
+                  e.preventDefault();
+                  focusGridInput('qty', rowIndex + 1);
+                } else if (e.key === 'Escape' && rawInput != null) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setQtyInputs((prev) => {
+                    const next = { ...prev };
+                    delete next[row.key];
+                    return next;
+                  });
+                }
+              }}
+              className={`input w-full text-right py-0.5 text-xs tabular-nums ${
+                isPending ? 'border-amber-400/70' : ''
+              }`}
+              aria-label="Yeni miktar"
+            />
+          ) : (
+            <span className="tabular-nums">{parsed}</span>
+          )}
+        </td>
+        <td
+          className={`text-right tabular-nums font-medium ${
+            diff > 0 ? 'text-green-400' : diff < 0 ? 'text-red-400' : 'text-text-secondary'
+          }`}
+        >
+          {diff > 0 ? `+${diff}` : diff < 0 ? diff : '—'}
+        </td>
+        {editable && (
+          <td className="action-col">
+            <div className="flex justify-end gap-1">
+              {row.kind === 'contract' && (isPending || isPricePending || hasSavedChange) && (
+                <button
+                  type="button"
+                  className="btn-secondary !py-0.5 !px-2 text-xs"
+                  disabled={isBusy}
+                  title="Mevcut miktar ve fiyata döndür"
+                  onClick={() => {
+                    setQtyInputs((prev) => ({ ...prev, [row.key]: String(row.currentQty) }));
+                    setPriceInputs((prev) => ({ ...prev, [row.key]: formatPriceInput(row.currentPrice) }));
+                  }}
+                >
+                  Sıfırla
+                </button>
+              )}
+              {row.kind === 'added' && row.detail.DetailId > 0 && (
+                <>
+                  <button
+                    type="button"
+                    className="btn-secondary !py-0.5 !px-2 text-xs"
+                    disabled={isBusy}
+                    onClick={() => {
+                      setEditingDetail(row.detail);
+                      setShowLineModal(true);
+                    }}
+                  >
+                    Düzenle
+                  </button>
+                  <button
+                    type="button"
+                    className="btn-secondary !py-0.5 !px-2 text-xs text-red-400 border-red-500/30"
+                    disabled={isBusy}
+                    onClick={() => void handleDeleteDetail(row.detail.DetailId)}
+                  >
+                    Sil
+                  </button>
+                </>
+              )}
+            </div>
+          </td>
+        )}
+      </tr>
+    );
+  };
+
   const titleNo =
     displayAddendum?.AddendumNo != null ? `#${displayAddendum.AddendumNo}` : '';
 
@@ -488,7 +875,7 @@ export default function AddendumDetailModal({
         </div>
         <button
           type="button"
-          onClick={onClose}
+          onClick={requestClose}
           className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
           aria-label="Kapat"
           disabled={isBusy}
@@ -501,7 +888,7 @@ export default function AddendumDetailModal({
         {loading || !addendum ? (
           <div className="text-center py-16 text-text-secondary">Yükleniyor...</div>
         ) : (
-          <div className="max-w-5xl mx-auto space-y-6">
+          <div className="max-w-7xl mx-auto space-y-6">
             {status === 'rejected' && addendum.RejectionReason && (
               <div className="rounded-xl border border-red-500/40 bg-red-900/20 px-4 py-3 text-sm text-red-200">
                 <span className="font-medium">Red gerekçesi: </span>
@@ -631,118 +1018,196 @@ export default function AddendumDetailModal({
 
             <section className="rounded-xl border border-background-border bg-background-panel p-4 space-y-3">
               <div className="flex items-center justify-between gap-2 flex-wrap">
-                <h3 className="text-sm font-semibold text-text-primary">Kalemler</h3>
-                <div className="flex flex-wrap gap-2">
-                  <button
-                    type="button"
-                    className="btn-secondary text-sm"
-                    disabled={isBusy}
-                    onClick={() => setShowContractPeek(true)}
-                  >
-                    Sözleşme ürünleri
-                    {contractLines.length > 0 ? ` (${contractLines.length})` : ''}
-                  </button>
+                <div>
+                  <h3 className="text-sm font-semibold text-text-primary">Ürünler ve Miktarlar</h3>
                   {editable && (
+                    <p className="text-xs text-text-secondary mt-0.5">
+                      {priceEditMode ? (
+                        <>
+                          Fiyat düzenleme açık: <strong className="text-text-primary">
+                            {isRental ? 'Aylık Fiyat' : 'Birim Fiyat'}
+                          </strong>{' '}
+                          sütununa yeni fiyatı yazın (iskonto öncesi). Değişen satırlar fiyat değişikliği kalemi olur.
+                        </>
+                      ) : (
+                        <>
+                          Sözleşmedeki tüm ürünler listelenir.{' '}
+                          <strong className="text-text-primary">Yeni Miktar</strong> sütununu değiştirin; fark
+                          otomatik olarak artış / azalış kalemi olur.
+                        </>
+                      )}
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  {editable && hasPendingQty && (
                     <>
+                      <button
+                        type="button"
+                        className="btn-secondary text-sm"
+                        disabled={isBusy}
+                        onClick={() => {
+                          setQtyInputs({});
+                          setPriceInputs({});
+                        }}
+                      >
+                        Değişiklikleri Geri Al
+                      </button>
                       <button
                         type="button"
                         className="btn-primary text-sm"
                         disabled={isBusy}
-                        onClick={() => {
-                          setShowContractPeek(false);
-                          setShowAddProductsModal(true);
-                        }}
+                        onClick={() => void handleSaveQuantities()}
                       >
-                        Ürün Ekle
+                        Değişiklikleri Kaydet ({pendingCount})
                       </button>
+                    </>
+                  )}
+                  {editable && (
+                    <>
                       <button
                         type="button"
                         className="btn-secondary text-sm"
                         disabled={isBusy}
                         onClick={() => {
                           setShowContractPeek(false);
-                          setEditingDetail(null);
-                          setShowLineModal(true);
+                          setShowAddProductsModal(true);
                         }}
                       >
-                        Mevcut Kalemi Değiştir
+                        Yeni Ürün Ekle
+                      </button>
+                      <button
+                        type="button"
+                        className={priceEditMode ? 'btn-primary text-sm' : 'btn-secondary text-sm'}
+                        disabled={isBusy || gridRows.every((r) => r.kind !== 'contract')}
+                        aria-pressed={priceEditMode}
+                        onClick={() => {
+                          const next = !priceEditMode;
+                          setPriceEditMode(next);
+                          if (next) {
+                            setTimeout(() => focusGridInput('price', 0), 0);
+                          }
+                        }}
+                      >
+                        {priceEditMode ? 'Fiyat Düzenlemeyi Kapat' : 'Fiyat Değiştir'}
                       </button>
                     </>
                   )}
                 </div>
               </div>
 
-              {details.length === 0 ? (
+              {gridRows.length === 0 ? (
                 <div className="text-center py-8 text-text-secondary text-sm">
-                  Henüz kalem eklenmedi. Yeni ürün için <strong className="text-text-primary">Ürün Ekle</strong>,
-                  mevcut kalem için <strong className="text-text-primary">Mevcut Kalemi Değiştir</strong> kullanın.
+                  Sözleşmede ürün yok.
+                  {editable && (
+                    <>
+                      {' '}Yeni ürün için <strong className="text-text-primary">Yeni Ürün Ekle</strong> kullanın.
+                    </>
+                  )}
                 </div>
               ) : (
-                <div className="overflow-x-auto">
-                  <DataTable tableId="AddendumDetailModal" className="w-full text-sm">
+                <div className="overflow-auto max-h-[60vh] rounded-lg border border-background-border">
+                  <DataTable
+                    tableId="AddendumQuantityGrid"
+                    className="table-data-grid table-excel-rows text-text-primary"
+                  >
                     <thead>
-                      <tr className="text-left text-text-secondary border-b border-background-border">
-                        <th className="py-2 pr-3 font-medium">Tip</th>
-                        <th className="py-2 pr-3 font-medium">Açıklama</th>
-                        <th className="py-2 pr-3 font-medium">Miktar</th>
-                        <th className="py-2 pr-3 font-medium">Fiyat</th>
-                        {editable && <th className="py-2 font-medium">İşlem</th>}
+                      <tr>
+                        <th className="row-index-col" style={{ width: LINE_ITEM_COL.rowIndex }}>
+                          #
+                        </th>
+                        <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.itemCode }}>
+                          Ürün Kodu
+                        </th>
+                        <th className="text-left" style={{ width: '30%' }}>
+                          Ürün Adı
+                        </th>
+                        <th className="text-left whitespace-nowrap" style={{ width: LINE_ITEM_COL.warehouse }}>
+                          Depo
+                        </th>
+                        <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.unitPrice }}>
+                          {isRental ? 'Aylık Fiyat' : 'Birim Fiyat'}
+                        </th>
+                        <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.quantity }}>
+                          Mevcut
+                        </th>
+                        <th className="text-right whitespace-nowrap" style={{ width: '10%' }}>
+                          Yeni Miktar
+                        </th>
+                        <th className="text-right whitespace-nowrap" style={{ width: LINE_ITEM_COL.quantity }}>
+                          Fark
+                        </th>
+                        {editable && (
+                          <th className="action-col" style={{ width: '9%' }} aria-label="İşlem" />
+                        )}
                       </tr>
                     </thead>
                     <tbody>
-                      {details.map((d, idx) => (
-                        <tr
-                          key={d.DetailId > 0 ? d.DetailId : `detail-${idx}-${d.ChangeType}-${d.ContractDetailId ?? d.ItemId ?? 0}`}
-                          className="border-b border-background-border/60"
-                        >
-                          <td className="py-2 pr-3 whitespace-nowrap">
-                            {getChangeTypeLabel(d.ChangeType)}
-                          </td>
-                          <td className="py-2 pr-3">{detailSummary(d)}</td>
-                          <td className="py-2 pr-3">
-                            {d.QuantityChange != null ? d.QuantityChange : '—'}
-                          </td>
-                          <td className="py-2 pr-3">
-                            {d.NewUnitPrice != null
-                              ? formatMoney(d.NewUnitPrice)
-                              : d.NewMonthlyOverride != null
-                                ? `Aylık: ${formatMoney(d.NewMonthlyOverride)}`
-                                : '—'}
-                            {d.Iskonto != null && d.Iskonto > 0 && (
-                              <span className="ml-1.5 text-xs text-red-300">
-                                İsk. %{formatDiscountPercent(d.Iskonto)}
-                              </span>
-                            )}
-                          </td>
-                          {editable && (
-                            <td className="py-2">
-                              <div className="flex gap-2">
-                                <button
-                                  type="button"
-                                  className="btn-secondary text-xs px-2 py-1"
-                                  disabled={isBusy}
-                                  onClick={() => {
-                                    setEditingDetail(d);
-                                    setShowLineModal(true);
-                                  }}
-                                >
-                                  Düzenle
-                                </button>
-                                <button
-                                  type="button"
-                                  className="btn-secondary text-xs px-2 py-1 text-red-400 border-red-500/30"
-                                  disabled={isBusy}
-                                  onClick={() => void handleDeleteDetail(d.DetailId)}
-                                >
-                                  Sil
-                                </button>
-                              </div>
-                            </td>
-                          )}
-                        </tr>
-                      ))}
+                      {gridRows.map((row, rowIndex) => renderGridRow(row, rowIndex))}
                     </tbody>
                   </DataTable>
+                </div>
+              )}
+
+              {otherDetails.length > 0 && (
+                <div className="space-y-2 pt-2">
+                  <h4 className="text-xs font-semibold text-text-secondary uppercase tracking-wider">
+                    Fiyat değişiklikleri
+                  </h4>
+                  <div className="overflow-x-auto">
+                    <DataTable tableId="AddendumDetailModal" className="w-full text-sm">
+                      <thead>
+                        <tr className="text-left text-text-secondary border-b border-background-border">
+                          <th className="py-2 pr-3 font-medium">Kalem</th>
+                          <th className="py-2 pr-3 font-medium">Yeni Fiyat</th>
+                          {editable && <th className="py-2 font-medium">İşlem</th>}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {otherDetails.map((d, idx) => (
+                          <tr
+                            key={d.DetailId > 0 ? d.DetailId : `other-${idx}`}
+                            className="border-b border-background-border/60"
+                          >
+                            <td className="py-2 pr-3">{detailSummary(d)}</td>
+                            <td className="py-2 pr-3">
+                              {d.NewUnitPrice != null ? formatMoney(d.NewUnitPrice, currency) : '—'}
+                              {d.NewMonthlyOverride != null && (
+                                <span className="ml-1.5 text-xs text-text-secondary">
+                                  Aylık: {formatMoney(d.NewMonthlyOverride, currency)}
+                                </span>
+                              )}
+                            </td>
+                            {editable && (
+                              <td className="py-2">
+                                <div className="flex gap-2">
+                                  <button
+                                    type="button"
+                                    className="btn-secondary text-xs px-2 py-1"
+                                    disabled={isBusy}
+                                    onClick={() => {
+                                      setEditingDetail(d);
+                                      setShowLineModal(true);
+                                    }}
+                                  >
+                                    Düzenle
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn-secondary text-xs px-2 py-1 text-red-400 border-red-500/30"
+                                    disabled={isBusy}
+                                    onClick={() => void handleDeleteDetail(d.DetailId)}
+                                  >
+                                    Sil
+                                  </button>
+                                </div>
+                              </td>
+                            )}
+                          </tr>
+                        ))}
+                      </tbody>
+                    </DataTable>
+                  </div>
                 </div>
               )}
             </section>
@@ -774,7 +1239,7 @@ export default function AddendumDetailModal({
           )}
         </div>
         <div className="flex flex-wrap gap-2 justify-end">
-          <button type="button" className="btn-secondary" onClick={onClose} disabled={isBusy}>
+          <button type="button" className="btn-secondary" onClick={requestClose} disabled={isBusy}>
             Kapat
           </button>
           {editable && (
@@ -871,6 +1336,23 @@ export default function AddendumDetailModal({
         zIndexClass="z-[80]"
         onConfirm={() => void handleApprove()}
         onCancel={() => setConfirmApprove(false)}
+      />
+
+      <ConfirmModal
+        open={confirmDiscardClose}
+        title="Kaydedilmemiş değişiklikler"
+        message="Tabloda kaydedilmemiş miktar veya fiyat değişiklikleri var. Kaydetmeden kapatılsın mı?"
+        confirmLabel="Kaydetmeden Kapat"
+        cancelLabel="Geri Dön"
+        variant="danger"
+        zIndexClass="z-[80]"
+        onConfirm={() => {
+          setConfirmDiscardClose(false);
+          setQtyInputs({});
+          setPriceInputs({});
+          onClose();
+        }}
+        onCancel={() => setConfirmDiscardClose(false)}
       />
 
       <ConfirmModal
@@ -971,7 +1453,7 @@ export default function AddendumDetailModal({
           items={items}
           warehouses={warehouses}
           editingDetail={editingDetail}
-          initialChangeType={editingDetail ? undefined : 'INCREASE'}
+          initialChangeType={editingDetail ? undefined : 'PRICE_CHANGE'}
           zIndexClass="z-[75]"
           onClose={() => {
             setShowLineModal(false);
