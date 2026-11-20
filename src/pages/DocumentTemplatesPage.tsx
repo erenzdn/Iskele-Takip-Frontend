@@ -272,7 +272,7 @@ export default function DocumentTemplatesPage() {
   return (
     <div className="space-y-3">
       <div>
-        <Link to="/system-settings" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
+        <Link to="/system-settings?tab=documents" className="inline-flex items-center gap-2 text-sm text-primary hover:underline">
           <ArrowLeftIcon size={16} />
           Ayarlar&apos;a Dön
         </Link>

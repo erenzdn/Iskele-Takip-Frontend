@@ -1,5 +1,14 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { Link, Navigate } from 'react-router-dom';
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react';
+import { Link, Navigate, useSearchParams } from 'react-router-dom';
 import {
   ArchiveIcon,
   ArrowClockwiseIcon,
@@ -8,6 +17,11 @@ import {
   ColumnsIcon,
   DownloadSimpleIcon,
   InfoIcon,
+  MagnifyingGlassIcon,
+  PaletteIcon,
+  UserIcon,
+  UsersThreeIcon,
+  XIcon,
   MoonIcon,
   SunIcon,
   WarningIcon,
@@ -261,23 +275,225 @@ function formatTrDateTime(raw?: unknown) {
   }).format(dt);
 }
 
-type SettingsTab = 'general' | 'categories' | 'archives' | 'tables' | 'finance' | 'system';
+type SettingsTab = 'appearance' | 'columns' | 'inventory' | 'documents' | 'finance' | 'system';
 
-const TABS: { id: SettingsTab; label: string; description: string; icon: ReactNode }[] = [
-  { id: 'general', label: 'Genel', description: 'Tema ve birimler', icon: <InfoIcon size={18} weight="duotone" /> },
+type SettingsScope = 'personal' | 'company' | 'system';
+
+const TABS: { id: SettingsTab; label: string; description: string; icon: ReactNode; scope: SettingsScope }[] = [
   {
-    id: 'categories',
-    label: 'Kategoriler',
-    description: 'Teklif ve sözleşme kategorileri',
-    icon: <TagIcon size={18} weight="duotone" />,
+    id: 'appearance',
+    label: 'Görünüm',
+    description: 'Tema ve arşiv kayıtları',
+    icon: <PaletteIcon size={18} weight="duotone" />,
+    scope: 'personal',
   },
-  { id: 'archives', label: 'Arşiv', description: 'Görünürlük tercihleri', icon: <ArchiveIcon size={18} weight="duotone" /> },
-  { id: 'tables', label: 'Tablolar', description: 'Sütun görünümü', icon: <ColumnsIcon size={18} weight="duotone" /> },
-  { id: 'finance', label: 'Finans', description: 'Kur ve oranlar', icon: <CurrencyCircleDollar size={18} weight="duotone" /> },
-  { id: 'system', label: 'Sistem', description: 'Güncelleme ve yedek', icon: <Gear size={18} weight="duotone" /> },
+  {
+    id: 'columns',
+    label: 'Tablo Sütunları',
+    description: 'Envanter ve müşteri listeleri',
+    icon: <ColumnsIcon size={18} weight="duotone" />,
+    scope: 'personal',
+  },
+  {
+    id: 'inventory',
+    label: 'Ürün ve Envanter',
+    description: 'Birimler ve ürün kategorileri',
+    icon: <PackageIcon size={18} weight="duotone" />,
+    scope: 'company',
+  },
+  {
+    id: 'documents',
+    label: 'Teklif ve Sözleşme',
+    description: 'Kategoriler, şablonlar, paketler',
+    icon: <FileTextIcon size={18} weight="duotone" />,
+    scope: 'company',
+  },
+  {
+    id: 'finance',
+    label: 'Kur ve Oranlar',
+    description: 'Döviz kuru ve kiralama oranı',
+    icon: <CurrencyCircleDollar size={18} weight="duotone" />,
+    scope: 'company',
+  },
+  {
+    id: 'system',
+    label: 'Güncelleme ve Yedek',
+    description: 'Yazılım sürümü ve veritabanı yedeği',
+    icon: <Gear size={18} weight="duotone" />,
+    scope: 'system',
+  },
 ];
 
+const TAB_GROUPS: { scope: SettingsScope; label: string }[] = [
+  { scope: 'personal', label: 'Kişisel Tercihler' },
+  { scope: 'company', label: 'Şirket Tanımları' },
+  { scope: 'system', label: 'Sistem' },
+];
+
+const SCOPE_NOTES: Record<SettingsScope, { icon: ReactNode; text: string }> = {
+  personal: {
+    icon: <UserIcon size={14} weight="bold" />,
+    text: 'Bu ayarlar yalnızca sizin için, bu bilgisayarda saklanır.',
+  },
+  company: {
+    icon: <UsersThreeIcon size={14} weight="bold" />,
+    text: 'Bu ayarlar tüm kullanıcılar için geçerlidir.',
+  },
+  system: {
+    icon: <Gear size={14} weight="bold" />,
+    text: 'Uygulama sürümü ve veritabanı yedekleri.',
+  },
+};
+
+/** Eski sekme kimlikleri (?tab=general vb.) yeni yapıya yönlenir. */
+const LEGACY_TAB_MAP: Record<string, SettingsTab> = {
+  general: 'appearance',
+  archives: 'appearance',
+  tables: 'columns',
+  categories: 'documents',
+};
+
+function resolveTabParam(raw: string | null): SettingsTab {
+  if (!raw) return 'appearance';
+  if (TABS.some((t) => t.id === raw)) return raw as SettingsTab;
+  return LEGACY_TAB_MAP[raw] ?? 'appearance';
+}
+
+type SettingsEntry = {
+  /** SettingsSection id'si; aramadan seçilince bu bölüme kaydırılır. */
+  id: string;
+  tab: SettingsTab;
+  title: string;
+  description: string;
+  keywords: string;
+};
+
+const SETTINGS_INDEX: SettingsEntry[] = [
+  {
+    id: 'theme',
+    tab: 'appearance',
+    title: 'Tema',
+    description: 'Aydınlık veya koyu arayüz teması',
+    keywords: 'karanlık koyu açık aydınlık dark light mod renk görünüm',
+  },
+  {
+    id: 'archive-visibility',
+    tab: 'appearance',
+    title: 'Arşiv kayıtları',
+    description: 'Pasif depoları ve arşivlenmiş ürünleri listelerde göster',
+    keywords: 'arşiv pasif depo ürün gizle göster görünürlük envanter malzeme kartı',
+  },
+  {
+    id: 'inventory-columns',
+    tab: 'columns',
+    title: 'Envanter tablosu sütunları',
+    description: 'Envanter listesinde görünen sütunlar',
+    keywords: 'tablo sütun kolon envanter ürün fiyat ağırlık kod birim liste',
+  },
+  {
+    id: 'customer-columns',
+    tab: 'columns',
+    title: 'Müşteri tablosu sütunları',
+    description: 'Müşteri listesinde görünen sütunlar',
+    keywords: 'tablo sütun kolon müşteri cari telefon vergi e-posta liste',
+  },
+  {
+    id: 'units',
+    tab: 'inventory',
+    title: 'Birim tanımları',
+    description: 'Adet, ton, paket gibi ölçü birimleri',
+    keywords: 'birim ölçü adet kg ton metre paket koli ekle sil',
+  },
+  {
+    id: 'product-categories',
+    tab: 'inventory',
+    title: 'Ürün kategorileri',
+    description: 'Envanter ürün grupları ve kategori iskontoları',
+    keywords: 'ürün kategori grup iskonto indirim envanter',
+  },
+  {
+    id: 'document-categories',
+    tab: 'documents',
+    title: 'Teklif ve sözleşme kategorileri',
+    description: 'Teklif ve sözleşmeleri gruplamak için kategoriler',
+    keywords: 'kategori etiket teklif sözleşme grup filtre',
+  },
+  {
+    id: 'document-templates',
+    tab: 'documents',
+    title: 'Belge şablonları',
+    description: 'Teklif, sözleşme ve kullanım ekstresi şablonları',
+    keywords: 'şablon belge pdf çıktı yazdır teklif sözleşme ekstre extre tasarım antet',
+  },
+  {
+    id: 'offer-packages',
+    tab: 'documents',
+    title: 'Teklif paketleri',
+    description: 'Hazır ürün listeleri',
+    keywords: 'paket teklif hazır liste ürün',
+  },
+  {
+    id: 'exchange-rates',
+    tab: 'finance',
+    title: 'Döviz kurları',
+    description: 'Uygulamada kullanılan USD ve EUR kurları',
+    keywords: 'döviz kur dolar euro usd eur para birimi tcmb',
+  },
+  {
+    id: 'rental-rates',
+    tab: 'finance',
+    title: 'Kiralama oranı ön ayarı',
+    description: 'Para birimine göre varsayılan kiralama çarpanları',
+    keywords: 'kira kiralama oran yüzde çarpan fiyat aylık tl usd eur',
+  },
+  {
+    id: 'software-update',
+    tab: 'system',
+    title: 'Yazılım güncelleme',
+    description: 'Yeni sürümü denetle, indir ve yükle',
+    keywords: 'güncelleme sürüm versiyon yükle indir update',
+  },
+  {
+    id: 'backup',
+    tab: 'system',
+    title: 'Veritabanı yedeği',
+    description: 'Manuel yedek al, son yedek tarihleri',
+    keywords: 'yedek yedekleme backup veritabanı sql indir',
+  },
+];
+
+function normalizeSearch(value: string) {
+  return value
+    .toLocaleLowerCase('tr')
+    .replace(/ı/g, 'i')
+    .normalize('NFD')
+    .replace(/[̀-ͯ]/g, '')
+    .trim();
+}
+
+const SEARCH_HAYSTACK = new Map(
+  SETTINGS_INDEX.map((entry) => {
+    const tab = TABS.find((t) => t.id === entry.tab);
+    return [
+      entry.id,
+      normalizeSearch([entry.title, entry.description, entry.keywords, tab?.label, tab?.description].join(' ')),
+    ];
+  })
+);
+
+function searchSettings(query: string): SettingsEntry[] {
+  const tokens = normalizeSearch(query).split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [];
+  return SETTINGS_INDEX.filter((entry) => {
+    const hay = SEARCH_HAYSTACK.get(entry.id) ?? '';
+    return tokens.every((token) => hay.includes(token));
+  });
+}
+
+const HighlightContext = createContext<string | null>(null);
+
 function SettingsSection({
+  id,
   icon,
   title,
   description,
@@ -285,6 +501,7 @@ function SettingsSection({
   children,
   className = '',
 }: {
+  id?: string;
   icon: ReactNode;
   title: string;
   description?: string;
@@ -292,9 +509,13 @@ function SettingsSection({
   children?: ReactNode;
   className?: string;
 }) {
+  const highlighted = useContext(HighlightContext) === id && id != null;
   return (
     <section
-      className={`rounded-panel border border-background-border bg-background-panel overflow-hidden ${className}`}
+      id={id ? `settings-${id}` : undefined}
+      className={`scroll-mt-4 rounded-panel border bg-background-panel overflow-hidden transition-shadow duration-500 ${
+        highlighted ? 'border-primary/60 ring-2 ring-primary/30' : 'border-background-border'
+      } ${className}`}
     >
       <div className="flex items-start justify-between gap-4 px-5 py-4 border-b border-background-border/70 bg-background-elevated/40">
         <div className="flex items-start gap-3 min-w-0">
@@ -359,6 +580,7 @@ function DocumentCategoriesSettings() {
   const loaded = useDocumentCategoryStore((s) => s.loaded);
   return (
     <SettingsSection
+      id="document-categories"
       icon={<TagIcon size={18} weight="duotone" />}
       title="Teklif ve Sözleşme Kategorileri"
       description="Tekliflerinizi ve sözleşmelerinizi gruplamak için kategoriler oluşturun. Kategoriler teklif ve sözleşmelerde ortaktır; teklif sözleşmeye dönüşünce kategorileri de taşınır. Listelerde Kategori filtresiyle hızlıca arayabilirsiniz."
@@ -380,6 +602,87 @@ function DocumentCategoriesSettings() {
   );
 }
 
+function LinkCard({
+  to,
+  icon,
+  title,
+  description,
+  tone = 'primary',
+}: {
+  to: string;
+  icon: ReactNode;
+  title: string;
+  description: string;
+  tone?: 'primary' | 'info';
+}) {
+  return (
+    <Link
+      to={to}
+      className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
+    >
+      <span className="flex items-center gap-3 min-w-0">
+        <span
+          className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${
+            tone === 'info' ? 'bg-info/10 text-info' : 'bg-primary/10 text-primary'
+          }`}
+        >
+          {icon}
+        </span>
+        <span className="min-w-0">
+          <span className="block text-sm font-medium text-text-primary">{title}</span>
+          <span className="block text-xs text-text-secondary mt-0.5">{description}</span>
+        </span>
+      </span>
+      <ArrowRightIcon
+        size={16}
+        className="shrink-0 text-text-secondary opacity-60 transition-all group-hover:translate-x-0.5 group-hover:opacity-100 group-hover:text-primary"
+      />
+    </Link>
+  );
+}
+
+function ColumnToggleChips<TKey extends string>({
+  columns,
+  visibility,
+  onToggle,
+}: {
+  columns: TableColumnMeta<TKey>[];
+  visibility: Record<TKey, boolean>;
+  onToggle: (key: TKey, visible: boolean) => void;
+}) {
+  return (
+    <div className="flex flex-wrap gap-2">
+      {columns.map((col) => {
+        const required = Boolean(col.required);
+        const checked = visibility[col.key];
+        return (
+          <label
+            key={col.key}
+            className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm select-none transition-colors ${
+              required
+                ? 'cursor-not-allowed border-primary/25 bg-primary/10 text-primary'
+                : checked
+                  ? 'cursor-pointer border-primary/35 bg-primary/10 text-primary'
+                  : 'cursor-pointer border-background-border bg-background-elevated/40 text-text-secondary hover:border-primary/25 hover:text-text-primary'
+            }`}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={required}
+              onChange={(e) => onToggle(col.key, e.target.checked)}
+              className="sr-only"
+            />
+            <span className={`h-1.5 w-1.5 rounded-full ${checked || required ? 'bg-primary' : 'bg-background-border-strong'}`} />
+            {col.label}
+            {required ? <span className="text-[10px] opacity-70">zorunlu</span> : null}
+          </label>
+        );
+      })}
+    </div>
+  );
+}
+
 function MetaChip({ label, value }: { label: string; value: string }) {
   return (
     <div className="rounded-xl border border-background-border/70 bg-background-elevated/40 px-3.5 py-2.5">
@@ -392,7 +695,50 @@ function MetaChip({ label, value }: { label: string; value: string }) {
 export default function SystemSettingsPage() {
   const user = useAuthStore((s) => s.user);
   const isAdmin = isAdminUser(user);
-  const [activeTab, setActiveTab] = useState<SettingsTab>('general');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = resolveTabParam(searchParams.get('tab'));
+  const setActiveTab = useCallback(
+    (tab: SettingsTab) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('tab', tab);
+          return next;
+        },
+        { replace: true }
+      );
+    },
+    [setSearchParams]
+  );
+  const [query, setQuery] = useState('');
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchResults = useMemo(() => searchSettings(query), [query]);
+  const searching = query.trim().length > 0;
+  const matchCountByTab = useMemo(() => {
+    const counts = new Map<SettingsTab, number>();
+    for (const r of searchResults) counts.set(r.tab, (counts.get(r.tab) ?? 0) + 1);
+    return counts;
+  }, [searchResults]);
+
+  const openSetting = useCallback(
+    (entry: SettingsEntry) => {
+      setQuery('');
+      setActiveTab(entry.tab);
+      setHighlightId(entry.id);
+      // Sekme içeriği render edildikten sonra bölüme kaydır.
+      window.setTimeout(() => {
+        document.getElementById(`settings-${entry.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      }, 60);
+    },
+    [setActiveTab]
+  );
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const timer = window.setTimeout(() => setHighlightId(null), 2000);
+    return () => window.clearTimeout(timer);
+  }, [highlightId]);
   const theme = useThemeStore((state) => state.theme);
   const setTheme = useThemeStore((state) => state.setTheme);
   const showArchivedWarehouses = useArchivePreferencesStore((s) => s.showArchivedWarehouses);
@@ -749,6 +1095,7 @@ export default function SystemSettingsPage() {
   }
 
   const updateNeedsAttention = updateStatus === 'available' || updateStatus === 'downloaded';
+  const show = (tab: SettingsTab) => !searching && activeTab === tab;
 
   return (
     <div className="max-w-6xl mx-auto">
@@ -769,54 +1116,173 @@ export default function SystemSettingsPage() {
         {/* Sol menü */}
         <aside className="w-full lg:w-60 shrink-0">
           <nav className="rounded-panel border border-background-border bg-background-panel p-1.5 lg:sticky lg:top-3">
-            <div className="hidden lg:block px-3 pt-2.5 pb-2">
-              <p className="text-[11px] font-semibold uppercase tracking-wider text-text-secondary">Bölümler</p>
+            <div className="relative p-1.5 pb-2">
+              <MagnifyingGlassIcon
+                size={15}
+                className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-text-secondary"
+              />
+              <input
+                ref={searchInputRef}
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && searchResults[0]) {
+                    e.preventDefault();
+                    openSetting(searchResults[0]);
+                  } else if (e.key === 'Escape' && query) {
+                    e.preventDefault();
+                    setQuery('');
+                  }
+                }}
+                placeholder="Ayar ara…"
+                aria-label="Ayarlarda ara"
+                className="input w-full py-2 pl-8 pr-8 text-sm [&::-webkit-search-cancel-button]:hidden"
+                autoComplete="off"
+              />
+              {query ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setQuery('');
+                    searchInputRef.current?.focus();
+                  }}
+                  aria-label="Aramayı temizle"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 rounded-md p-0.5 text-text-secondary hover:bg-background-hover hover:text-text-primary"
+                >
+                  <XIcon size={14} />
+                </button>
+              ) : null}
             </div>
             <div className="flex lg:flex-col gap-1 overflow-x-auto lg:overflow-visible pb-0.5 lg:pb-0">
-              {TABS.map((tab) => {
-                const active = activeTab === tab.id;
-                const showDot = tab.id === 'system' && updateNeedsAttention;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    onClick={() => setActiveTab(tab.id)}
-                    className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors min-w-[9.5rem] lg:min-w-0 lg:w-full ${
-                      active
-                        ? 'bg-primary/10 text-primary'
-                        : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
-                    }`}
-                  >
-                    {active ? (
-                      <span className="absolute left-0 top-1/2 hidden lg:block h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
-                    ) : null}
-                    <span className={`shrink-0 ${active ? 'text-primary' : 'text-text-secondary'}`}>{tab.icon}</span>
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1.5 text-sm font-medium">
-                        {tab.label}
-                        {showDot ? <span className="h-1.5 w-1.5 rounded-full bg-error animate-pulse" /> : null}
-                      </span>
-                      <span className={`hidden lg:block text-[11px] mt-0.5 ${active ? 'text-primary/70' : 'text-text-secondary/80'}`}>
-                        {tab.description}
-                      </span>
-                    </span>
-                  </button>
-                );
-              })}
+              {TAB_GROUPS.map((group) => (
+                <div key={group.scope} className="contents lg:block">
+                  <p className="hidden lg:block px-3 pt-3 pb-1.5 text-[11px] font-semibold uppercase tracking-wider text-text-secondary/80">
+                    {group.label}
+                  </p>
+                  <div className="contents lg:flex lg:flex-col lg:gap-1">
+                    {TABS.filter((tab) => tab.scope === group.scope).map((tab) => {
+                      const active = !searching && activeTab === tab.id;
+                      const showDot = tab.id === 'system' && updateNeedsAttention;
+                      const matches = matchCountByTab.get(tab.id) ?? 0;
+                      const dimmed = searching && matches === 0;
+                      return (
+                        <button
+                          key={tab.id}
+                          type="button"
+                          onClick={() => {
+                            setQuery('');
+                            setActiveTab(tab.id);
+                          }}
+                          className={`relative flex items-center gap-3 rounded-xl px-3 py-2.5 text-left transition-colors min-w-[9.5rem] lg:min-w-0 lg:w-full ${
+                            active
+                              ? 'bg-primary/10 text-primary'
+                              : 'text-text-secondary hover:bg-background-hover hover:text-text-primary'
+                          } ${dimmed ? 'opacity-45' : ''}`}
+                        >
+                          {active ? (
+                            <span className="absolute left-0 top-1/2 hidden lg:block h-5 w-0.5 -translate-y-1/2 rounded-full bg-primary" />
+                          ) : null}
+                          <span className={`shrink-0 ${active ? 'text-primary' : 'text-text-secondary'}`}>{tab.icon}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="flex items-center gap-1.5 text-sm font-medium">
+                              {tab.label}
+                              {showDot ? <span className="h-1.5 w-1.5 rounded-full bg-error animate-pulse" /> : null}
+                            </span>
+                            <span
+                              className={`hidden lg:block text-[11px] mt-0.5 ${active ? 'text-primary/70' : 'text-text-secondary/80'}`}
+                            >
+                              {tab.description}
+                            </span>
+                          </span>
+                          {searching && matches > 0 ? (
+                            <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-semibold text-primary tabular-nums">
+                              {matches}
+                            </span>
+                          ) : null}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
             </div>
           </nav>
         </aside>
 
         {/* İçerik */}
+        <HighlightContext.Provider value={highlightId}>
         <div className="flex-1 min-w-0 space-y-4">
-          <div className="mb-1">
-            <h1 className="text-lg font-semibold tracking-tight text-text-primary">{activeTabMeta.label}</h1>
-            <p className="text-sm text-text-secondary">{activeTabMeta.description}</p>
-          </div>
+          {searching ? (
+            <>
+              <div className="mb-1">
+                <h1 className="text-lg font-semibold tracking-tight text-text-primary">Arama sonuçları</h1>
+                <p className="text-sm text-text-secondary">
+                  “{query.trim()}” için {searchResults.length} ayar bulundu
+                  {searchResults.length > 0 ? ' • Enter ile ilk sonuca gidin' : ''}
+                </p>
+              </div>
+              {searchResults.length === 0 ? (
+                <div className="rounded-panel border border-dashed border-background-border bg-background-panel px-4 py-12 text-center">
+                  <div className="mx-auto mb-3 flex h-10 w-10 items-center justify-center rounded-xl bg-primary/10 text-primary">
+                    <MagnifyingGlassIcon size={20} weight="duotone" />
+                  </div>
+                  <p className="text-sm font-medium text-text-primary">Eşleşen ayar yok</p>
+                  <p className="mt-1 text-xs text-text-secondary">
+                    Farklı bir kelime deneyin; örn. “kur”, “yedek”, “sütun”, “birim”, “şablon”.
+                  </p>
+                </div>
+              ) : (
+                <ul className="space-y-2">
+                  {searchResults.map((entry) => {
+                    const tab = TABS.find((t) => t.id === entry.tab)!;
+                    const group = TAB_GROUPS.find((g) => g.scope === tab.scope)!;
+                    return (
+                      <li key={entry.id}>
+                        <button
+                          type="button"
+                          onClick={() => openSetting(entry)}
+                          className="group flex w-full items-center justify-between gap-3 rounded-xl border border-background-border bg-background-panel px-4 py-3 text-left transition-colors hover:border-primary/35 hover:bg-primary/5"
+                        >
+                          <span className="flex items-center gap-3 min-w-0">
+                            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+                              {tab.icon}
+                            </span>
+                            <span className="min-w-0">
+                              <span className="block text-sm font-medium text-text-primary">{entry.title}</span>
+                              <span className="block text-xs text-text-secondary mt-0.5 truncate">{entry.description}</span>
+                            </span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2 text-[11px] text-text-secondary">
+                            <span className="hidden sm:inline">
+                              {group.label} › {tab.label}
+                            </span>
+                            <ArrowRightIcon size={15} className="transition-transform group-hover:translate-x-0.5 group-hover:text-primary" />
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </>
+          ) : (
+            <div className="mb-1 flex flex-wrap items-end justify-between gap-x-4 gap-y-2">
+              <div>
+                <h1 className="text-lg font-semibold tracking-tight text-text-primary">{activeTabMeta.label}</h1>
+                <p className="text-sm text-text-secondary">{activeTabMeta.description}</p>
+              </div>
+              <span className="inline-flex items-center gap-1.5 rounded-lg border border-background-border bg-background-elevated/50 px-2.5 py-1 text-[11px] text-text-secondary">
+                {SCOPE_NOTES[activeTabMeta.scope].icon}
+                {SCOPE_NOTES[activeTabMeta.scope].text}
+              </span>
+            </div>
+          )}
 
-          {activeTab === 'general' && (
+          {show('appearance') && (
             <>
               <SettingsSection
+                id="theme"
                 icon={theme === 'dark' ? <MoonIcon size={18} weight="duotone" /> : <SunIcon size={18} weight="duotone" />}
                 title="Görünüm"
                 description="Arayüz temasını tercihinize göre ayarlayın."
@@ -850,60 +1316,33 @@ export default function SystemSettingsPage() {
               </SettingsSection>
 
               <SettingsSection
-                icon={<FileTextIcon size={18} weight="duotone" />}
-                title="Teklif ve Sözleşme"
-                description="Belge şablonları ile teklif kategori/paket yönetimine hızlı erişim."
+                id="archive-visibility"
+                icon={<ArchiveIcon size={18} weight="duotone" />}
+                title="Arşiv Kayıtları"
+                description="Pasif depo ve arşivlenmiş ürünlerin listelerde görünürlüğünü yönetin."
               >
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <Link
-                    to="/document-templates"
-                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5 sm:col-span-2"
-                  >
-                    <span className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        <FileTextIcon size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-medium text-text-primary">Belge Şablonları</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Teklif, sözleşme ve kullanım extresi şablonları</span>
-                      </span>
-                    </span>
-                    <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </Link>
-                  <Link
-                    to="/offer-management?tab=categories"
-                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
-                  >
-                    <span className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-primary/10 text-primary">
-                        <TagIcon size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-medium text-text-primary">Ürün Kategorileri</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Envanter ürün grupları ve kategori iskontoları</span>
-                      </span>
-                    </span>
-                    <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </Link>
-                  <Link
-                    to="/offer-management?tab=packages"
-                    className="group flex items-center justify-between gap-3 rounded-xl border border-background-border bg-background-elevated/30 px-4 py-3.5 transition-colors hover:border-primary/35 hover:bg-primary/5"
-                  >
-                    <span className="flex items-center gap-3">
-                      <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-info/10 text-info">
-                        <PackageIcon size={18} />
-                      </span>
-                      <span>
-                        <span className="block text-sm font-medium text-text-primary">Teklif Paketleri</span>
-                        <span className="block text-xs text-text-secondary mt-0.5">Hazır ürün listeleri ve hızlı uygulama</span>
-                      </span>
-                    </span>
-                    <ArrowRightIcon size={16} className="text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity" />
-                  </Link>
+                <div className="space-y-3">
+                  <ToggleRow
+                    checked={showArchivedWarehouses}
+                    onChange={setShowArchivedWarehouses}
+                    title="Pasif depoları göster"
+                    description="Depo listesi ve filtrelerinde kullanımdan kaldırılmış depolar görünür."
+                  />
+                  <ToggleRow
+                    checked={showArchivedInventory}
+                    onChange={setShowArchivedInventory}
+                    title="Arşivlenmiş ürünleri göster"
+                    description="Envanter listesinde arşivlenmiş malzeme kartları görünür."
+                  />
                 </div>
               </SettingsSection>
+            </>
+          )}
 
+          {show('inventory') && (
+            <>
               <SettingsSection
+                id="units"
                 icon={<RulerIcon size={18} weight="duotone" />}
                 title="Birim Tanımları"
                 description="Envanterde kullanılacak ölçü birimlerini yönetin."
@@ -994,78 +1433,80 @@ export default function SystemSettingsPage() {
                   )}
                 </div>
               </SettingsSection>
+
+              <SettingsSection
+                id="product-categories"
+                icon={<TagIcon size={18} weight="duotone" />}
+                title="Ürün Kategorileri"
+                description="Envanter ürün grupları ve kategori bazlı iskontolar Teklif Yönetimi ekranında düzenlenir."
+              >
+                <LinkCard
+                  to="/offer-management?tab=categories"
+                  icon={<TagIcon size={18} />}
+                  title="Ürün kategorilerini yönet"
+                  description="Ürün grupları ve kategori iskontoları"
+                />
+              </SettingsSection>
             </>
           )}
 
-          {activeTab === 'categories' && <DocumentCategoriesSettings />}
+          {show('documents') && (
+            <>
+              <DocumentCategoriesSettings />
 
-          {activeTab === 'archives' && (
-            <SettingsSection
-              icon={<ArchiveIcon size={18} weight="duotone" />}
-              title="Arşiv Kayıtları"
-              description="Pasif depo ve arşivlenmiş ürünlerin listelerde görünürlüğünü yönetin."
-            >
-              <div className="space-y-3">
-                <ToggleRow
-                  checked={showArchivedWarehouses}
-                  onChange={setShowArchivedWarehouses}
-                  title="Pasif depoları göster"
-                  description="Depo listesi ve filtrelerinde kullanımdan kaldırılmış depolar görünür."
+              <SettingsSection
+                id="document-templates"
+                icon={<FileTextIcon size={18} weight="duotone" />}
+                title="Belge Şablonları"
+                description="Teklif, sözleşme ve kullanım ekstresi çıktılarının tasarımı."
+              >
+                <LinkCard
+                  to="/document-templates"
+                  icon={<FileTextIcon size={18} />}
+                  title="Şablonları düzenle"
+                  description="Teklif, sözleşme ve kullanım ekstresi şablonları"
                 />
-                <ToggleRow
-                  checked={showArchivedInventory}
-                  onChange={setShowArchivedInventory}
-                  title="Arşivlenmiş ürünleri göster"
-                  description="Envanter listesinde arşivlenmiş malzeme kartları görünür."
+              </SettingsSection>
+
+              <SettingsSection
+                id="offer-packages"
+                icon={<PackageIcon size={18} weight="duotone" />}
+                title="Teklif Paketleri"
+                description="Sık kullanılan ürün listelerini paket olarak kaydedip tekliflere hızlıca uygulayın."
+              >
+                <LinkCard
+                  to="/offer-management?tab=packages"
+                  icon={<PackageIcon size={18} />}
+                  title="Teklif paketlerini yönet"
+                  description="Hazır ürün listeleri ve hızlı uygulama"
+                  tone="info"
                 />
-              </div>
-            </SettingsSection>
+              </SettingsSection>
+            </>
           )}
 
-          {activeTab === 'tables' && (
+          {show('columns') && (
             <>
-              <SettingsSection
-                icon={<ColumnsIcon size={18} weight="duotone" />}
-                title="Tablo Sütunları"
-                description="Listelerde görmek istediğiniz sütunları seçin. Sütunların sırasını ve genişliğini doğrudan her tablonun üzerinde değiştirebilirsiniz: başlığı sürükleyerek taşıyın, iki sütun arasındaki çizgiden (herhangi bir satırda) tutup çekerek genişletin, çizgiye çift tıklayarak içeriğe sığdırın. Başlığa sağ tıklayıp düzeni sıfırlayabilirsiniz."
-              />
+              <div className="flex items-start gap-2.5 rounded-xl border border-info/25 bg-info/5 px-4 py-3 text-xs leading-relaxed text-text-secondary">
+                <InfoIcon size={16} weight="duotone" className="mt-0.5 shrink-0 text-info" />
+                <span>
+                  Burada hangi sütunların görüneceğini seçersiniz. Sıra ve genişliği doğrudan tablonun üzerinde
+                  değiştirebilirsiniz: başlığı sürükleyerek taşıyın, iki sütun arasındaki çizgiyi çekerek genişletin,
+                  çift tıklayarak içeriğe sığdırın. Başlığa sağ tıklayıp düzeni sıfırlayabilirsiniz.
+                </span>
+              </div>
 
               <SettingsSection
+                id="inventory-columns"
                 icon={<ColumnsIcon size={18} weight="duotone" />}
                 title="Envanter tablosu"
                 description="Sütunları açıp kapatın; alttaki önizleme anında güncellenir."
               >
-                <div className="flex flex-wrap gap-2">
-                  {INVENTORY_TABLE_COLUMNS.map((col) => {
-                    const required = Boolean(col.required);
-                    const checked = inventoryColumns[col.key];
-                    return (
-                      <label
-                        key={col.key}
-                        className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm select-none transition-colors ${
-                          required
-                            ? 'cursor-not-allowed border-primary/25 bg-primary/10 text-primary'
-                            : checked
-                              ? 'cursor-pointer border-primary/35 bg-primary/10 text-primary'
-                              : 'cursor-pointer border-background-border bg-background-elevated/40 text-text-secondary hover:border-primary/25 hover:text-text-primary'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={required}
-                          onChange={(e) => setInventoryColumnVisible(col.key, e.target.checked)}
-                          className="sr-only"
-                        />
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${checked || required ? 'bg-primary' : 'bg-background-border-strong'}`}
-                        />
-                        {col.label}
-                        {required ? <span className="text-[10px] opacity-70">zorunlu</span> : null}
-                      </label>
-                    );
-                  })}
-                </div>
+                <ColumnToggleChips
+                  columns={INVENTORY_TABLE_COLUMNS}
+                  visibility={inventoryColumns}
+                  onToggle={setInventoryColumnVisible}
+                />
                 <ColumnPreviewTable
                   columns={INVENTORY_TABLE_COLUMNS}
                   visibility={inventoryColumns}
@@ -1076,41 +1517,16 @@ export default function SystemSettingsPage() {
               </SettingsSection>
 
               <SettingsSection
+                id="customer-columns"
                 icon={<ColumnsIcon size={18} weight="duotone" />}
                 title="Müşteri tablosu"
                 description="Sütunları açıp kapatın; alttaki önizleme anında güncellenir."
               >
-                <div className="flex flex-wrap gap-2">
-                  {CUSTOMER_TABLE_COLUMNS.map((col) => {
-                    const required = Boolean(col.required);
-                    const checked = customerColumns[col.key];
-                    return (
-                      <label
-                        key={col.key}
-                        className={`inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-sm select-none transition-colors ${
-                          required
-                            ? 'cursor-not-allowed border-primary/25 bg-primary/10 text-primary'
-                            : checked
-                              ? 'cursor-pointer border-primary/35 bg-primary/10 text-primary'
-                              : 'cursor-pointer border-background-border bg-background-elevated/40 text-text-secondary hover:border-primary/25 hover:text-text-primary'
-                        }`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          disabled={required}
-                          onChange={(e) => setCustomerColumnVisible(col.key, e.target.checked)}
-                          className="sr-only"
-                        />
-                        <span
-                          className={`h-1.5 w-1.5 rounded-full ${checked || required ? 'bg-primary' : 'bg-background-border-strong'}`}
-                        />
-                        {col.label}
-                        {required ? <span className="text-[10px] opacity-70">zorunlu</span> : null}
-                      </label>
-                    );
-                  })}
-                </div>
+                <ColumnToggleChips
+                  columns={CUSTOMER_TABLE_COLUMNS}
+                  visibility={customerColumns}
+                  onToggle={setCustomerColumnVisible}
+                />
                 <ColumnPreviewTable
                   columns={CUSTOMER_TABLE_COLUMNS}
                   visibility={customerColumns}
@@ -1122,9 +1538,10 @@ export default function SystemSettingsPage() {
             </>
           )}
 
-          {activeTab === 'finance' && (
+          {show('finance') && (
             <>
               <SettingsSection
+                id="exchange-rates"
                 icon={<CurrencyCircleDollar size={18} weight="duotone" />}
                 title="Döviz Kuru Yönetimi"
                 description="Uygulama genelinde kullanılacak USD ve EUR kurlarını güncelleyin."
@@ -1226,6 +1643,7 @@ export default function SystemSettingsPage() {
               </SettingsSection>
 
               <SettingsSection
+                id="rental-rates"
                 icon={<CurrencyCircleDollar size={18} weight="duotone" />}
                 title="Kiralama Oranı Ön Ayarı"
                 description="Her para birimi için varsayılan kiralama çarpanlarını belirleyin."
@@ -1311,9 +1729,10 @@ export default function SystemSettingsPage() {
             </>
           )}
 
-          {activeTab === 'system' && (
+          {show('system') && (
             <>
               <SettingsSection
+                id="software-update"
                 icon={<ArrowClockwiseIcon size={18} weight="duotone" />}
                 title="Yazılım Güncelleme"
                 description={`Mevcut sürüm: v${window.electron?.appVersion || packageJson.version}`}
@@ -1447,6 +1866,7 @@ export default function SystemSettingsPage() {
               </SettingsSection>
 
               <SettingsSection
+                id="backup"
                 icon={<DownloadSimpleIcon size={18} weight="duotone" />}
                 title="Manuel Yedekleme"
                 description="Veritabanının tam yedeğini `.sql.gz` olarak indirin."
@@ -1484,6 +1904,7 @@ export default function SystemSettingsPage() {
             </>
           )}
         </div>
+        </HighlightContext.Provider>
       </div>
 
       <ConfirmModal
