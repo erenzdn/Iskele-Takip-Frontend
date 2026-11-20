@@ -8,6 +8,7 @@ import { formatDateTime, buildAuditLogSummary } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 const ACTION_LABELS: Record<AuditAction, string> = {
   [AuditAction.Create]: 'Oluşturma',
@@ -103,6 +104,9 @@ export default function AuditLogsPage() {
   useEffect(() => {
     loadLogs();
   }, [loadLogs]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadLogs());
 
   const handleResetFilters = useCallback(() => {
     setSelectedUserIds([]);

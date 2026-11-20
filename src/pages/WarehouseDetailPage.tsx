@@ -15,7 +15,7 @@ import {
   type WarehouseMovementsResponse,
   type WarehouseMovementRow,
 } from '../models';
-import { useTabTitle } from '../components/tabs/TabContext';
+import { useTabTitle, useTabReturn } from '../components/tabs/TabContext';
 import { warehouseService } from '../services/warehouseService';
 import { contractService } from '../services/contractService';
 import { inventoryService } from '../services/inventoryService';
@@ -52,6 +52,9 @@ export default function WarehouseDetailPage() {
   const [minQuantity, setMinQuantity] = useState<number | ''>('');
   const [maxQuantity, setMaxQuantity] = useState<number | ''>('');
   const [activeTab, setActiveTab] = useState<'stock' | 'rented' | 'movements'>('stock');
+  /** Sekmeye dönüldüğünde verileri sessizce yeniden çekmek için. */
+  const [reloadNonce, setReloadNonce] = useState(0);
+  useTabReturn(() => setReloadNonce((n) => n + 1));
   const [rentedItems, setRentedItems] = useState<{ ItemId: number; ItemName: string; CategoryName: string; Quantity: number }[]>([]);
   const [loadingRented, setLoadingRented] = useState(false);
   const [rentedSearchText, setRentedSearchText] = useState('');
@@ -101,7 +104,7 @@ export default function WarehouseDetailPage() {
 
     const loadData = async () => {
       try {
-        setLoading(true);
+        if (reloadNonce === 0) setLoading(true);
         setError(null);
         const [response, inventory, categories, subCategories] = await Promise.all([
           warehouseService.getStockAsync(warehouseId),
@@ -123,7 +126,7 @@ export default function WarehouseDetailPage() {
     };
 
     loadData();
-  }, [id, navigate]);
+  }, [id, navigate, reloadNonce]);
 
   useEffect(() => {
     const st = location.state as any;
@@ -149,7 +152,7 @@ export default function WarehouseDetailPage() {
       }
     };
     load();
-  }, [id, activeTab]);
+  }, [id, activeTab, reloadNonce]);
 
   const loadMovements = useCallback(
     async (warehouseId: number, filters: MovementFilters, opts?: { showToastOnError?: boolean }) => {
@@ -192,7 +195,7 @@ export default function WarehouseDetailPage() {
     const warehouseId = Number(id);
     if (!warehouseId || Number.isNaN(warehouseId) || activeTab !== 'movements') return;
     void loadMovements(warehouseId, movementFilters);
-  }, [id, activeTab, movementFilters, loadMovements]);
+  }, [id, activeTab, movementFilters, loadMovements, reloadNonce]);
 
   useEffect(() => {
     if (activeTab !== 'movements') return;

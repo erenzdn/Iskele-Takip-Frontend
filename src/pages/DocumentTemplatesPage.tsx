@@ -18,6 +18,7 @@ import { toast } from '../hooks/useToast';
 import QuoteTemplateEditorModal from '../components/modals/QuoteTemplateEditorModal';
 import ContractTemplateEditorModal from '../components/modals/ContractTemplateEditorModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type MainTab = 'quote' | 'contract';
 type ContractFilter = 'all' | ContractDocumentKind;
@@ -128,6 +129,12 @@ export default function DocumentTemplatesPage() {
     void loadQuoteTemplates();
     void loadContractTemplates();
   }, [loadContractTemplates, loadQuoteTemplates]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    void loadQuoteTemplates();
+    void loadContractTemplates();
+  });
 
   useEffect(() => {
     setActiveTab(initialTab);

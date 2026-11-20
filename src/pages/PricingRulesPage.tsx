@@ -5,6 +5,7 @@ import { PricingRule, PricingRuleType } from '../models';
 import EmptyState from '../components/EmptyState';
 import PricingRuleDetailModal from '../components/modals/PricingRuleDetailModal';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 const ruleTypeNames: Record<PricingRuleType, string> = {
   [PricingRuleType.EarlyReturnMultiplier]: 'Erken İade',
@@ -39,6 +40,9 @@ export default function PricingRulesPage() {
   useEffect(() => {
     loadRules();
   }, []);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadRules());
 
   const loadRules = async () => {
     try {

@@ -6,6 +6,7 @@ import { PriceTier, Inventory } from '../models';
 import EmptyState from '../components/EmptyState';
 import PriceTierDetailModal from '../components/modals/PriceTierDetailModal';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 export default function PriceTiersPage() {
   const [priceTiers, setPriceTiers] = useState<PriceTier[]>([]);
@@ -19,6 +20,9 @@ export default function PriceTiersPage() {
   useEffect(() => {
     loadData();
   }, []);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadData());
 
   const loadData = async () => {
     try {

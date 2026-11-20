@@ -30,7 +30,7 @@ import AuditLogTimeline from '../AuditLogTimeline';
 import ConfirmModal from './ConfirmModal';
 import { toast } from '../../hooks/useToast';
 import type { CustomerModalInitialTab } from '../../context-menu';
-import { useTabDirty, useTabTitle } from '../tabs/TabContext';
+import { useTabDirty, useTabReturn, useTabTitle } from '../tabs/TabContext';
 import { invalidateData } from '../../store/dataInvalidationStore';
 import { acknowledgeTabSaved } from '../../store/tabStore';
 
@@ -298,6 +298,13 @@ export default function CustomerDetailModal({
     }
     void loadCustomerLogs();
   }, [customer?.CustomerId, isNew, activeTab, loadCustomerLogs]);
+
+  // Başka sekmede (teklif/sözleşme) açılan şantiyeler ve yapılan işlemler sekmeye dönünce yansısın.
+  useTabReturn(() => {
+    if (!customer || isNew) return;
+    void loadSites(true);
+    if (activeTab === 'history') void loadCustomerLogs();
+  });
 
   const handleSave = async () => {
     const contactValidationError = validateAuthorizedContacts(authorizedContacts);

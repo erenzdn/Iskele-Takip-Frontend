@@ -11,6 +11,7 @@ import PdfPreviewModal from '../modals/PdfPreviewModal';
 import CancelReturnSlipModal from '../modals/CancelReturnSlipModal';
 import AttachmentsPanel from '../attachments/AttachmentsPanel';
 import DataTable from '../DataTable';
+import { useTabReturn } from '../tabs/TabContext';
 
 interface ContractReturnSlipsPanelProps {
   contractId: number;
@@ -61,6 +62,9 @@ export default function ContractReturnSlipsPanel({
   useEffect(() => {
     void load();
   }, [load, refreshKey]);
+
+  // Başka sekmede yapılan işlemler (sevkiyat, iade, fatura…) sekmeye dönünce yansısın.
+  useTabReturn(() => void load());
 
   useEffect(
     () => () => {

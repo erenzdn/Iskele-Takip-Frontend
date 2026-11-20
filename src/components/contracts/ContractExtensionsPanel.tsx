@@ -7,6 +7,7 @@ import { getApiErrorMessage } from '../../utils/apiError';
 import { formatShortDateTime } from '../../utils/formatters';
 import { addCalendarDays, calendarDaysBetween, parseDateInput, todayDateInput } from '../../utils/dateInput';
 import { useAuthStore } from '../../store/authStore';
+import { useTabReturn } from '../tabs/TabContext';
 
 const EXTENSION_BLOCK_DAYS = 30;
 
@@ -65,6 +66,9 @@ export default function ContractExtensionsPanel({
     void loadHistory();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
+
+  // Başka sekmede yapılan işlemler (sevkiyat, iade, fatura…) sekmeye dönünce yansısın.
+  useTabReturn(() => void loadHistory());
 
   const currentEndKey = toDateKey(history?.currentPlannedEndDate) || toDateKey(currentPlannedEndDate);
   const dayCount = calendarDaysBetween(startDate, endDate);

@@ -22,6 +22,7 @@ import AddendumDetailModal from '../modals/AddendumDetailModal';
 import AddendumReverseModal from '../modals/AddendumReverseModal';
 import PdfPreviewModal from '../modals/PdfPreviewModal';
 import DataTable from '../DataTable';
+import { useTabReturn } from '../tabs/TabContext';
 
 interface ContractAddendaPanelProps {
   contractId: number;
@@ -104,6 +105,11 @@ export default function ContractAddendaPanel({
     if (!canView) return;
     void loadList();
   }, [canView, loadList]);
+
+  // Başka sekmede yapılan işlemler (sevkiyat, iade, fatura…) sekmeye dönünce yansısın.
+  useTabReturn(() => {
+    if (canView) void loadList();
+  });
 
   useEffect(() => {
     if (openCreateRequest && canUpdate && contractActive) {

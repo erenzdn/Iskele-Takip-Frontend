@@ -7,6 +7,7 @@ import { QuotePackage, QuotePackageDetail, Inventory, Quote } from '../models';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type CreateMode = 'sourceQuote' | 'manual';
 
@@ -62,6 +63,9 @@ export default function QuotePackagesPage({ embedded = false, onPackageCountChan
   useEffect(() => {
     loadData();
   }, []);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadData());
 
   const handleSelectPackage = async (packageId: string | number) => {
     try {

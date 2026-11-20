@@ -53,7 +53,7 @@ import StockErrorPanel from '../StockErrorPanel';
 import { useAuthStore } from '../../store/authStore';
 import { acknowledgeTabSaved } from '../../store/tabStore';
 import { invalidateData } from '../../store/dataInvalidationStore';
-import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
+import { usePortalTarget, useTabDirty, useTabReturn, useTabTitle } from '../tabs/TabContext';
 import ManualLineItemModal from './ManualLineItemModal';
 import CustomerSearchField from '../CustomerSearchField';
 import SiteSelectField from '../SiteSelectField';
@@ -947,6 +947,25 @@ export default function ContractDetailModal({
       console.error('Load data error:', error);
     }
   };
+
+  // Sekmeye dönüldüğünde başka sekmede yapılan değişiklikleri al:
+  // - ürün/müşteri listeleri (ör. seçicideki "Yeni Ürün Ekle", yeni cari, stok değişimi)
+  //   sözleşme ve zeyilname seçicilerine yansısın;
+  // - sözleşmenin kendisi (sevkiyat, iade, fatura…) yalnızca salt okunur görünümde
+  //   tazelenir; düzenleme sürerken formdaki kaydedilmemiş değişiklikler ezilmez.
+  useTabReturn(() => {
+    void inventoryService
+      .getAllAsync(undefined, { forceRefresh: true })
+      .then(setAvailableItems)
+      .catch((error) => console.error('Refresh inventory on tab return error:', error));
+    void customerService
+      .getAllAsync(undefined, { forceRefresh: true })
+      .then(setCustomers)
+      .catch((error) => console.error('Refresh customers on tab return error:', error));
+    if (!isNew && isReadOnly && contract?.ContractId) {
+      void refreshContract().catch((error) => console.error('Refresh contract on tab return error:', error));
+    }
+  });
 
   const MONTHLY_PRICING_DAYS = 30;
 

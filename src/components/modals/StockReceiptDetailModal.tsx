@@ -15,6 +15,7 @@ import { warehouseService } from '../../services/warehouseService';
 import { inventoryService } from '../../services/inventoryService';
 import { reportTemplateService } from '../../services/reportTemplateService';
 import { useAuthStore } from '../../store/authStore';
+import { useTabReturn } from '../tabs/TabContext';
 import { getApiErrorMessage, getStockReceiptDeleteErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { canDeleteStockReceipt, isStockReceiptCancelled } from '../../utils/stockReceiptPermissions';
 import { toast } from '../../hooks/useToast';
@@ -89,6 +90,14 @@ export default function StockReceiptDetailModal({
     warehouseService.getActiveAsync().then(setWarehouses).catch(() => setWarehouses([]));
     inventoryService.getAllAsync().then(setInventoryItems).catch(() => setInventoryItems([]));
   }, []);
+
+  // Başka sekmede ürün eklendiyse (ör. seçicideki "Yeni Ürün Ekle") sekmeye dönünce listeyi tazele.
+  useTabReturn(() => {
+    inventoryService
+      .getAllAsync(undefined, { forceRefresh: true })
+      .then(setInventoryItems)
+      .catch((error) => console.error('Refresh inventory on tab return error:', error));
+  });
 
   useEffect(() => {
     if (!isNew) {

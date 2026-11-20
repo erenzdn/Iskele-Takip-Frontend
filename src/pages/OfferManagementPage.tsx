@@ -16,6 +16,7 @@ import { toast } from '../hooks/useToast';
 import CategoryDetailModal from '../components/modals/CategoryDetailModal';
 import CategoryDiscountModal from '../components/modals/CategoryDiscountModal';
 import QuotePackagesPage from './QuotePackagesPage';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type ManagementTab = 'categories' | 'packages';
 
@@ -92,6 +93,12 @@ export default function OfferManagementPage() {
     void loadCategories();
     void loadPackageCount();
   }, [loadCategories, loadPackageCount]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    void loadCategories();
+    void loadPackageCount();
+  });
 
   useEffect(() => {
     setActiveTab(initialTab);

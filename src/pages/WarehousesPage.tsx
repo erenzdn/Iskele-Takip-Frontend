@@ -16,6 +16,7 @@ import { resolveWarehouseDeactivateError, type WarehouseDeactivateErrorDialog } 
 import { toast } from '../hooks/useToast';
 import { useDebouncedValue } from '../hooks/useDebouncedValue';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 export default function WarehousesPage() {
   const navigate = useNavigate();
@@ -152,6 +153,12 @@ export default function WarehousesPage() {
   useEffect(() => {
     void loadData();
   }, [loadData]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    void loadData();
+    if (expandedWarehouseId) void loadWarehouseStock(expandedWarehouseId);
+  });
 
   const headerActions = useMemo(
     () => (

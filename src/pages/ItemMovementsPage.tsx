@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { ArrowsClockwiseIcon, CaretDownIcon, CaretRightIcon, ListMagnifyingGlassIcon } from '@phosphor-icons/react';
 import EmptyState from '../components/EmptyState';
-import { useTabTitle } from '../components/tabs/TabContext';
+import { useTabTitle, useTabReturn } from '../components/tabs/TabContext';
 import { inventoryService } from '../services/inventoryService';
 import { warehouseService } from '../services/warehouseService';
 import type { InventoryItemMovementsResponse, InventoryItemMovementContractRow, Warehouse } from '../models';
@@ -107,6 +107,9 @@ export default function ItemMovementsPage() {
   useEffect(() => {
     void loadMovements();
   }, [loadMovements]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadMovements());
 
   const itemHeader = useMemo(() => {
     const item = data?.item;

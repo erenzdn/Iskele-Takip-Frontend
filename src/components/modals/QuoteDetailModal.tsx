@@ -4,7 +4,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuthStore } from '../../store/authStore';
 import { acknowledgeTabSaved } from '../../store/tabStore';
 import { invalidateData, useInvalidation } from '../../store/dataInvalidationStore';
-import { usePortalTarget, useTabDirty, useTabTitle } from '../tabs/TabContext';
+import { usePortalTarget, useTabDirty, useTabReturn, useTabTitle } from '../tabs/TabContext';
 import { ClipboardIcon, CopySimpleIcon, DotsSixVerticalIcon, XIcon, Plus } from '@phosphor-icons/react';
 import {
   ContractQuoteType,
@@ -1719,6 +1719,14 @@ export default function QuoteDetailModal({
       .getAllAsync(undefined, { forceRefresh: true })
       .then(setAvailableItems)
       .catch((error) => console.error('Refresh inventory after invalidation error:', error));
+  });
+
+  // Başka sekmede eklenen/güncellenen cari, sekmeye dönüldüğünde müşteri seçiminde görünsün.
+  useTabReturn(() => {
+    void customerService
+      .getAllAsync(undefined, { forceRefresh: true })
+      .then(setCustomers)
+      .catch((error) => console.error('Refresh customers on tab return error:', error));
   });
 
   const handleSave = async (forceStatus?: QuoteStatus) => {

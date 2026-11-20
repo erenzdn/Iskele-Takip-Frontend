@@ -16,7 +16,7 @@ import ConfirmModal from '../components/modals/ConfirmModal';
 import CashTransactionModal from '../components/modals/CashTransactionModal';
 import CashAccountModal from '../components/modals/CashAccountModal';
 import EmptyState from '../components/EmptyState';
-import { useTabTitle } from '../components/tabs/TabContext';
+import { useTabTitle, useTabReturn } from '../components/tabs/TabContext';
 import { cashService } from '../services/cashService';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
@@ -181,6 +181,13 @@ export default function CashAccountDetailPage() {
     if (accountError) return;
     void loadTransactions();
   }, [accountError, accountLoading, id, loadTransactions]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    if (!id) return;
+    void loadAccount();
+    void loadTransactions();
+  });
 
   const hasPrev = offset > 0;
   const hasNext = offset + LIMIT < total;

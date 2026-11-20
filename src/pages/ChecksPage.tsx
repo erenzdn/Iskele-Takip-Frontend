@@ -11,6 +11,7 @@ import CheckDetailModal from '../components/modals/CheckDetailModal';
 import ExcelManager from '../components/ExcelManager';
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type DateRange = {
   from: string | null;
@@ -88,6 +89,12 @@ export default function ChecksPage() {
   useEffect(() => {
     void loadCustomers();
   }, [loadCustomers]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    void loadData();
+    void loadCustomers();
+  });
 
   const handleNewCheck = useCallback(() => {
     if (!canCreate) return;

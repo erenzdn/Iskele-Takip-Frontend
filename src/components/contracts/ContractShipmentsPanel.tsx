@@ -22,6 +22,7 @@ import ConfirmDeliveryModal from '../modals/ConfirmDeliveryModal';
 import ConfirmModal from '../modals/ConfirmModal';
 import DeliveryStatusBadge from '../shipments/DeliveryStatusBadge';
 import DataTable from '../DataTable';
+import { useTabReturn } from '../tabs/TabContext';
 
 interface ContractShipmentsPanelProps {
   contract: Contract;
@@ -85,6 +86,9 @@ export default function ContractShipmentsPanel({
   useEffect(() => {
     void load();
   }, [load]);
+
+  // Başka sekmede yapılan işlemler (sevkiyat, iade, fatura…) sekmeye dönünce yansısın.
+  useTabReturn(() => void load());
 
   const progressRows = useMemo(
     () => lines.map((line) => ({ line, progress: getLineShipmentProgress(line, contract) })),

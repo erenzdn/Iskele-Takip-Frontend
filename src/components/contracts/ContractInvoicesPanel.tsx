@@ -18,6 +18,7 @@ import {
   accrualBoundaryIso,
   sumPlanAccrual,
 } from '../../utils/invoiceAmountCalc';
+import { useTabReturn } from '../tabs/TabContext';
 
 interface ContractInvoicesPanelProps {
   contractId: number;
@@ -120,6 +121,13 @@ export default function ContractInvoicesPanel({
     void loadInvoices();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contractId]);
+
+  // Başka sekmede yapılan işlemler (sevkiyat, iade, fatura…) sekmeye dönünce yansısın.
+  useTabReturn(() => {
+    clearInvoicePlanCache(contractId);
+    void loadInvoices();
+    if (summary) void loadSummary();
+  });
 
   // Kiralamada sözleşme tutarı = başlangıçtan planlanan bitişe kadar tahakkuk (iskontolu, KDV dahil;
   // ilk 30 gün asgari, sonrası aylık / 30). Fatura önerisi de aynı tahakkuktan geldiği için ardışık

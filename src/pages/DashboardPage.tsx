@@ -21,6 +21,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { dashboardService, type DashboardLowStockItem, type DashboardUpcomingExpiration } from '../services/dashboardService';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 const MONTH_NAMES = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
 
@@ -108,6 +109,9 @@ export default function DashboardPage() {
   useEffect(() => {
     loadDashboardData();
   }, []);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadDashboardData());
 
   const loadDashboardData = async () => {
     try {

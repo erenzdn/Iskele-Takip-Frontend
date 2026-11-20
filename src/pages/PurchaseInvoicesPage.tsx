@@ -7,6 +7,7 @@ import PurchaseInvoiceDetailModal from '../components/modals/PurchaseInvoiceDeta
 import { formatCurrency, formatDate, formatShortDateTime } from '../utils/formatters';
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 export default function PurchaseInvoicesPage() {
   const [invoices, setInvoices] = useState<PurchaseInvoice[]>([]);
@@ -48,6 +49,9 @@ export default function PurchaseInvoicesPage() {
       setLoading(false);
     }
   }, [searchText, loadInvoices]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void handleSearch());
 
   const handleAddNew = useCallback(() => {
     setSelectedInvoice(null);

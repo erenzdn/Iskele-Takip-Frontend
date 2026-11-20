@@ -18,6 +18,7 @@ import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 const LIMIT = 20;
 
@@ -184,6 +185,12 @@ export default function CashPage() {
   useEffect(() => {
     void loadAccounts();
   }, [loadAccounts]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    void loadData();
+    void loadAccounts();
+  });
 
   const hasPrev = offset > 0;
   const hasNext = offset + LIMIT < total;

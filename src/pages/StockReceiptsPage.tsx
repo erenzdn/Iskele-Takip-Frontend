@@ -14,6 +14,7 @@ import { getStockReceiptDeleteErrorMessage } from '../utils/apiError';
 import { canDeleteStockReceipt, isStockReceiptCancelled } from '../utils/stockReceiptPermissions';
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 const RECEIPT_TYPE_LABELS: Record<ReceiptType, string> = {
   IN: 'Giriş',
@@ -85,6 +86,12 @@ export default function StockReceiptsPage() {
   useEffect(() => {
     loadReceipts();
   }, [loadReceipts]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    void loadWarehouses();
+    void loadReceipts();
+  });
 
   const handleClearFilters = useCallback(() => {
     setFilterWarehouseId('');

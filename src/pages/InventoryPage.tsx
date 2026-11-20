@@ -25,6 +25,7 @@ import {
 import { useContextMenu, useContextMenuHandlers, type ContextMenuActionHandlers, type ScaffoldRowTarget } from '../context-menu';
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type StockStatusFilter = 'all' | 'onRent' | 'available';
 
@@ -262,6 +263,10 @@ export default function InventoryPage() {
   useInvalidation('inventory', () => {
     void loadData(true);
   });
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  // Sevkiyat, iade, stok fişi gibi işlemler stoğu sunucuda değiştirir; önbelleği atla.
+  useTabReturn(() => void loadData(true));
 
   const handleAddNewItem = useCallback(() => {
     navigate('/inventory/new');

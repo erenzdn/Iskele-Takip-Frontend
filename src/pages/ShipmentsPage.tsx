@@ -22,6 +22,7 @@ import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import { useShipmentPdfPreview } from '../hooks/useShipmentPdfPreview';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type ViewMode = 'awaiting' | 'shipments';
 /** Türetilmiş fiş durumu filtresi: teslim durumu yalnızca aktif fişler için anlamlı */
@@ -103,6 +104,9 @@ export default function ShipmentsPage() {
     const t = window.setTimeout(() => void load(), 250);
     return () => window.clearTimeout(t);
   }, [load]);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void load());
 
   const headerActions = useMemo(
     () =>

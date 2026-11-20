@@ -23,6 +23,7 @@ import { useContextMenu, useContextMenuHandlers, type CustomerModalInitialTab, t
 import { PageActions } from '../components/PageActions';
 import DataTable from '../components/DataTable';
 import { SortIndicator, sortRows, useTableSort } from '../hooks/useTableSort';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type CustomerSortKey = 'id' | 'name' | 'phone' | 'taxId' | 'email';
 
@@ -97,6 +98,9 @@ export default function CustomersPage() {
   }, [fetchCustomers]);
 
   useInvalidation('customers', loadCustomers);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(loadCustomers);
 
   const handleAddNew = useCallback(() => {
     navigate('/customers/new');

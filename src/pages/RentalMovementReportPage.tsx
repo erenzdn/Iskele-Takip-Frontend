@@ -20,6 +20,7 @@ import CustomerSearchField from '../components/CustomerSearchField';
 import PdfPreviewModal from '../components/modals/PdfPreviewModal';
 import ReportTemplateEditorModal from '../components/modals/ReportTemplateEditorModal';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type ReportType = 'customer' | 'site' | 'global';
 
@@ -166,6 +167,11 @@ export default function RentalMovementReportPage() {
       setLoading(false);
     }
   }, [hasPermission, canFetch, reportType, selectedCustomerId, selectedSiteId, getDateParams]);
+
+  // Rapor ekrandaysa, başka sekmedeki hareketler sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => {
+    if (data) void loadReport();
+  });
 
   const canFetchPdf = !!data && canFetch;
 

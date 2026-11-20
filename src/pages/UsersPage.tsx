@@ -6,6 +6,7 @@ import { formatShortDateTime } from '../utils/formatters';
 import EmptyState from '../components/EmptyState';
 import UserDetailModal from '../components/modals/UserDetailModal';
 import DataTable from '../components/DataTable';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 export default function UsersPage() {
   const [users, setUsers] = useState<User[]>([]);
@@ -18,6 +19,9 @@ export default function UsersPage() {
   useEffect(() => {
     loadUsers();
   }, []);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadUsers());
 
   const loadUsers = async () => {
     try {

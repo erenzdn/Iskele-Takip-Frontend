@@ -70,6 +70,24 @@ export function useTabActive(callback: () => void) {
   }, [isActive]);
 }
 
+/**
+ * Sekme arka plandan yeniden öne geldiğinde çalışır; ilk açılışta çalışmaz.
+ * Sekmeler gizlenip canlı tutulduğundan, başka bir sekmede yapılan değişikliklerin
+ * (sevkiyat, stok fişi, tahsilat…) bu sekmeye yansıması için verisini yeniden çeken
+ * sayfa ve paneller bunu kullanır. Sekme dışında (sekmesiz bağlamda) hiç çalışmaz.
+ */
+export function useTabReturn(callback: () => void) {
+  const tab = useTabOptional();
+  const isActive = tab?.isActive ?? true;
+  const callbackRef = useRef(callback);
+  callbackRef.current = callback;
+  const wasActive = useRef(isActive);
+  useEffect(() => {
+    if (isActive && !wasActive.current) callbackRef.current();
+    wasActive.current = isActive;
+  }, [isActive]);
+}
+
 export function useTabPortalTarget(): HTMLElement | null {
   return useTabOptional()?.portalTarget ?? null;
 }

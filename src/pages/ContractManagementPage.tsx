@@ -7,6 +7,7 @@ import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
 import ContractTemplateEditorModal from '../components/modals/ContractTemplateEditorModal';
 import ConfirmModal from '../components/modals/ConfirmModal';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 export default function ContractManagementPage() {
   const [templates, setTemplates] = useState<ContractTemplate[]>([]);
@@ -38,6 +39,9 @@ export default function ContractManagementPage() {
   useEffect(() => {
     void loadTemplates();
   }, []);
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadTemplates());
 
   const openNewTemplateModal = () => {
     setEditingTemplate(null);

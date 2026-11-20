@@ -55,6 +55,7 @@ import DocumentCategoryPickerModal, {
   type CategorizableEntity,
 } from '../components/documentCategories/DocumentCategoryPickerModal';
 import DocumentCategoryManagerModal from '../components/documentCategories/DocumentCategoryManagerModal';
+import { useTabReturn } from '../components/tabs/TabContext';
 
 type TabType = 'active' | 'completed' | 'cancelled' | 'archived' | 'quotes' | 'quotesConverted';
 
@@ -315,6 +316,9 @@ export default function ContractsPage({ contractScope }: ContractsPageProps) {
   useInvalidation('quotes', () => {
     void loadData();
   });
+
+  // Başka sekmede yapılan değişiklikler, bu sekmeye dönüldüğünde yansısın.
+  useTabReturn(() => void loadData());
 
   const handleAddNew = () => {
     if (isQuotesTab(activeTab)) navigate(newQuotePath(recordKind));
