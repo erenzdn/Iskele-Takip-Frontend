@@ -29,14 +29,27 @@ import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/ap
 import { formatMoney, formatShortDateTime } from '../../utils/formatters';
 import { formatDiscountPercent } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
+import { useItemWarehouseStocks } from '../../hooks/useItemWarehouseStocks';
+import { useAuthStore } from '../../store/authStore';
+import { invalidateData } from '../../store/dataInvalidationStore';
+import { isStockErrorMessage } from '../../utils/parseStockError';
+import {
+  computeStockShortages,
+  shortageMap,
+  stockNeedKey,
+  type StockNeed,
+} from '../../utils/stockShortage';
 import { firstValidationError, validateRequired } from '../../utils/validation';
 import ConfirmModal from './ConfirmModal';
 import PdfPreviewModal from './PdfPreviewModal';
 import AddendumLineItemModal from './AddendumLineItemModal';
 import AddendumAddProductsModal from './AddendumAddProductsModal';
 import AddendumReverseModal from './AddendumReverseModal';
+import QuickStockEntryModal from './QuickStockEntryModal';
 import ContractLinesReferenceDrawer from '../contracts/ContractLinesReferenceDrawer';
 import DataTable from '../DataTable';
+import StockErrorPanel from '../StockErrorPanel';
+import StockShortagePanel from '../StockShortagePanel';
 import { LINE_ITEM_COL } from '../../constants/lineItemTableColumns';
 import {
   buildAddendumGridRows,
@@ -159,6 +172,12 @@ export default function AddendumDetailModal({
   const [pdfPreviewUrl, setPdfPreviewUrl] = useState<string | null>(null);
   const [showPdfPreview, setShowPdfPreview] = useState(false);
   const createStartedRef = useRef(false);
+  /** Sunucudan gelen stok hatası (kaydet / onaya gönder / onay) */
+  const [stockError, setStockError] = useState<string | null>(null);
+  const [showQuickStock, setShowQuickStock] = useState(false);
+  const canCreateStockReceipt = useAuthStore((s) =>
+    Boolean(s.user?.permissions?.includes('stockReceipts_create'))
+  );
 
   const status = addendum?.Status ?? 'draft';
   const editable = Boolean(addendum && isAddendumEditable(status) && canUpdate);
@@ -230,6 +249,78 @@ export default function AddendumDetailModal({
         })
       : null;
 
+  /** Tabloda görünen (kaydedilmemiş giriş dahil) hedef miktar */
+  const effectiveTargetQty = (row: AddendumGridRow): number => {
+    const raw = qtyInputs[row.key];
+    if (raw == null) return savedTargetQty(row);
+    return raw.trim() === '' ? 0 : Math.max(0, Math.floor(Number(raw)) || 0);
+  };
+
+  /** Satırın depodan istediği ek miktar: artış kadar (sözleşme satırı) veya eklenen adet (yeni ürün). */
+  const rowStockNeed = (row: AddendumGridRow): StockNeed | null => {
+    if (row.kind === 'contract') {
+      const line = row.line;
+      if (line.kind !== 'inventory' || !line.ItemId || !line.WarehouseId) return null;
+      const increase = effectiveTargetQty(row) - row.currentQty;
+      if (increase <= 0) return null;
+      return {
+        ItemId: line.ItemId,
+        WarehouseId: line.WarehouseId,
+        label: line.ItemNameOverride || line.ItemName || `Ürün #${line.ItemId}`,
+        required: increase,
+      };
+    }
+    const d = row.detail;
+    if (d.IsManual || !d.ItemId || !d.WarehouseId) return null;
+    const qty = effectiveTargetQty(row);
+    if (qty <= 0) return null;
+    return {
+      ItemId: d.ItemId,
+      WarehouseId: d.WarehouseId,
+      label: d.ItemName || `Ürün #${d.ItemId}`,
+      required: qty,
+    };
+  };
+
+  // Stok kontrolü yalnızca henüz sözleşmeye uygulanmamış (taslak / onay bekleyen) zeyilnamede anlamlı.
+  const stockCheckActive = Boolean(addendum && (editable || canApproveOrRejectAddendum(status)));
+  const stockNeeds = useMemo(
+    () => (stockCheckActive ? gridRows.flatMap((row) => rowStockNeed(row) ?? []) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- rowStockNeed qtyInputs'a bağlı
+    [stockCheckActive, gridRows, qtyInputs]
+  );
+  const { stocks, refresh: refreshStocks } = useItemWarehouseStocks(
+    stockNeeds.map((n) => n.ItemId),
+    open && stockCheckActive
+  );
+  const shortages = useMemo(() => computeStockShortages(stockNeeds, stocks), [stockNeeds, stocks]);
+  const shortageByKey = useMemo(() => shortageMap(shortages), [shortages]);
+  const quickStockLines = useMemo(() => {
+    const source = shortages.length > 0 ? shortages : stockNeeds;
+    const seen = new Set<string>();
+    return source.flatMap((n) => {
+      const key = stockNeedKey(n.ItemId, n.WarehouseId);
+      if (seen.has(key)) return [];
+      seen.add(key);
+      return [{ ItemId: n.ItemId, label: n.label, warehouseId: n.WarehouseId, key }];
+    });
+  }, [shortages, stockNeeds]);
+  const getRequiredStock = (itemId: number, warehouseId: number) =>
+    stockNeeds
+      .filter((n) => n.ItemId === itemId && n.WarehouseId === warehouseId)
+      .reduce((sum, n) => sum + n.required, 0);
+  const openQuickStock =
+    canCreateStockReceipt && quickStockLines.length > 0 ? () => setShowQuickStock(true) : undefined;
+
+  /** Stok hatasıysa paneli açar ve stokları tazeler; aksi halde false. */
+  const captureStockError = (error: unknown): boolean => {
+    const msg = getApiErrorMessage(error);
+    if (!msg || !isStockErrorMessage(msg)) return false;
+    setStockError(msg);
+    void refreshStocks();
+    return true;
+  };
+
   const loadAddendum = async (id: number) => {
     setLoading(true);
     try {
@@ -264,6 +355,8 @@ export default function AddendumDetailModal({
       setShowRejectModal(false);
       setShowReverseModal(false);
       setRejectionReason('');
+      setStockError(null);
+      setShowQuickStock(false);
       createStartedRef.current = false;
       return;
     }
@@ -415,9 +508,11 @@ export default function AddendumDetailModal({
     });
     await Promise.resolve(onChanged());
     if (firstError) {
+      captureStockError(firstError);
       toast.error(getUserFacingApiErrorMessage(firstError, 'addendum'));
       return false;
     }
+    setStockError(null);
     if (!opts?.silent) toast.success('Değişiklikler kaydedildi');
     return true;
   };
@@ -470,6 +565,7 @@ export default function AddendumDetailModal({
       await Promise.resolve(onChanged());
     } catch (error) {
       console.error('Submit addendum error:', error);
+      captureStockError(error);
       toast.error(getUserFacingApiErrorMessage(error, 'addendum'));
     } finally {
       setIsBusy(false);
@@ -487,6 +583,7 @@ export default function AddendumDetailModal({
       await Promise.resolve(onChanged({ approved: true }));
     } catch (error) {
       console.error('Approve addendum error:', error);
+      if (captureStockError(error)) setConfirmApprove(false);
       toast.error(getUserFacingApiErrorMessage(error, 'addendum'));
     } finally {
       setIsBusy(false);
@@ -633,6 +730,8 @@ export default function AddendumDetailModal({
       row.kind === 'contract' && savedPrice != null && savedPrice !== row.currentPrice;
     const isPricePending = row.key in pendingPriceTargets;
     const hasSavedChange = !isAdded && (row.savedDelta !== 0 || hasSavedPriceChange);
+    const need = stockCheckActive ? rowStockNeed(row) : null;
+    const rowShortage = need ? shortageByKey.get(stockNeedKey(need.ItemId, need.WarehouseId)) : undefined;
 
     let code = '—';
     let name = '';
@@ -788,6 +887,14 @@ export default function AddendumDetailModal({
           }`}
         >
           {diff > 0 ? `+${diff}` : diff < 0 ? diff : '—'}
+          {rowShortage && (
+            <span
+              className="block text-[10px] font-semibold text-red-400 whitespace-nowrap"
+              title={`Depoda kullanılabilir ${rowShortage.available}, gereken ${rowShortage.required}`}
+            >
+              {rowShortage.missing} eksik
+            </span>
+          )}
         </td>
         {editable && (
           <td className="action-col">
@@ -1095,6 +1202,25 @@ export default function AddendumDetailModal({
                   )}
                 </div>
               </div>
+
+              <StockShortagePanel
+                shortages={shortages}
+                warehouses={warehouses}
+                onAddStock={openQuickStock}
+                description={
+                  hasPendingQty
+                    ? 'Kaydedilmemiş miktarlar dahil. Eksik stoğu buradan ekleyin; girdiğiniz miktarlar korunur.'
+                    : undefined
+                }
+              />
+              {stockError && (
+                <StockErrorPanel
+                  message={stockError}
+                  onDismiss={() => setStockError(null)}
+                  onStockTransfer={openQuickStock}
+                  showStockTransferLink={false}
+                />
+              )}
 
               {gridRows.length === 0 ? (
                 <div className="text-center py-8 text-text-secondary text-sm">
@@ -1462,6 +1588,30 @@ export default function AddendumDetailModal({
           onSaved={async () => {
             await refreshDetails();
             await Promise.resolve(onChanged());
+          }}
+        />
+      )}
+
+      {showQuickStock && quickStockLines.length > 0 && (
+        <QuickStockEntryModal
+          warehouses={warehouses}
+          lines={quickStockLines}
+          getRequiredQuantity={getRequiredStock}
+          title="Eksik Stoğu Ekle"
+          description={
+            addendum?.AddendumCode
+              ? `Zeyilname ${addendum.AddendumCode} için stok girişi`
+              : 'Zeyilname için stok girişi'
+          }
+          zIndexClass="z-[90]"
+          onClose={() => setShowQuickStock(false)}
+          onSaved={async () => {
+            setStockError(null);
+            invalidateData('inventory');
+            const fresh = await refreshStocks();
+            if (computeStockShortages(stockNeeds, fresh).length === 0) {
+              toast.info('Stok eksiği kalmadı; kaldığınız yerden devam edebilirsiniz.');
+            }
           }}
         />
       )}
