@@ -57,6 +57,7 @@ export type ContextMenuActionHandlerKey =
   | 'shipment.undoDelivery'
   | 'shipment.copyNo'
   | 'shipment.copyWaybill'
+  | 'shipment.edit'
   | 'shipment.cancel';
 
 export interface ScaffoldRowTarget {

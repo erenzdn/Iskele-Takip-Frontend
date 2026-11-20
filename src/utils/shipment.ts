@@ -1,4 +1,4 @@
-import type { Contract, ContractDetail, DeliveryMode, InventoryContractLineItem, Shipment } from '../models';
+import type { Contract, ContractDetail, DeliveryMode, InventoryContractLineItem, Shipment, ShipmentItem } from '../models';
 
 /**
  * Sevkiyat (teslim) modu yardımcıları — backend src/utils/deliveryMode.js ile aynı kurallar.
@@ -194,6 +194,44 @@ export function validateShipmentDraft(lines: ShipmentDraftLine[]): ShipmentDraft
   }
   if (items.length === 0) return { ok: false, error: 'En az bir kalem için sevk miktarı girin.' };
   return { ok: true, items };
+}
+
+/** Fiş kalemlerinin DetailId → miktar haritası (aynı satır birden çok kez varsa toplanır). */
+export function shipmentQtyByDetail(items: Array<Pick<ShipmentItem, 'DetailId' | 'Quantity'>> | undefined): Map<number, number> {
+  const map = new Map<number, number>();
+  for (const it of items ?? []) {
+    map.set(it.DetailId, (map.get(it.DetailId) ?? 0) + (Number(it.Quantity) || 0));
+  }
+  return map;
+}
+
+export interface ShipmentLineAllowance {
+  contracted: number;
+  /** Diğer aktif fişlerle sevk edilen (düzenlenen fiş hariç) */
+  otherShipped: number;
+  /** Düzenlenen fişteki mevcut miktar (yeni fişte 0) */
+  inThisShipment: number;
+  /** Bu fişe yazılabilecek en fazla miktar */
+  max: number;
+}
+
+/**
+ * Fiş penceresinde bir satırın sınırları. Düzenlemede fişin kendi miktarı serbest kalır:
+ * en fazla = sözleşme − diğer fişlerle sevk edilen.
+ */
+export function getShipmentLineAllowance(
+  detail: Pick<ContractDetail, 'RentedQuantity' | 'ReturnedQuantity' | 'ShippedQuantity'>,
+  contract: ModeSource,
+  inThisShipment = 0
+): ShipmentLineAllowance {
+  const progress = getLineShipmentProgress(detail, contract);
+  const otherShipped = Math.max(progress.shipped - inThisShipment, 0);
+  return {
+    contracted: progress.contracted,
+    otherShipped,
+    inThisShipment,
+    max: Math.max(progress.contracted - otherShipped, 0),
+  };
 }
 
 /** İade/kapama formunda girilebilecek azami miktar (sahadaki). */

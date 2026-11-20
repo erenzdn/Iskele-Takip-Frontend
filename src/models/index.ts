@@ -417,6 +417,9 @@ export interface Shipment {
   DeliveryConfirmedBy?: number | null;
   DeliveryConfirmedByName?: string | null;
   DeliveryConfirmedAt?: string | null;
+  /** Son düzenleme (fiş yerinde düzenlendiyse) */
+  UpdatedAt?: string | null;
+  UpdatedByName?: string | null;
   items?: ShipmentItem[];
 }
 
@@ -456,6 +459,9 @@ export interface CreateShipmentRequest {
   Notes?: string | null;
   items: Array<{ DetailId: number; Quantity: number }>;
 }
+
+/** PUT /shipments/:id — tüm fiş bilgileri gönderilir (boş metin alanı temizlenir) */
+export type UpdateShipmentRequest = CreateShipmentRequest;
 
 export interface ShipmentMutationResult {
   shipment: Shipment;

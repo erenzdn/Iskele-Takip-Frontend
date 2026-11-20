@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, TruckIcon } from '@phosphor-icons/react';
-import type { Contract, ContractAwaitingShipment, InventoryContractLineItem, Shipment, Warehouse } from '../models';
+import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, PencilSimpleIcon, TruckIcon } from '@phosphor-icons/react';
+import { isContractActive, type Contract, type ContractAwaitingShipment, type InventoryContractLineItem, type Shipment, type Warehouse } from '../models';
 import { shipmentService } from '../services/shipmentService';
 import { warehouseService } from '../services/warehouseService';
 import { contractService } from '../services/contractService';
@@ -50,6 +50,7 @@ export default function ShipmentsPage() {
   const [deliveryTarget, setDeliveryTarget] = useState<Shipment | null>(null);
   const [cancelTarget, setCancelTarget] = useState<Shipment | null>(null);
   const canCancel = Boolean(user?.permissions?.includes('shipments_cancel'));
+  const canUpdate = Boolean(user?.permissions?.includes('shipments_update'));
   const { openContextMenu } = useContextMenu();
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -60,6 +61,13 @@ export default function ShipmentsPage() {
   const { openPreview, loadingId, element: pdfPreviewElement } = useShipmentPdfPreview();
   const [shipTarget, setShipTarget] = useState<{ contract: Contract; lines: InventoryContractLineItem[] } | null>(null);
   const [preparingId, setPreparingId] = useState<number | null>(null);
+  const [editTarget, setEditTarget] = useState<{
+    contract: Contract;
+    lines: InventoryContractLineItem[];
+    shipment: Shipment;
+    headerOnly: boolean;
+  } | null>(null);
+  const [preparingEditId, setPreparingEditId] = useState<number | null>(null);
 
   useEffect(() => {
     warehouseService.getAllAsync().then(setWarehouses).catch(() => setWarehouses([]));
@@ -121,6 +129,33 @@ export default function ShipmentsPage() {
       toast.error(getApiErrorMessage(err) || 'Sözleşme yüklenemedi.');
     } finally {
       setPreparingId(null);
+    }
+  };
+
+  /** Düzenleme penceresi: güncel sözleşme satırları ve fişin kalemleri gerekir */
+  const openEditShipment = async (shipment: Shipment) => {
+    if (preparingEditId != null) return;
+    try {
+      setPreparingEditId(shipment.ShipmentId);
+      const [contract, fresh] = await Promise.all([
+        contractService.getByIdAsync(shipment.ContractId),
+        shipmentService.getByIdAsync(shipment.ShipmentId),
+      ]);
+      if (fresh.Status === 'CANCELLED') {
+        toast.warning('Fiş iptal edilmiş; düzenlenemez.');
+        void load();
+        return;
+      }
+      setEditTarget({
+        contract,
+        lines: contractDetailsToShipmentLines(contract),
+        shipment: fresh,
+        headerOnly: !isContractActive(contract),
+      });
+    } catch (err) {
+      toast.error(getApiErrorMessage(err) || 'Fiş yüklenemedi.');
+    } finally {
+      setPreparingEditId(null);
     }
   };
 
@@ -188,6 +223,7 @@ export default function ShipmentsPage() {
       ...shipmentCopyHandlers(shipment),
     };
     if (canCancel) handlers['shipment.cancel'] = () => setCancelTarget(shipment);
+    if (canUpdate) handlers['shipment.edit'] = () => void openEditShipment(shipment);
     openContextMenu({
       menuKey: 'shipmentRow',
       x: event.clientX,
@@ -366,7 +402,7 @@ export default function ShipmentsPage() {
                   <th className={th}>İrsaliye</th>
                   <th className={th}>Durum</th>
                   <th className={`${th} text-center w-12`} title="Dosya ekleri (imzalı irsaliye, fotoğraf)">Ek</th>
-                  <th className={`${th} text-center w-16`}>İşlem</th>
+                  <th className={`${th} text-center w-20`}>İşlem</th>
                 </tr>
               </thead>
               <tbody>
@@ -413,6 +449,18 @@ export default function ShipmentsPage() {
                         >
                           <FilePdfIcon size={16} />
                         </button>
+                        {!cancelled && canUpdate && (
+                          <button
+                            type="button"
+                            className="p-1 rounded hover:bg-background-secondary text-text-secondary hover:text-text-primary disabled:opacity-60"
+                            onClick={() => void openEditShipment(s)}
+                            disabled={preparingEditId != null}
+                            title="Fişi düzenle"
+                            aria-label={`${s.ShipmentNo} düzenle`}
+                          >
+                            <PencilSimpleIcon size={16} />
+                          </button>
+                        )}
                         {!cancelled && canConfirmDelivery && (
                           <button
                             type="button"
@@ -464,8 +512,22 @@ export default function ShipmentsPage() {
           contract={shipTarget.contract}
           lines={shipTarget.lines}
           onClose={() => setShipTarget(null)}
-          onCreated={() => {
+          onSaved={() => {
             setShipTarget(null);
+            void load();
+          }}
+        />
+      )}
+      {editTarget && (
+        <CreateShipmentModal
+          contract={editTarget.contract}
+          lines={editTarget.lines}
+          shipment={editTarget.shipment}
+          headerOnly={editTarget.headerOnly}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
+            invalidateData('contracts');
             void load();
           }}
         />

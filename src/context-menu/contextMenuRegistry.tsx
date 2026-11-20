@@ -23,6 +23,7 @@ import {
   FilePdfIcon,
   ChecksIcon,
   NotePencilIcon,
+  PencilSimpleIcon,
   PhoneIcon,
   PlusCircleIcon,
   TagIcon,
@@ -543,6 +544,14 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       label: 'Sevk Fişi PDF',
       icon: <FilePdfIcon size={iconSize} />,
       handlerKey: 'shipment.preview',
+    },
+    {
+      id: 'shipment-edit',
+      label: 'Fişi Düzenle',
+      icon: <PencilSimpleIcon size={iconSize} />,
+      handlerKey: 'shipment.edit',
+      requiredPermissions: ['shipments_update'],
+      visibleWhen: (target) => isShipmentTarget(target) && !target.rawData.IsCancelled,
     },
     {
       id: 'shipment-confirm-delivery',

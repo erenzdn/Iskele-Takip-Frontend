@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
-import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, PlusIcon, TruckIcon, XCircleIcon } from '@phosphor-icons/react';
+import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, PencilSimpleIcon, PlusIcon, TruckIcon, XCircleIcon } from '@phosphor-icons/react';
 import type { Attachment, Contract, InventoryContractLineItem, Shipment } from '../../models';
 import { shipmentService } from '../../services/shipmentService';
 import { useAuthStore } from '../../store/authStore';
@@ -53,6 +53,8 @@ export default function ContractShipmentsPanel({
   const user = useAuthStore((state) => state.user);
   const canCreate = Boolean(user?.permissions?.includes('shipments_create'));
   const canCancel = Boolean(user?.permissions?.includes('shipments_cancel'));
+  // Düzenleme sözleşme kapalıyken de açık: o durumda yalnızca fiş bilgileri (tarih/depo/miktar kilitli)
+  const canUpdate = Boolean(user?.permissions?.includes('shipments_update'));
   // Teslim onayı sözleşme tamamlanmış olsa da verilebilir (kanıt sonradan gelebilir)
   const canConfirmDelivery = Boolean(user?.permissions?.includes('shipments_confirm_delivery'));
 
@@ -61,6 +63,7 @@ export default function ContractShipmentsPanel({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<Shipment | null>(null);
+  const [editTarget, setEditTarget] = useState<Shipment | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [deliveryTarget, setDeliveryTarget] = useState<Shipment | null>(null);
   const [undoTarget, setUndoTarget] = useState<Shipment | null>(null);
@@ -168,6 +171,7 @@ export default function ContractShipmentsPanel({
       'shipment.undoDelivery': () => undoDelivery(shipment),
       ...shipmentCopyHandlers(shipment),
     };
+    if (canUpdate) handlers['shipment.edit'] = () => setEditTarget(shipment);
     // İptal yalnızca aktif sözleşmede (satırdaki düğmeyle aynı kural)
     if (canEdit && canCancel) handlers['shipment.cancel'] = () => setCancelTarget(shipment);
     openContextMenu({
@@ -349,6 +353,17 @@ export default function ContractShipmentsPanel({
                               <CheckCircleIcon size={16} />
                             </button>
                           )}
+                          {!cancelled && canUpdate && (
+                            <button
+                              type="button"
+                              className="p-1 rounded hover:bg-background-secondary text-text-secondary hover:text-text-primary"
+                              onClick={() => setEditTarget(s)}
+                              title={canEdit ? 'Fişi düzenle' : 'Fiş bilgilerini düzenle (sözleşme aktif değil)'}
+                              aria-label={`${s.ShipmentNo} düzenle`}
+                            >
+                              <PencilSimpleIcon size={16} />
+                            </button>
+                          )}
                           {!cancelled && canEdit && canCancel && (
                             <button
                               type="button"
@@ -381,6 +396,12 @@ export default function ContractShipmentsPanel({
                               {s.ExternalWaybillNo && <span>İrsaliye: {s.ExternalWaybillNo}</span>}
                               {s.CreatedByName && <span>Düzenleyen: {s.CreatedByName}</span>}
                               {s.CreatedAt && <span>{formatDateTime(s.CreatedAt)}</span>}
+                              {s.UpdatedAt && (
+                                <span>
+                                  Son düzenleme: {formatDateTime(s.UpdatedAt)}
+                                  {s.UpdatedByName ? ` (${s.UpdatedByName})` : ''}
+                                </span>
+                              )}
                               {cancelled && (
                                 <span className="text-red-400">
                                   İptal: {s.CancelledAt ? formatDateTime(s.CancelledAt) : ''} — {s.CancellationReason}
@@ -456,8 +477,21 @@ export default function ContractShipmentsPanel({
           contract={contract}
           lines={lines}
           onClose={() => setShowCreate(false)}
-          onCreated={() => {
+          onSaved={() => {
             setShowCreate(false);
+            void afterMutation();
+          }}
+        />
+      )}
+      {editTarget && (
+        <CreateShipmentModal
+          contract={contract}
+          lines={lines}
+          shipment={editTarget}
+          headerOnly={!canEdit}
+          onClose={() => setEditTarget(null)}
+          onSaved={() => {
+            setEditTarget(null);
             void afterMutation();
           }}
         />

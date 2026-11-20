@@ -6,6 +6,7 @@ import type {
   Shipment,
   ShipmentMutationResult,
   ShipmentStatus,
+  UpdateShipmentRequest,
 } from '../models';
 
 export interface ShipmentListParams {
@@ -45,7 +46,8 @@ export function buildShipmentQuery(params?: ShipmentListParams): string {
 
 /**
  * Sevkiyat fişi (teslim/sevk) API'si.
- * İzinler: shipments_view (liste/detay/PDF), shipments_create, shipments_cancel, shipments_confirm_delivery.
+ * İzinler: shipments_view (liste/detay/PDF), shipments_create, shipments_update, shipments_cancel,
+ * shipments_confirm_delivery.
  */
 export const shipmentService = {
   async listAsync(params?: ShipmentListParams): Promise<ShipmentListResponse> {
@@ -69,6 +71,11 @@ export const shipmentService = {
 
   async createAsync(contractId: number, data: CreateShipmentRequest): Promise<ShipmentMutationResult> {
     return apiClient.post<ShipmentMutationResult>(`/contracts/${contractId}/shipments`, data);
+  },
+
+  /** Fişi düzenle (fiş no korunur; tarih/depo/miktar değişirse stok ve kira yeniden hesaplanır). İzin: shipments_update */
+  async updateAsync(id: number, data: UpdateShipmentRequest): Promise<ShipmentMutationResult> {
+    return apiClient.put<ShipmentMutationResult>(`/shipments/${id}`, data);
   },
 
   async cancelAsync(id: number, reason: string): Promise<ShipmentMutationResult> {
