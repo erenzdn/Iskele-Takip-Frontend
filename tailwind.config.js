@@ -13,6 +13,7 @@ export default {
           panel: 'var(--color-bg-panel)',
           sidebar: 'var(--color-bg-sidebar)',
           elevated: 'var(--color-bg-elevated)',
+          secondary: 'var(--color-bg-secondary)',
           border: 'var(--color-border)',
           'border-muted': 'var(--color-border-muted)',
           'border-strong': 'var(--color-border-strong)',

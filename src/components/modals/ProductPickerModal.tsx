@@ -172,8 +172,8 @@ export default function ProductPickerModal({
       role="dialog"
     >
       <div className="flex h-full w-full min-h-0 flex-col bg-background-panel shadow-2xl overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-background-border shrink-0 bg-background-secondary/50">
-          <h2 className="text-lg font-semibold text-text-primary">Ürün Seçimi</h2>
+        <div className="flex items-center justify-between px-4 py-1.5 border-b border-background-border shrink-0 bg-background-secondary/50">
+          <h2 className="text-base font-semibold text-text-primary">Ürün Seçimi</h2>
           <div className="flex items-center gap-2">
             {onAddNewItem && (
               <button
@@ -188,14 +188,14 @@ export default function ProductPickerModal({
             <button
               type="button"
               onClick={onClose}
-              className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+              className="p-1 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
               aria-label="Kapat"
             >
-              <XIcon size={22} weight="regular" />
+              <XIcon size={20} weight="regular" />
             </button>
           </div>
         </div>
-        <div className="flex-1 min-h-0 p-3 sm:p-4 overflow-hidden flex flex-col">
+        <div className="flex-1 min-h-0 p-2 overflow-hidden flex flex-col">
           <div className="flex-1 min-h-0 overflow-hidden border border-background-border bg-background-panel">
             <ItemPickerPanel
               items={items}
@@ -209,24 +209,24 @@ export default function ProductPickerModal({
             />
           </div>
         </div>
-        <div className="px-5 py-4 border-t border-background-border shrink-0 bg-background-secondary/30 flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="px-4 py-1.5 border-t border-background-border shrink-0 bg-background-secondary/30 flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
           {toast && (
             <div className="w-full sm:w-auto sm:flex-1 flex justify-center sm:justify-start order-first sm:order-none" role="status" aria-live="polite">
               {toast.kind === 'added' ? (
-                <span className="inline-flex items-center gap-1.5 text-sm text-green-400 bg-green-500/15 border border-green-500/30 rounded-full px-3 py-1.5">
+                <span className="inline-flex items-center gap-1.5 text-sm text-green-400 bg-green-500/15 border border-green-500/30 rounded-full px-3 py-0.5">
                   <CheckCircleIcon size={18} weight="fill" className="shrink-0" aria-hidden />
                   {toast.message}
                 </span>
               ) : (
-                <span className="inline-flex items-center gap-1.5 text-sm text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded-full px-3 py-1.5">
+                <span className="inline-flex items-center gap-1.5 text-sm text-amber-300 bg-amber-500/15 border border-amber-500/30 rounded-full px-3 py-0.5">
                   <MinusCircleIcon size={18} weight="fill" className="shrink-0" aria-hidden />
                   {toast.message}
                 </span>
               )}
             </div>
           )}
-          <p className="text-sm text-text-secondary flex-1 min-w-0 order-2 sm:order-none">{hintWithToggle}</p>
-          <button type="button" onClick={onClose} className="btn-secondary py-2 px-4 shrink-0 order-3 sm:order-none">
+          <p className="text-xs text-text-secondary flex-1 min-w-0 order-2 sm:order-none">{hintWithToggle}</p>
+          <button type="button" onClick={onClose} className="btn-secondary py-1 px-4 shrink-0 order-3 sm:order-none">
             Ekle
           </button>
         </div>

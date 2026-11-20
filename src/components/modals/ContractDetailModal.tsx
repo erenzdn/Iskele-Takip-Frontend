@@ -3117,8 +3117,8 @@ export default function ContractDetailModal({
                     })}
                   </tbody>
                   {contractReturns.some((r) => r.LateFee > 0) && (
-                    <tfoot className="sticky bottom-0 bg-orange-900/40 border-t border-orange-800/40">
-                      <tr>
+                    <tfoot className="sticky bottom-0 z-10 bg-background-panel border-t border-orange-800/40">
+                      <tr className="bg-orange-900/40">
                         <td colSpan={7} className="text-right font-medium">
                           Toplam Gecikme Ücreti
                         </td>

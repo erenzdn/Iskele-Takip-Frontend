@@ -9,6 +9,7 @@
   --color-bg-panel: #ffffff;
   --color-bg-sidebar: #eef2f7;
   --color-bg-elevated: #f8fafc;
+  --color-bg-secondary: #f1f5f9;
   --color-bg-hover: #e2e8f0;
   --color-border: #cbd5e1;
   --color-border-muted: #d8e1ec;
@@ -55,6 +56,7 @@
   --color-bg-panel: #172033;
   --color-bg-sidebar: #131d2f;
   --color-bg-elevated: #1e293b;
+  --color-bg-secondary: #1e293b;
   --color-bg-hover: #25324a;
   --color-border: #334155;
   --color-border-muted: #2d3c54;

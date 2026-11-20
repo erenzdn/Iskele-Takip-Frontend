@@ -212,6 +212,12 @@ export default function DataTable({ tableId, children, style, className, ...rest
   const customWidths = enabled && displayIds.some((id) => widths[id] != null);
   const widthOf = (id: string) => widths[id] ?? FALLBACK_WIDTH_PX;
   const totalWidth = displayIds.reduce((sum, id) => sum + widthOf(id), 0);
+  const lastId = displayIds[displayIds.length - 1];
+  /**
+   * Tablo en az kapsayıcısı kadar geniş olur; sütun toplamı daha darsa artan alanı
+   * genişliği "auto" bırakılan son sütun doldurur (sağda boşluk kalmaz).
+   */
+  const fillWidth = (px: number) => `max(${Math.round(px)}px, 100%)`;
 
   // --- Kılavuz çizgi (body'ye eklenen tek bir div, yeniden render gerektirmez) ---
   useEffect(() => {
@@ -284,7 +290,9 @@ export default function DataTable({ tableId, children, style, className, ...rest
     } else {
       for (const colId of displayIds) current[colId] = widthOf(colId);
     }
-    const startWidth = current[id] ?? th.getBoundingClientRect().width;
+    const isLast = id === lastId;
+    // Son sütun boşluğu doldurduğu için kayıtlı değerinden geniş görünebilir; görünen genişlikten başla.
+    const startWidth = isLast ? th.getBoundingClientRect().width : current[id] ?? th.getBoundingClientRect().width;
     const othersWidth = displayIds.reduce((sum, colId) => sum + (colId === id ? 0 : current[colId] ?? 0), 0);
     const leftEdge = th.getBoundingClientRect().left;
     let next = clampColumnWidth(startWidth);
@@ -299,8 +307,9 @@ export default function DataTable({ tableId, children, style, className, ...rest
     // Sürüklerken React'i yeniden çizdirmemek için DOM doğrudan güncellenir.
     const onMove = (e: MouseEvent) => {
       next = clampColumnWidth(startWidth + (e.clientX - startX));
-      th.style.width = `${next}px`;
-      table.style.width = `${othersWidth + next}px`;
+      // Son sütun "auto" kalır; tablonun genişliği üzerinden büyür.
+      if (!isLast) th.style.width = `${next}px`;
+      table.style.width = fillWidth(othersWidth + next);
       table.style.tableLayout = 'fixed';
       table.style.minWidth = '0';
       showGuide(th.getBoundingClientRect().right, 'active');
@@ -417,13 +426,15 @@ export default function DataTable({ tableId, children, style, className, ...rest
 
   const decorateHeader = (cell: AnyElement, id: string): AnyElement => {
     const p = cell.props;
-    const width = customWidths ? widthOf(id) : null;
     const cellStyle = (p.style ?? undefined) as CSSProperties | undefined;
+    const style = !customWidths
+      ? cellStyle
+      : { ...cellStyle, width: id === lastId ? 'auto' : `${widthOf(id)}px` };
     return cloneElement(cell, {
       key: `ct:${id}`,
       'data-ct-col': id,
       className: `${(p.className as string | undefined) ?? ''} ct-th${canReorder ? '' : ' ct-th-static'}`,
-      style: width != null ? { ...cellStyle, width: `${width}px` } : cellStyle,
+      style,
       draggable: canReorder,
       onDragStart: compose((e: DragEvent<HTMLElement>) => {
         if (resizingRef.current || !canReorder) {
@@ -488,7 +499,7 @@ export default function DataTable({ tableId, children, style, className, ...rest
   }
 
   const tableStyle: CSSProperties | undefined = customWidths
-    ? { ...style, tableLayout: 'fixed', width: `${totalWidth}px`, minWidth: 0, maxWidth: 'none' }
+    ? { ...style, tableLayout: 'fixed', width: fillWidth(totalWidth), minWidth: 0, maxWidth: 'none' }
     : style;
 
   // Menü dışına tıklanınca / Esc ile kapat

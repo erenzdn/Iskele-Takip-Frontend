@@ -400,7 +400,7 @@ export default function ItemPickerPanel({
     const Icon = active === 'asc' ? CaretUpIcon : active === 'desc' ? CaretDownIcon : CaretUpDownIcon;
     return (
       <th
-        className={`text-${align} px-3 py-2 font-semibold border-b border-background-border ${extraClass} ${
+        className={`text-${align} px-3 py-1.5 font-semibold border-b border-background-border ${extraClass} ${
           active ? 'text-text-primary' : 'text-text-secondary'
         }`}
         aria-sort={active === 'asc' ? 'ascending' : active === 'desc' ? 'descending' : 'none'}
@@ -515,7 +515,7 @@ export default function ItemPickerPanel({
     >
       {/* Sol panel - Kategori ağacı */}
       <div className="w-[260px] flex-shrink-0 border-r border-background-border flex flex-col">
-        <div className="p-2 border-b border-background-border bg-background-secondary">
+        <div className="px-2 py-1.5 border-b border-background-border bg-background-secondary">
           <span className="text-sm font-semibold text-text-secondary uppercase tracking-wider">
             Gruplar
           </span>
@@ -610,9 +610,24 @@ export default function ItemPickerPanel({
 
       {/* Sağ panel - Ürün listesi */}
       <div className="flex-1 flex flex-col min-w-0">
-        {/* Alfabe hızlı filtre - arama çubuğunun üstünde */}
-        <div className="px-2 pt-2 pb-1 border-b border-background-border">
-          <div className="flex flex-wrap items-center gap-1">
+        {/* Arama + alfabe hızlı filtre tek satırda: listeye daha fazla yer kalsın */}
+        <div className="px-2 py-1.5 border-b border-background-border flex flex-wrap items-center gap-x-3 gap-y-1.5">
+          <div className="relative w-72 max-w-full shrink-0">
+            <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
+              <MagnifyingGlassIcon size={16} weight="regular" />
+            </span>
+            <input
+              ref={searchInputRef}
+              type="text"
+              value={searchText}
+              onChange={(e) => setSearchText(e.target.value.replace(/\s+/g, ' ').trimStart())}
+              autoFocus
+              placeholder="Malzeme adı, kodu veya kategori ile ara..."
+              className="input w-full pl-7 py-1 text-sm"
+              aria-label="Ürün ara"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-1 flex-1 min-w-0">
             <button
               type="button"
               onClick={() => setSelectedLetter(null)}
@@ -677,30 +692,12 @@ export default function ItemPickerPanel({
             )}
           </div>
         </div>
-        <div className="p-2 border-b border-background-border flex items-center gap-2 flex-wrap">
-          <span className="text-text-secondary text-sm">göre ara:</span>
-          <div className="relative flex-1 min-w-[180px] max-w-md">
-            <span className="absolute inset-y-0 left-2 flex items-center pointer-events-none text-text-secondary">
-              <MagnifyingGlassIcon size={18} weight="regular" />
-            </span>
-            <input
-              ref={searchInputRef}
-              type="text"
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value.replace(/\s+/g, ' ').trimStart())}
-              autoFocus
-              placeholder="Malzeme adı, kodu veya kategori ile ara..."
-              className="input w-full pl-8 py-1.5 text-sm"
-              aria-label="Ürün ara"
-            />
-          </div>
-        </div>
         <div
           className="overflow-auto flex-1 min-h-[280px] focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
           tabIndex={0}
         >
           <DataTable tableId="ItemPickerPanel" className="w-full text-sm border-collapse text-text-primary" aria-label={displayMode === 'quote' ? 'Teklif ürün listesi' : 'Sözleşme ürün listesi'}>
-            <thead className="sticky top-0 bg-background-secondary z-10">
+            <thead className="sticky top-0 bg-background-elevated z-10 shadow-[inset_0_-1px_0_var(--color-border)]">
               <tr>
                 {renderSortHeader('code', 'Ürün Kodu', 'left')}
                 {renderSortHeader('name', 'Ürün Adı', 'left')}
@@ -751,11 +748,11 @@ export default function ItemPickerPanel({
                       }`}
                       aria-selected={isPicked}
                     >
-                      <td className="px-3 py-2 text-text-secondary">
+                      <td className="px-3 py-1 text-text-secondary">
                         <span className="inline-flex items-center gap-2">
                           {isPicked && (
                             <CheckCircleIcon
-                              size={18}
+                              size={16}
                               weight="fill"
                               className="shrink-0 text-primary"
                               aria-hidden
@@ -763,7 +760,7 @@ export default function ItemPickerPanel({
                           )}
                           {!isPicked && isFlash && (
                             <CheckCircleIcon
-                              size={18}
+                              size={16}
                               weight="fill"
                               className="shrink-0 text-green-400"
                               aria-hidden
@@ -772,18 +769,18 @@ export default function ItemPickerPanel({
                           <span>{getCode(i) || '—'}</span>
                         </span>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className="px-3 py-1">
                         <div className="font-medium text-text-primary leading-tight">{getName(i)}</div>
                         {getNameEn(i).trim() ? (
                           <div className="text-xs text-text-secondary mt-0.5 leading-tight">{getNameEn(i).trim()}</div>
                         ) : null}
                       </td>
-                      <td className="px-3 py-2 text-text-secondary">{getUnitName(i)}</td>
-                      <td className="px-3 py-2 text-text-secondary">{getCatName(i) || '—'}</td>
-                      <td className="px-3 py-2 text-right text-text-secondary">
+                      <td className="px-3 py-1 text-text-secondary">{getUnitName(i)}</td>
+                      <td className="px-3 py-1 text-text-secondary">{getCatName(i) || '—'}</td>
+                      <td className="px-3 py-1 text-right text-text-secondary">
                         {getStock(i)}
                       </td>
-                      <td className="px-3 py-2 text-right text-primary">
+                      <td className="px-3 py-1 text-right text-primary">
                         {displayMode === 'quote' && quotePricing === 'sale'
                           ? currency === 'EUR'
                             ? `€${getUnitPriceEur(i).toFixed(2)}`
