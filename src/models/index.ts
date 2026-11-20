@@ -880,6 +880,61 @@ export interface BillingPeriodLine {
   net: number;
 }
 
+/**
+ * Kırılım satırı türü: RENTAL sahada kalan adet; RETURN/DECREASE/SETTLEMENT aralıkta çıkan adet
+ * (iade / zeyilname azaltma / satış-kayıp); SETTLEMENT_CHARGE malzeme bedeli; MANUAL tek seferlik
+ * kalem; ADJUSTMENT parçalara dağıtılamayan fark (geçmiş tarihli kayıt düzeltmesi); CATCH_UP
+ * kesilmiş bir faturadan sonra eklenen partinin o faturaya düşmesi gereken payı (ilk tam ay).
+ */
+export type InvoiceLineKind =
+  | 'RENTAL'
+  | 'RETURN'
+  | 'DECREASE'
+  | 'SETTLEMENT'
+  | 'SETTLEMENT_CHARGE'
+  | 'MANUAL'
+  | 'ADJUSTMENT'
+  | 'CATCH_UP';
+
+/**
+ * Fatura aralığında bir sözleşme satırının bir parçası (GET /contracts/:id/invoice-breakdown).
+ * Aynı ürün farklı partilerden/çıkışlardan geliyorsa birden çok satır olur.
+ */
+export interface InvoiceLineBreakdown {
+  DetailId: number;
+  ItemId: number;
+  isManual: boolean;
+  kind: InvoiceLineKind;
+  /** Bu parçadaki adet */
+  quantity: number;
+  /** Partinin (sevk/ekleme) ilk günü (YYYY-MM-DD) */
+  cohortStart: string | null;
+  /** İade/azaltma/kapama günü (YYYY-MM-DD) */
+  exitDate: string | null;
+  /** Faturalanan kira günlerinin ilk günü (YYYY-MM-DD); manuel/tek seferlik kalemde null */
+  periodStart: string | null;
+  /** Faturalanan son gün (YYYY-MM-DD, dahil); asgari 30 gün nedeniyle fatura bitişini aşabilir */
+  periodEnd: string | null;
+  days: number | null;
+  gross: number;
+  /** İskontolu, KDV hariç */
+  net: number;
+  /** CATCH_UP: partiyi bilmeden kesilmiş fatura */
+  missedInvoiceId?: number | null;
+  missedInvoiceNumber?: string | null;
+}
+
+export interface InvoiceBreakdown {
+  lines: InvoiceLineBreakdown[];
+  subtotalNet: number;
+  vatAmount: number;
+  /** KDV dahil toplam (telafi dahil) */
+  netTotal: number;
+  /** Telafi satırları toplamı (KDV hariç / dahil) */
+  catchUpNet: number;
+  catchUpTotal: number;
+}
+
 export interface BillingPeriod {
   index: number;
   periodStart: string;

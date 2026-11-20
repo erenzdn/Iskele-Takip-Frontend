@@ -4,6 +4,7 @@ import {
   isoToLocalDateKey,
   inclusiveDayCount,
   accrualBoundaryIso,
+  applyLineBreakdown,
   computeInvoiceAmountFromAccrual,
   sumPlanAccrual,
   findOverlappingInvoices,
@@ -454,5 +455,37 @@ describe('invoiceAmountCalc', () => {
       expect(newState.loading).toBe(true);
       expect(newState.error).toBeNull();
     });
+  });
+});
+
+describe('applyLineBreakdown', () => {
+  const calc = {
+    amount: 564,
+    requestedDays: 30,
+    coveredDays: 30,
+    uncoveredDays: 0,
+    includesMinimumRental: false,
+    hasProjection: false,
+    breakdown: [],
+  };
+
+  it('telafi (KDV dahil) tutara eklenir', () => {
+    const result = applyLineBreakdown(calc, {
+      lines: [],
+      subtotalNet: 770,
+      vatAmount: 154,
+      netTotal: 924,
+      catchUpNet: 300,
+      catchUpTotal: 360,
+    });
+    expect(result.catchUpAmount).toBe(360);
+    expect(result.amount).toBe(924);
+  });
+
+  it('kırılım alınamazsa tutar değişmez', () => {
+    const result = applyLineBreakdown(calc, null);
+    expect(result.amount).toBe(564);
+    expect(result.catchUpAmount).toBe(0);
+    expect(result.lineBreakdown).toBeNull();
   });
 });

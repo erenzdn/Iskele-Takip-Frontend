@@ -5,6 +5,9 @@ import type {
   BillingSummary,
   BillingVarianceReason,
   ContractLineItem,
+  InvoiceBreakdown,
+  InvoiceLineBreakdown,
+  InvoiceLineKind,
   MarkBilledPeriodRequest,
 } from '../models';
 import { todayDateInput } from './dateInput';
@@ -117,6 +120,133 @@ export function parseBillingPeriod(raw: unknown): BillingPeriod | null {
       ? linesRaw.map(parsePeriodLine).filter((l): l is BillingPeriodLine => l != null)
       : [],
   };
+}
+
+const INVOICE_LINE_KINDS = [
+  'RENTAL',
+  'RETURN',
+  'DECREASE',
+  'SETTLEMENT',
+  'SETTLEMENT_CHARGE',
+  'MANUAL',
+  'ADJUSTMENT',
+  'CATCH_UP',
+] as const;
+
+function parseInvoiceLine(raw: unknown): InvoiceLineBreakdown | null {
+  const obj = asRecord(raw);
+  if (!obj) return null;
+  const detailId = Math.floor(asNumber(pick(obj, 'DetailId', 'detailId'), Number.NaN));
+  if (!Number.isFinite(detailId)) return null;
+  const start = pick(obj, 'periodStart', 'PeriodStart');
+  const end = pick(obj, 'periodEnd', 'PeriodEnd');
+  const days = asNumberOrNull(pick(obj, 'days', 'Days'));
+  const isManual = asBoolean(pick(obj, 'isManual', 'IsManual'));
+  const kindRaw = asString(pick(obj, 'kind', 'Kind')).toUpperCase();
+  const kind: InvoiceLineKind = (INVOICE_LINE_KINDS as readonly string[]).includes(kindRaw)
+    ? (kindRaw as InvoiceLineKind)
+    : isManual
+      ? 'MANUAL'
+      : 'RENTAL';
+  const cohortStart = pick(obj, 'cohortStart', 'CohortStart');
+  const exitDate = pick(obj, 'exitDate', 'ExitDate');
+  return {
+    DetailId: detailId,
+    ItemId: Math.floor(asNumber(pick(obj, 'ItemId', 'itemId'), 0)),
+    isManual,
+    kind,
+    quantity: asNumber(pick(obj, 'quantity', 'Quantity')),
+    cohortStart: cohortStart ? asString(cohortStart) : null,
+    exitDate: exitDate ? asString(exitDate) : null,
+    periodStart: start ? asString(start) : null,
+    periodEnd: end ? asString(end) : null,
+    days: days != null ? Math.round(days) : null,
+    gross: asNumber(pick(obj, 'gross', 'Gross')),
+    net: asNumber(pick(obj, 'net', 'Net')),
+    ...(kind === 'CATCH_UP'
+      ? {
+          missedInvoiceId: asNumberOrNull(pick(obj, 'missedInvoiceId', 'MissedInvoiceId')),
+          missedInvoiceNumber: optionalString(pick(obj, 'missedInvoiceNumber', 'MissedInvoiceNumber')),
+        }
+      : {}),
+  };
+}
+
+function optionalString(value: unknown): string | null {
+  return value == null || value === '' ? null : asString(value);
+}
+
+export function parseInvoiceBreakdown(raw: unknown): InvoiceBreakdown {
+  const obj = asRecord(raw);
+  const linesRaw = obj ? pick(obj, 'lines', 'Lines') : null;
+  return {
+    lines: Array.isArray(linesRaw)
+      ? linesRaw.map(parseInvoiceLine).filter((l): l is InvoiceLineBreakdown => l != null)
+      : [],
+    subtotalNet: obj ? asNumber(pick(obj, 'subtotalNet', 'SubtotalNet')) : 0,
+    vatAmount: obj ? asNumber(pick(obj, 'vatAmount', 'VatAmount')) : 0,
+    netTotal: obj ? asNumber(pick(obj, 'netTotal', 'NetTotal')) : 0,
+    catchUpNet: obj ? asNumber(pick(obj, 'catchUpNet', 'CatchUpNet')) : 0,
+    catchUpTotal: obj ? asNumber(pick(obj, 'catchUpTotal', 'CatchUpTotal')) : 0,
+  };
+}
+
+function shortDate(key: string | null): string {
+  const m = key ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(key) : null;
+  return m ? `${m[3]}.${m[2]}.${m[1]}` : '';
+}
+
+export interface InvoiceLinePresentation {
+  /** Dönem sütunu: "29.10.2026 - 31.10.2026" ya da "Tek seferlik" vb. */
+  periodText: string;
+  /** Satırın yanındaki kısa etiketler */
+  badges: string[];
+}
+
+/**
+ * Ürün bazlı kırılım satırının ekrandaki dönem metni ve etiketleri.
+ * @param line Satır
+ * @param allLines Kırılımın tüm satırları (aynı üründe birden çok parti var mı diye bakılır)
+ * @param invoiceEndKey Fatura bitiş günü (YYYY-MM-DD, dahil) — asgari 30 gün taşmasını işaretlemek için
+ */
+export function presentInvoiceLine(
+  line: InvoiceLineBreakdown,
+  allLines: InvoiceLineBreakdown[],
+  invoiceEndKey: string
+): InvoiceLinePresentation {
+  const badges: string[] = [];
+  let periodText = '—';
+  if (line.periodStart && line.periodEnd) {
+    periodText = `${shortDate(line.periodStart)} - ${shortDate(line.periodEnd)}`;
+  } else if (line.kind === 'MANUAL') {
+    periodText = 'Tek seferlik';
+  } else if (line.kind === 'SETTLEMENT_CHARGE') {
+    periodText = 'Malzeme bedeli';
+  } else if (line.kind === 'ADJUSTMENT') {
+    periodText = 'Düzeltme (geçmiş kayıt)';
+  }
+
+  const sameDetail = allLines.filter((l) => l.DetailId === line.DetailId && l.cohortStart);
+  const batchCount = new Set(sameDetail.map((l) => l.cohortStart)).size;
+  if (line.kind !== 'CATCH_UP' && batchCount > 1 && line.cohortStart && line.periodStart === line.cohortStart) {
+    badges.push(`Parti ${shortDate(line.cohortStart)}`);
+  }
+  if (line.kind === 'CATCH_UP') {
+    badges.push(
+      line.missedInvoiceNumber
+        ? `İlk ay · ${line.missedInvoiceNumber} kesildikten sonra eklendi`
+        : 'İlk ay · önceki fatura kesildikten sonra eklendi'
+    );
+  }
+  if (line.exitDate) {
+    if (line.kind === 'RETURN') badges.push(`İade ${shortDate(line.exitDate)}`);
+    else if (line.kind === 'DECREASE') badges.push(`Azaltma ${shortDate(line.exitDate)}`);
+    else if (line.kind === 'SETTLEMENT') badges.push(`Satış/kayıp ${shortDate(line.exitDate)}`);
+  }
+  if (line.kind !== 'CATCH_UP' && line.periodEnd && invoiceEndKey && line.periodEnd > invoiceEndKey) {
+    badges.push('Asgari 30 gün');
+  }
+  return { periodText, badges };
 }
 
 export function parseBillingPlan(raw: unknown): BillingPeriod[] {

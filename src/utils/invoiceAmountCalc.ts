@@ -6,7 +6,7 @@
  * computeInvoiceAmountFromAccrual). Fatura dönem bitiş günü dahildir.
  */
 
-import type { BillingPeriod, ContractInvoice } from '../models';
+import type { BillingPeriod, ContractInvoice, InvoiceBreakdown } from '../models';
 import { addCalendarDays, calendarDaysBetween, formatDateInput, parseDateInput } from './dateInput';
 import { roundTo } from './lineDiscount';
 
@@ -119,6 +119,31 @@ export interface InvoiceAmountCalculation {
   hasProjection: boolean;
   /** Dönem bazlı kırılım */
   breakdown: PeriodBreakdownLine[];
+  /** Ürün bazlı kırılım (backend invoice-breakdown); alınamadıysa null/undefined */
+  lineBreakdown?: InvoiceBreakdown | null;
+  /**
+   * Telafi tutarı (KDV dahil): önceki bir fatura kesildikten sonra eklenen partinin o faturaya
+   * düşmesi gereken payı (ilk tam ay). `amount` buna dahildir.
+   */
+  catchUpAmount?: number;
+}
+
+/**
+ * Tahakkuk farkı hesabına ürün kırılımını ekler. Kesilmiş faturadan sonra giren partilerin
+ * kaçırılan payı (telafi, KDV dahil) tutara eklenir: zeyilname/sevk fatura kesildikten sonra
+ * girildiyse ilk tam ay yeni faturaya yazılır, sonra parti normal döngüye girer.
+ */
+export function applyLineBreakdown(
+  calc: InvoiceAmountCalculation,
+  lineBreakdown: InvoiceBreakdown | null
+): InvoiceAmountCalculation {
+  const catchUpAmount = roundTo(lineBreakdown?.catchUpTotal ?? 0, 2);
+  return {
+    ...calc,
+    lineBreakdown,
+    catchUpAmount,
+    amount: roundTo(calc.amount + catchUpAmount, 2),
+  };
 }
 
 export interface InvoiceAccrualInput {

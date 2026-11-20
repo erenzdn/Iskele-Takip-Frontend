@@ -1,7 +1,14 @@
 import { useState, useEffect, useReducer } from 'react';
 import { ReceiptIcon, TrashIcon, NotePencilIcon, ChartBarIcon, ArrowCounterClockwiseIcon } from '@phosphor-icons/react';
 import { contractService } from '../../services/contractService';
-import { ContractInvoice, ContractInvoicingSummary, CreateInvoiceRequest, UpdateInvoiceRequest } from '../../models';
+import {
+  ContractInvoice,
+  ContractInvoicingSummary,
+  ContractLineItem,
+  CreateInvoiceRequest,
+  UpdateInvoiceRequest,
+} from '../../models';
+import { presentInvoiceLine, resolveBillingLineLabel } from '../../utils/billingPlan';
 import { toast } from '../../hooks/useToast';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { formatShortDateTime } from '../../utils/formatters';
@@ -35,6 +42,8 @@ interface ContractInvoicesPanelProps {
   isRentalContract?: boolean; // Kiralama sözleşmesi mi?
   /** Sevkiyat modunda henüz sevk yoksa true: kira başlamadı, faturalanacak tahakkuk yok. */
   awaitingShipment?: boolean;
+  /** Ürün bazlı hesap kırılımında satır adları için */
+  contractItems?: ContractLineItem[];
 }
 
 export default function ContractInvoicesPanel({
@@ -46,6 +55,7 @@ export default function ContractInvoicesPanel({
   contractPlannedEndDate,
   isRentalContract = false,
   awaitingShipment = false,
+  contractItems = [],
 }: ContractInvoicesPanelProps) {
   const [loading, setLoading] = useState(true);
   const [invoices, setInvoices] = useState<ContractInvoice[]>([]);
@@ -90,6 +100,7 @@ export default function ContractInvoicesPanel({
     startDate: formData.periodStart,
     endDate: formData.periodEnd,
     enabled: autoCalcEnabled,
+    excludeInvoiceId: editingInvoice?.invoiceRecordId ?? null,
   });
 
   const loadInvoices = async () => {
@@ -328,6 +339,8 @@ export default function ContractInvoicesPanel({
         await contractService.createInvoiceAsync(contractId, submitData);
         toast.success('Fatura kaydedildi.');
       }
+      // Telafi önceki faturalara bağlı: kayıtlı kırılımlar bayatlar.
+      clearInvoicePlanCache(contractId);
       setShowCreateForm(false);
       resetForm();
       await loadInvoices();
@@ -346,6 +359,7 @@ export default function ContractInvoicesPanel({
 
     try {
       await contractService.deleteInvoiceAsync(contractId, invoiceId);
+      clearInvoicePlanCache(contractId);
       toast.success('Fatura silindi.');
       await loadInvoices();
     } catch (error) {
@@ -808,6 +822,16 @@ export default function ContractInvoicesPanel({
                 </div>
               )}
               
+              {/* Telafi: önceki fatura kesildikten sonra eklenen partinin ilk ayı */}
+              {(amountState.calculation.catchUpAmount ?? 0) > 0 && (
+                <div className="p-2 bg-amber-900/30 border border-amber-700/50 rounded text-xs text-amber-200">
+                  ⚠️ Önceki fatura kesildikten sonra eklenen zeyilname/sevk var: ilk ayı (
+                  {getCurrencySymbol(formData.currency)}
+                  {(amountState.calculation.catchUpAmount ?? 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  , KDV dahil) bu faturaya eklendi. Ayrıntı için Hesap Kırılımı'na bakın.
+                </div>
+              )}
+
               {/* Asgari kira süresi */}
               {amountState.calculation.includesMinimumRental && (
                 <div className="p-2 bg-sky-900/30 border border-sky-700/50 rounded text-xs text-sky-200">
@@ -838,8 +862,80 @@ export default function ContractInvoicesPanel({
             </div>
           )}
 
-          {/* Hesap Kırılımı */}
-          {isRentalContract && amountState.calculation && amountState.calculation.breakdown.length > 0 && (
+          {/* Hesap Kırılımı (ürün bazlı) */}
+          {isRentalContract && amountState.calculation?.lineBreakdown && amountState.calculation.lineBreakdown.lines.length > 0 && (() => {
+            const lb = amountState.calculation.lineBreakdown;
+            const symbol = getCurrencySymbol(formData.currency);
+            const money = (v: number) => roundTo(v, 2).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+            const vat = roundTo(amountState.calculation.amount - roundTo(lb.subtotalNet, 2), 2);
+            return (
+            <div className="border border-background-border rounded-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setShowBreakdown(!showBreakdown)}
+                className="w-full p-2 bg-background-panel hover:bg-background-secondary transition-colors text-left flex items-center justify-between text-xs font-medium"
+              >
+                <span>Hesap Kırılımı (ürün bazlı)</span>
+                <span className={`transform transition-transform ${showBreakdown ? 'rotate-180' : ''}`}>▼</span>
+              </button>
+
+              {showBreakdown && (
+                <div className="p-2 space-y-1">
+                  <div className="grid grid-cols-12 gap-1 text-xs font-semibold text-text-secondary border-b border-background-border pb-1">
+                    <div className="col-span-4">Ürün</div>
+                    <div className="col-span-1 text-right">Adet</div>
+                    <div className="col-span-3">Dönem</div>
+                    <div className="col-span-1 text-right">Gün</div>
+                    <div className="col-span-3 text-right">Tutar</div>
+                  </div>
+                  {lb.lines.map((line, idx) => {
+                    const { periodText, badges } = presentInvoiceLine(line, lb.lines, formData.periodEnd);
+                    const label = resolveBillingLineLabel(line, contractItems);
+                    const isSubRow = idx > 0 && lb.lines[idx - 1].DetailId === line.DetailId;
+                    return (
+                      <div key={idx} className="grid grid-cols-12 gap-1 text-xs py-1 border-b border-background-border last:border-0">
+                        <div className={`col-span-4 truncate ${isSubRow ? 'pl-3 text-text-secondary' : ''}`} title={label}>
+                          {isSubRow ? '↳ ' : ''}{label}
+                        </div>
+                        <div className="col-span-1 text-right text-text-secondary">
+                          {line.kind === 'ADJUSTMENT' || line.kind === 'SETTLEMENT_CHARGE' ? '' : line.quantity.toLocaleString('tr-TR')}
+                        </div>
+                        <div className="col-span-3 flex flex-wrap items-center gap-1 text-text-secondary">
+                          <span>{periodText}</span>
+                          {badges.map((badge) => (
+                            <span
+                              key={badge}
+                              className="px-1 py-0.5 rounded bg-sky-500/20 text-sky-300 border border-sky-500/40 text-[10px]"
+                            >
+                              {badge}
+                            </span>
+                          ))}
+                        </div>
+                        <div className="col-span-1 text-right text-text-secondary">{line.days ?? '—'}</div>
+                        <div className="col-span-3 text-right font-medium text-primary">
+                          {symbol}{money(line.net)}
+                        </div>
+                      </div>
+                    );
+                  })}
+                  <div className="grid grid-cols-12 gap-1 text-xs pt-1 border-t-2 border-primary/30">
+                    <div className="col-span-9 text-right text-text-secondary">Ara toplam (KDV hariç):</div>
+                    <div className="col-span-3 text-right">{symbol}{money(lb.subtotalNet)}</div>
+                    <div className="col-span-9 text-right text-text-secondary">KDV:</div>
+                    <div className="col-span-3 text-right">{symbol}{money(vat)}</div>
+                    <div className="col-span-9 text-right font-bold">Toplam:</div>
+                    <div className="col-span-3 text-right font-bold text-primary">
+                      {symbol}{money(amountState.calculation.amount)}
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+            );
+          })()}
+
+          {/* Yedek: ürün kırılımı alınamazsa takvim ayı kırılımı */}
+          {isRentalContract && amountState.calculation && !amountState.calculation.lineBreakdown && amountState.calculation.breakdown.length > 0 && (
             <div className="border border-background-border rounded-lg overflow-hidden">
               <button
                 type="button"

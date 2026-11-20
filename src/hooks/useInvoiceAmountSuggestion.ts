@@ -12,9 +12,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { useDebouncedValue } from './useDebouncedValue';
 import { contractService } from '../services/contractService';
-import type { BillingPeriod } from '../models';
+import type { BillingPeriod, InvoiceBreakdown } from '../models';
 import {
   accrualBoundaryIso,
+  applyLineBreakdown,
   computeInvoiceAmountFromAccrual,
   isoToLocalDateKey,
   sumPlanAccrual,
@@ -29,6 +30,8 @@ interface UseInvoiceAmountSuggestionParams {
   startDate: string; // YYYY-MM-DD
   endDate: string; // YYYY-MM-DD
   enabled: boolean; // Kiralama sözleşmesi ve aynı para birimi
+  /** Düzenlenen fatura: telafi hesabında kendisiyle karşılaştırılmaz */
+  excludeInvoiceId?: number | null;
 }
 
 interface UseInvoiceAmountSuggestionResult {
@@ -67,11 +70,36 @@ function getCachedPlan(contractId: number, asOf: string): BillingPeriod[] | null
   return entry.plan;
 }
 
+// Ürün bazlı kırılım önbelleği: contractId + from + to -> kırılım
+const breakdownCache = new Map<string, { value: InvoiceBreakdown; timestamp: number }>();
+
 /** Sözleşmenin önbellekteki planlarını siler (zeyilname/iade/uzatma sonrası bayat tutar önerilmesin). */
 export function clearInvoicePlanCache(contractId: number): void {
   const prefix = `${contractId}:`;
-  for (const key of Array.from(planCache.keys())) {
-    if (key.startsWith(prefix)) planCache.delete(key);
+  for (const cache of [planCache, breakdownCache] as Map<string, unknown>[]) {
+    for (const key of Array.from(cache.keys())) {
+      if (key.startsWith(prefix)) cache.delete(key);
+    }
+  }
+}
+
+/** Ürün bazlı kırılımı getirir; hata tutar önerisini engellemesin diye null döner. */
+async function loadBreakdown(
+  contractId: number,
+  from: string,
+  to: string,
+  excludeInvoiceId: number | null
+): Promise<InvoiceBreakdown | null> {
+  const key = `${contractId}:${from}:${to}:${excludeInvoiceId ?? ''}`;
+  const cached = breakdownCache.get(key);
+  if (cached && Date.now() - cached.timestamp <= CACHE_TTL) return cached.value;
+  try {
+    const value = await contractService.getInvoiceBreakdownAsync(contractId, from, to, excludeInvoiceId);
+    breakdownCache.set(key, { value, timestamp: Date.now() });
+    return value;
+  } catch (err) {
+    console.error('Invoice line breakdown error:', err);
+    return null;
   }
 }
 
@@ -91,6 +119,7 @@ export function useInvoiceAmountSuggestion(
   params: UseInvoiceAmountSuggestionParams
 ): UseInvoiceAmountSuggestionResult {
   const { contractId, contractStartDate, startDate, endDate, enabled } = params;
+  const excludeInvoiceId = params.excludeInvoiceId ?? null;
 
   // 400ms debounce - kullanıcı tarih değiştirirken gereksiz istek atılmasın
   const debouncedStartDate = useDebouncedValue(startDate, 400);
@@ -150,16 +179,17 @@ export function useInvoiceAmountSuggestion(
 
         // Başlangıç sözleşmeden önce/aynı gündeyse birikmiş tahakkuk 0'dır; istek gerekmez.
         const needsStartPlan = debouncedStartDate > contractStartKey;
-        const [planAtEnd, planAtStart] = await Promise.all([
+        const [planAtEnd, planAtStart, lineBreakdown] = await Promise.all([
           loadPlan(endBoundary),
           needsStartPlan ? loadPlan(startBoundary) : Promise.resolve([] as BillingPeriod[]),
+          loadBreakdown(contractId, startBoundary, endBoundary, excludeInvoiceId),
         ]);
 
         if (cancelled || currentRequestId !== requestIdRef.current) {
           return; // Stale yanıt, kullanma
         }
 
-        const result = computeInvoiceAmountFromAccrual({
+        const accrualResult = computeInvoiceAmountFromAccrual({
           planAtEnd,
           accruedAtStart: sumPlanAccrual(planAtStart),
           startKey: debouncedStartDate,
@@ -167,6 +197,8 @@ export function useInvoiceAmountSuggestion(
           contractStartKey,
           todayKey: todayDateInput(),
         });
+        // Telafi (fatura kesildikten sonra eklenen partinin ilk ayı) tutara eklenir.
+        const result: InvoiceAmountCalculation = applyLineBreakdown(accrualResult, lineBreakdown);
 
         if (!cancelled && currentRequestId === requestIdRef.current) {
           setCalculation(result);
@@ -192,7 +224,7 @@ export function useInvoiceAmountSuggestion(
     return () => {
       cancelled = true;
     };
-  }, [contractId, contractStartDate, debouncedStartDate, debouncedEndDate, enabled, retryTrigger]);
+  }, [contractId, contractStartDate, debouncedStartDate, debouncedEndDate, enabled, excludeInvoiceId, retryTrigger]);
 
   return {
     calculation,

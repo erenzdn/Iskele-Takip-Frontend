@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import type { BillingPeriod, ContractLineItem } from '../models';
+import type { BillingPeriod, ContractLineItem, InvoiceLineBreakdown } from '../models';
 import {
   billedPeriodDeletePath,
   buildMarkBilledPeriodBody,
@@ -16,6 +16,8 @@ import {
   parseBillingPeriod,
   parseBillingPlan,
   parseBillingSummary,
+  parseInvoiceBreakdown,
+  presentInvoiceLine,
   resolveBillingLineLabel,
   validateBilledAmountInput,
   warningLooksPendingAddendum,
@@ -330,5 +332,97 @@ describe('iade DetailId 400', () => {
       responseText: JSON.stringify({ message: 'İade miktarı geçersiz' }),
     });
     expect(isAmbiguousContractDetailError(error)).toBe(false);
+  });
+});
+
+describe('parseInvoiceBreakdown', () => {
+  it('ürün bazlı kırılımı ayrıştırır; manuel kalemde dönem null kalır', () => {
+    const parsed = parseInvoiceBreakdown({
+      lines: [
+        { DetailId: 1, ItemId: 7, isManual: false, kind: 'RETURN', quantity: 2, cohortStart: '2026-09-01', exitDate: '2026-10-15', periodStart: '2026-10-01', periodEnd: '2026-10-14', days: 14, gross: 60, net: '54.5' },
+        { DetailId: 3, ItemId: 9, isManual: true, quantity: 1, periodStart: null, periodEnd: null, days: null, gross: 500, net: 500 },
+        { ItemId: 1 },
+      ],
+      subtotalNet: 554.5,
+      vatAmount: 110.9,
+      netTotal: 665.4,
+    });
+    expect(parsed.lines).toEqual([
+      { DetailId: 1, ItemId: 7, isManual: false, kind: 'RETURN', quantity: 2, cohortStart: '2026-09-01', exitDate: '2026-10-15', periodStart: '2026-10-01', periodEnd: '2026-10-14', days: 14, gross: 60, net: 54.5 },
+      { DetailId: 3, ItemId: 9, isManual: true, kind: 'MANUAL', quantity: 1, cohortStart: null, exitDate: null, periodStart: null, periodEnd: null, days: null, gross: 500, net: 500 },
+    ]);
+    expect(parsed.netTotal).toBe(665.4);
+  });
+
+  it('geçersiz yanıtta boş kırılım döner', () => {
+    expect(parseInvoiceBreakdown(null)).toEqual({
+      lines: [],
+      subtotalNet: 0,
+      vatAmount: 0,
+      netTotal: 0,
+      catchUpNet: 0,
+      catchUpTotal: 0,
+    });
+  });
+
+  it('telafi satırını ve toplamlarını ayrıştırır', () => {
+    const parsed = parseInvoiceBreakdown({
+      lines: [
+        {
+          DetailId: 3, ItemId: 3, isManual: false, kind: 'CATCH_UP', quantity: 1, cohortStart: '2026-10-15',
+          exitDate: null, periodStart: '2026-10-15', periodEnd: '2026-11-13', days: 30, gross: 300, net: 300,
+          missedInvoiceId: 2, missedInvoiceNumber: 'F-2',
+        },
+      ],
+      subtotalNet: 300,
+      vatAmount: 60,
+      netTotal: 360,
+      catchUpNet: 300,
+      catchUpTotal: 360,
+    });
+    expect(parsed.lines[0]).toMatchObject({ kind: 'CATCH_UP', missedInvoiceId: 2, missedInvoiceNumber: 'F-2', days: 30 });
+    expect(parsed.catchUpTotal).toBe(360);
+  });
+});
+
+describe('presentInvoiceLine', () => {
+  const row = (o: Partial<InvoiceLineBreakdown>): InvoiceLineBreakdown => ({
+    DetailId: 1, ItemId: 1, isManual: false, kind: 'RENTAL', quantity: 1, cohortStart: null, exitDate: null,
+    periodStart: null, periodEnd: null, days: null, gross: 0, net: 0, ...o,
+  });
+
+  it('asgari 30 gün fatura bitişini aşınca etiketlenir (B 29.09–28.10, fatura 30.09)', () => {
+    const b = row({ DetailId: 2, cohortStart: '2026-09-29', periodStart: '2026-09-29', periodEnd: '2026-10-28', days: 30 });
+    expect(presentInvoiceLine(b, [b], '2026-09-30')).toEqual({ periodText: '29.09.2026 - 28.10.2026', badges: ['Asgari 30 gün'] });
+  });
+
+  it('aynı üründe birden çok parti: partinin ilk dönemi "Parti" etiketi alır', () => {
+    const base = row({ cohortStart: '2026-09-01', periodStart: '2026-10-01', periodEnd: '2026-10-31', days: 31 });
+    const added = row({ quantity: 5, cohortStart: '2026-10-20', periodStart: '2026-10-20', periodEnd: '2026-11-18', days: 30 });
+    const all = [base, added];
+    expect(presentInvoiceLine(base, all, '2026-10-31').badges).toEqual([]);
+    expect(presentInvoiceLine(added, all, '2026-10-31').badges).toEqual(['Parti 20.10.2026', 'Asgari 30 gün']);
+  });
+
+  it('telafi satırı: hangi faturadan sonra eklendiği yazılır, asgari/parti etiketi tekrarlanmaz', () => {
+    const cu = row({
+      DetailId: 3, kind: 'CATCH_UP', cohortStart: '2026-10-15', periodStart: '2026-10-15', periodEnd: '2026-11-13',
+      days: 30, missedInvoiceNumber: 'F-2',
+    });
+    const normal = row({ DetailId: 3, cohortStart: '2026-11-01', periodStart: '2026-11-14', periodEnd: '2026-11-30', days: 17 });
+    expect(presentInvoiceLine(cu, [cu, normal], '2026-11-30')).toEqual({
+      periodText: '15.10.2026 - 13.11.2026',
+      badges: ['İlk ay · F-2 kesildikten sonra eklendi'],
+    });
+  });
+
+  it('iade / satış-kayıp / malzeme bedeli / manuel / düzeltme metinleri', () => {
+    const ret = row({ kind: 'RETURN', cohortStart: '2026-09-01', exitDate: '2026-10-15', periodStart: '2026-10-01', periodEnd: '2026-10-14', days: 14 });
+    expect(presentInvoiceLine(ret, [ret], '2026-10-31').badges).toEqual(['İade 15.10.2026']);
+    const st = row({ kind: 'SETTLEMENT', exitDate: '2026-10-10', periodStart: '2026-10-01', periodEnd: '2026-10-09', days: 9 });
+    expect(presentInvoiceLine(st, [st], '2026-10-31').badges).toEqual(['Satış/kayıp 10.10.2026']);
+    expect(presentInvoiceLine(row({ kind: 'SETTLEMENT_CHARGE', exitDate: '2026-10-10' }), [], '2026-10-31').periodText).toBe('Malzeme bedeli');
+    expect(presentInvoiceLine(row({ kind: 'MANUAL', isManual: true }), [], '2026-10-31').periodText).toBe('Tek seferlik');
+    expect(presentInvoiceLine(row({ kind: 'ADJUSTMENT' }), [], '2026-10-31').periodText).toBe('Düzeltme (geçmiş kayıt)');
   });
 });

@@ -9,6 +9,7 @@ import {
   ContractPriceCalculation,
   ContractStatusFilter,
   DeliveryMode,
+  InvoiceBreakdown,
   MarkBilledPeriodRequest,
   MarkBilledPeriodResponse,
   ReturnItemResponse,
@@ -22,7 +23,12 @@ import {
   CreateInvoiceRequest,
   UpdateInvoiceRequest,
 } from '../models';
-import { billedPeriodDeletePath, parseBillingPlan, parseBillingSummary } from '../utils/billingPlan';
+import {
+  billedPeriodDeletePath,
+  parseBillingPlan,
+  parseBillingSummary,
+  parseInvoiceBreakdown,
+} from '../utils/billingPlan';
 import { CreateSiteRequest } from './siteService';
 import {
   DEFAULT_PAGE_LIMIT,
@@ -412,6 +418,19 @@ export const contractService = {
     const qs = trimmed ? `?asOf=${encodeURIComponent(trimmed)}` : '';
     const raw = await apiClient.get<unknown>(`/contracts/${contractId}/billing-plan${qs}`);
     return parseBillingPlan(raw);
+  },
+
+  /** Fatura aralığının ürün bazlı kırılımı; `from` başlangıç, `to` bitişin ertesi sınırıdır (ISO). */
+  async getInvoiceBreakdownAsync(
+    contractId: number,
+    from: string,
+    to: string,
+    excludeInvoiceId?: number | null
+  ): Promise<InvoiceBreakdown> {
+    const exclude = excludeInvoiceId != null ? `&excludeInvoiceId=${excludeInvoiceId}` : '';
+    const qs = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}${exclude}`;
+    const raw = await apiClient.get<unknown>(`/contracts/${contractId}/invoice-breakdown${qs}`);
+    return parseInvoiceBreakdown(raw);
   },
 
   async getBillingSummaryAsync(contractId: number): Promise<BillingSummary> {

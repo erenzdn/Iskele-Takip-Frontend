@@ -3352,6 +3352,7 @@ export default function ContractDetailModal({
             awaitingShipment={shipmentState === 'awaiting'}
             contractPlannedEndDate={(fullContract ?? contract).PlannedEndDate}
             isRentalContract={isRentalContract}
+            contractItems={contractItems}
           />
         </div>
       )}
