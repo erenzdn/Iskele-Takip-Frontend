@@ -357,6 +357,19 @@
 .table-data-grid tbody td:last-child {
   border-right: none;
 }
+
+/* Ok tuşlarıyla gezinilen hücre (utils/tableKeyboardNav) */
+td[data-nav-cell]:focus {
+  outline: none;
+}
+td[data-nav-cell]:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -2px;
+  background: color-mix(in srgb, var(--color-primary) 12%, transparent);
+}
+tr:has(> td[data-nav-cell]:focus-visible) {
+  background: color-mix(in srgb, var(--color-primary) 6%, transparent);
+}
 .table-data-grid .item-code-badge {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-weight: 500;

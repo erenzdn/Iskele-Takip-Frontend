@@ -21,6 +21,7 @@ import {
   isIdentityOrder,
   resolveColumnOrder,
 } from '../utils/tableLayout';
+import { ensureTableEntryPoint } from '../utils/tableKeyboardNav';
 
 /** Sütun sınırına bu kadar piksel yakınlıkta imleç "genişlik ayarı" moduna geçer. */
 const EDGE_HIT_PX = 5;
@@ -168,6 +169,24 @@ export default function DataTable({ tableId, children, style, className, ...rest
   const dragIdRef = useRef<string | null>(null);
   const cleanupRef = useRef<(() => void) | null>(null);
   const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Salt okunur tabloya Tab ile girilebilsin (ok tuşu gezinmesi: utils/tableKeyboardNav)
+  useEffect(() => {
+    const table = tableRef.current;
+    if (!table) return;
+    let frame = 0;
+    const schedule = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => ensureTableEntryPoint(table));
+    };
+    schedule();
+    const observer = new MutationObserver(schedule);
+    observer.observe(table, { childList: true, subtree: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, []);
 
   // --- Başlık çözümleme -----------------------------------------------------
   const sections = Children.toArray(children);

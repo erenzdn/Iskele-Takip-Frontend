@@ -9,6 +9,7 @@ import { tabDisplayTitle, useTabStore } from '../store/tabStore';
 import { appRoutes, type AppSection, type RouteIcon } from '../routes';
 import { TabHost } from '../components/TabHost';
 import { TabBar } from '../components/TabBar';
+import { handleTableKeyboardNav, handleTableMouseDown } from '../utils/tableKeyboardNav';
 
 interface MainLayoutProps {
   children?: React.ReactNode;
@@ -228,8 +229,11 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
       }
     };
 
-    // ArrowUp/ArrowDown ile number input degerinin degismesini engelle
     const handleKeyDown = (e: KeyboardEvent) => {
+      // Tablolarda ok tuşlarıyla hücreler arası gezinme (tüm uygulama)
+      if (handleTableKeyboardNav(e)) return;
+
+      // ArrowUp/ArrowDown ile number input degerinin degismesini engelle
       const target = e.target as HTMLElement;
       if (
         target.tagName === 'INPUT' &&
@@ -242,10 +246,12 @@ export default function MainLayout({ children }: MainLayoutProps = {}) {
 
     document.addEventListener('wheel', handleWheel, { passive: true });
     document.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('mousedown', handleTableMouseDown);
 
     return () => {
       document.removeEventListener('wheel', handleWheel);
       document.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('mousedown', handleTableMouseDown);
     };
   }, []);
 
