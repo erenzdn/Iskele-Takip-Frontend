@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { usePortalTarget } from '../tabs/TabContext';
-import { PackageIcon, XIcon } from '@phosphor-icons/react';
+import { PackageIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
 import type {
   AddendumDetail,
   ChangeType,
@@ -137,6 +138,7 @@ export default function AddendumLineItemModal({
   zIndexClass = 'z-[70]',
 }: AddendumLineItemModalProps) {
   const portalTarget = usePortalTarget();
+  const navigate = useNavigate();
   const isRental = contractType === 'RENTAL';
   const isSale = contractType === 'SALE';
   const isEdit = Boolean(editingDetail?.DetailId);
@@ -639,15 +641,27 @@ export default function AddendumLineItemModal({
                 : 'Değişiklik tipini seçin ve ilgili alanları doldurun.'}
             </p>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
-            aria-label="Kapat"
-            disabled={isBusy}
-          >
-            <XIcon size={22} weight="regular" />
-          </button>
+          <div className="flex items-center gap-2">
+            {isInventoryAdd && (
+              <button
+                type="button"
+                onClick={() => navigate('/inventory/new')}
+                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary/90 transition-colors"
+              >
+                <PlusIcon size={16} weight="bold" />
+                Yeni Ürün Ekle
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onClose}
+              className="p-2 rounded-lg text-text-secondary hover:bg-background-hover hover:text-text-primary transition-colors"
+              aria-label="Kapat"
+              disabled={isBusy}
+            >
+              <XIcon size={22} weight="regular" />
+            </button>
+          </div>
         </header>
 
         <div className="px-5 py-3 border-b border-background-border shrink-0 bg-background-panel space-y-3">

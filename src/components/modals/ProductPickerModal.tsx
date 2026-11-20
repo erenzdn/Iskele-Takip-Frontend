@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
 import { usePortalTarget } from '../tabs/TabContext';
 import { CheckCircleIcon, MinusCircleIcon, PlusIcon, XIcon } from '@phosphor-icons/react';
 import { Inventory } from '../../models';
@@ -26,7 +27,7 @@ interface ProductPickerModalProps {
   currency?: 'TRY' | 'EUR' | 'USD';
   /** Tanımlıysa satırlarda listede olan ürünler kalıcı işaretlenir (teklif/sözleşme). */
   pickedItemIds?: ReadonlySet<number>;
-  /** Tanımlıysa başlık alanında "Yeni Ürün Ekle" butonu gösterilir. */
+  /** "Yeni Ürün Ekle" butonunun davranışı; verilmezse yeni ürün sekmesi açılır. */
   onAddNewItem?: () => void;
   zIndexClass?: string;
 }
@@ -81,6 +82,8 @@ export default function ProductPickerModal({
   zIndexClass = 'z-[60]',
 }: ProductPickerModalProps) {
   const portalTarget = usePortalTarget();
+  const navigate = useNavigate();
+  const handleAddNewItem = onAddNewItem ?? (() => navigate('/inventory/new'));
   const [highlightedItemIds, setHighlightedItemIds] = useState<Set<number>>(() => new Set());
   const [toast, setToast] = useState<{ message: string; kind: 'added' | 'removed' } | null>(null);
   const flashTimeoutsRef = useRef<Map<number, ReturnType<typeof setTimeout>>>(new Map());
@@ -175,16 +178,14 @@ export default function ProductPickerModal({
         <div className="flex items-center justify-between px-4 py-1.5 border-b border-background-border shrink-0 bg-background-secondary/50">
           <h2 className="text-base font-semibold text-text-primary">Ürün Seçimi</h2>
           <div className="flex items-center gap-2">
-            {onAddNewItem && (
-              <button
-                type="button"
-                onClick={onAddNewItem}
-                className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary/90 transition-colors"
-              >
-                <PlusIcon size={16} weight="bold" />
-                Yeni Ürün Ekle
-              </button>
-            )}
+            <button
+              type="button"
+              onClick={handleAddNewItem}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-primary px-3 py-1.5 text-sm font-medium text-white hover:bg-primary/90 transition-colors"
+            >
+              <PlusIcon size={16} weight="bold" />
+              Yeni Ürün Ekle
+            </button>
             <button
               type="button"
               onClick={onClose}
