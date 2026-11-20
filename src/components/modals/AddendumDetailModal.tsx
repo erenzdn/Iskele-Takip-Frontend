@@ -279,11 +279,10 @@ export default function AddendumDetailModal({
 
   const refreshDetails = async () => {
     if (!addendum) return;
+    // Yalnızca kalemler yenilenir: başlık alanları (tarih, gerekçe, kod) kullanıcının henüz
+    // kaydetmediği değerleri taşıyabilir; sunucudakiyle ezilirse ürün ekleyince tarih geri dönüyordu.
     const full = await addendumService.getByIdAsync(addendum.AddendumId);
     setAddendum(full);
-    setEffectiveDate(toDateInputValue(full.EffectiveDate));
-    setReason(full.Reason ?? '');
-    setAddendumCode(full.AddendumCode ?? '');
   };
 
   const handleSubmit = async () => {

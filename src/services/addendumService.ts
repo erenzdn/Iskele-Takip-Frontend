@@ -72,7 +72,9 @@ function nullableNumber(value: unknown): number | null {
 function normalizeDetail(raw: unknown): AddendumDetail {
   const o = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
   return {
-    DetailId: Number(o.DetailId ?? o.detailId ?? 0),
+    // Backend kalem kimliğini AddendumDetailId olarak döndürür. Okunmazsa 0 kalıyordu:
+    // sil → /details/0 hatası, düzenle → "yeni kalem" moduna düşüp ürünü ikinci kez ekliyordu.
+    DetailId: Number(o.AddendumDetailId ?? o.addendumDetailId ?? o.DetailId ?? o.detailId ?? 0),
     AddendumId: Number(o.AddendumId ?? o.addendumId ?? 0),
     ChangeType: String(o.ChangeType ?? o.changeType ?? 'ADD').toUpperCase() as ChangeType,
     ContractDetailId: (o.ContractDetailId ?? o.contractDetailId ?? null) as number | null,
