@@ -28,6 +28,7 @@ import {
 } from '../../utils/addendum';
 import { getApiErrorMessage, getUserFacingApiErrorMessage } from '../../utils/apiError';
 import { formatMoney, formatShortDateTime } from '../../utils/formatters';
+import { formatDiscountPercent } from '../../utils/lineDiscount';
 import { toast } from '../../hooks/useToast';
 import { firstValidationError, validateRequired } from '../../utils/validation';
 import ConfirmModal from './ConfirmModal';
@@ -708,6 +709,11 @@ export default function AddendumDetailModal({
                               : d.NewMonthlyOverride != null
                                 ? `Aylık: ${formatMoney(d.NewMonthlyOverride)}`
                                 : '—'}
+                            {d.Iskonto != null && d.Iskonto > 0 && (
+                              <span className="ml-1.5 text-xs text-red-300">
+                                İsk. %{formatDiscountPercent(d.Iskonto)}
+                              </span>
+                            )}
                           </td>
                           {editable && (
                             <td className="py-2">

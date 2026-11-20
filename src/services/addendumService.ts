@@ -51,6 +51,8 @@ export interface CreateAddendumDetailRequest {
   QuantityChange?: number;
   NewUnitPrice?: number;
   NewMonthlyOverride?: number | null;
+  /** Yalnızca ADD: satır iskontosu (%). NewUnitPrice brüt fiyattır. */
+  Iskonto?: number | null;
 }
 
 export type UpdateAddendumDetailRequest = Partial<CreateAddendumDetailRequest>;
@@ -90,6 +92,7 @@ function normalizeDetail(raw: unknown): AddendumDetail {
       o.NewMonthlyOverride != null || o.newMonthlyOverride != null
         ? Number(o.NewMonthlyOverride ?? o.newMonthlyOverride)
         : null,
+    Iskonto: nullableNumber(o.Iskonto ?? o.iskonto),
     ItemName: (o.ItemName ?? o.itemName ?? null) as string | null,
     ItemCode: (o.ItemCode ?? o.itemCode ?? null) as string | null,
     WarehouseName: (o.WarehouseName ?? o.warehouseName ?? null) as string | null,

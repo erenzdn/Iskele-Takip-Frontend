@@ -1730,6 +1730,8 @@ export interface AddendumDetail {
   QuantityChange?: number | null;
   NewUnitPrice?: number | null;
   NewMonthlyOverride?: number | null;
+  /** ADD satır iskontosu (%); null = eski kayıt, NewUnitPrice zaten net */
+  Iskonto?: number | null;
   /** Liste/detay zenginleştirmeleri (backend opsiyonel) */
   ItemName?: string | null;
   ItemCode?: string | null;

@@ -186,11 +186,6 @@ export default function AddendumAddProductsModal({
   const getNet = (line: StagingLine) =>
     lineNetFromGross(getGross(line), line.discountPercent);
 
-  const getEffectiveUnitPrice = (line: StagingLine) => {
-    const qty = Math.max(1, line.quantity);
-    return lineNetFromGross(line.unitPrice * qty, line.discountPercent) / qty;
-  };
-
   const addOrToggleItem = (
     item: Inventory,
     quantity: number,
@@ -320,16 +315,24 @@ export default function AddendumAddProductsModal({
           // Stok sorgusu başarısızsa API kayda bırak
         }
 
-        const effectiveUnit = getEffectiveUnitPrice(line);
+        // Brüt fiyat + satır iskontosu ayrı gönderilir; sözleşme satırı aynı iskonto ile oluşur.
+        // (Net fiyatı birim fiyata gömmek sözleşmede İskonto tutarını kaybettiriyor ve
+        // 4 haneye yuvarlanan net fiyat toplamları kaydırıyordu.)
+        const grossUnit = Math.max(0, line.unitPrice);
         await addendumService.addDetailAsync(addendumId, {
           ChangeType: 'ADD',
           ItemId: line.item.ItemId,
           WarehouseId: whId,
           QuantityChange: Math.floor(line.quantity),
           IsManual: false,
-          ...(effectiveUnit > 0 || line.discountPercent > 0
-            ? { NewUnitPrice: Number(effectiveUnit.toFixed(4)) }
+          ...(grossUnit > 0
+            ? {
+                NewUnitPrice: Number(grossUnit.toFixed(4)),
+                // Kiralamada aylık fiyat tam değeriyle: günlük snapshot 4 haneye kırpılınca ×30 kuruş kaydırır
+                ...(isRental ? { NewMonthlyOverride: Number((grossUnit * 30).toFixed(4)) } : {}),
+              }
             : {}),
+          Iskonto: Number(clampDiscountRange(line.discountPercent).toFixed(10)),
         });
       }
 
