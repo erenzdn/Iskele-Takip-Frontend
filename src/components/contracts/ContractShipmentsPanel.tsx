@@ -504,6 +504,15 @@ export default function ContractShipmentsPanel({
         <CancelShipmentModal
           shipment={cancelTarget}
           onClose={() => setCancelTarget(null)}
+          onEditInstead={
+            canUpdate
+              ? () => {
+                  const target = cancelTarget;
+                  setCancelTarget(null);
+                  setEditTarget(target);
+                }
+              : undefined
+          }
           onCancelled={() => {
             setCancelTarget(null);
             void afterMutation();

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, PencilSimpleIcon, TruckIcon } from '@phosphor-icons/react';
+import { CheckCircleIcon, FilePdfIcon, PaperclipIcon, PencilSimpleIcon, TruckIcon, XCircleIcon } from '@phosphor-icons/react';
 import { isContractActive, type Contract, type ContractAwaitingShipment, type InventoryContractLineItem, type Shipment, type Warehouse } from '../models';
 import { shipmentService } from '../services/shipmentService';
 import { warehouseService } from '../services/warehouseService';
@@ -16,7 +16,7 @@ import { invalidateData } from '../store/dataInvalidationStore';
 import { useAuthStore } from '../store/authStore';
 import { PageActions } from '../components/PageActions';
 import EmptyState from '../components/EmptyState';
-import { formatDate } from '../utils/formatters';
+import { formatDate, formatDateTime } from '../utils/formatters';
 import { contractPath, type ContractTabState } from '../utils/entityNavigation';
 import { getApiErrorMessage } from '../utils/apiError';
 import { toast } from '../hooks/useToast';
@@ -406,7 +406,7 @@ export default function ShipmentsPage() {
                   <th className={th}>İrsaliye</th>
                   <th className={th}>Durum</th>
                   <th className={`${th} text-center w-12`} title="Dosya ekleri (imzalı irsaliye, fotoğraf)">Ek</th>
-                  <th className={`${th} text-center w-20`}>İşlem</th>
+                  <th className={`${th} text-center w-28`}>İşlem</th>
                 </tr>
               </thead>
               <tbody>
@@ -431,6 +431,15 @@ export default function ShipmentsPage() {
                       <td className={td}>{s.ExternalWaybillNo || '—'}</td>
                       <td className={td}>
                         <DeliveryStatusBadge shipment={s} />
+                        {cancelled && s.CancellationReason && (
+                          <div
+                            className="text-[11px] text-text-secondary max-w-[220px] truncate"
+                            title={`İptal: ${s.CancelledAt ? formatDateTime(s.CancelledAt) : ''}${s.CancelledByName ? ` (${s.CancelledByName})` : ''}
+${s.CancellationReason}`}
+                          >
+                            {s.CancellationReason}
+                          </div>
+                        )}
                       </td>
                       <td className={`${td} text-center`}>
                         {(s.AttachmentCount ?? 0) > 0 ? (
@@ -476,6 +485,17 @@ export default function ShipmentsPage() {
                             <CheckCircleIcon size={16} weight={s.DeliveredAt ? 'fill' : 'regular'} />
                           </button>
                         )}
+                        {!cancelled && canCancel && (
+                          <button
+                            type="button"
+                            className="p-1 rounded hover:bg-red-500/15 text-red-400"
+                            onClick={() => setCancelTarget(s)}
+                            title="Fişi iptal et (malzeme depoya geri alınır)"
+                            aria-label={`${s.ShipmentNo} iptal et`}
+                          >
+                            <XCircleIcon size={16} />
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -504,6 +524,15 @@ export default function ShipmentsPage() {
         <CancelShipmentModal
           shipment={cancelTarget}
           onClose={() => setCancelTarget(null)}
+          onEditInstead={
+            canUpdate
+              ? () => {
+                  const target = cancelTarget;
+                  setCancelTarget(null);
+                  void openEditShipment(target);
+                }
+              : undefined
+          }
           onCancelled={() => {
             setCancelTarget(null);
             invalidateData('contracts');

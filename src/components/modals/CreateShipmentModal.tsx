@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { XIcon } from '@phosphor-icons/react';
+import { ArrowDownIcon, ArrowUpIcon, PlusIcon, TrashIcon, XIcon } from '@phosphor-icons/react';
 import { usePortalTarget } from '../tabs/TabContext';
 import type { Contract, InventoryContractLineItem, Shipment, ShipmentMutationResult, Warehouse } from '../../models';
 import { shipmentService } from '../../services/shipmentService';
@@ -34,7 +34,8 @@ interface CreateShipmentModalProps {
 
 /**
  * Sevkiyat fişi oluşturma / düzenleme. Yeni fişte kalemler kalan (sevk edilmemiş) miktarla ön doldurulur;
- * parçalı sevk için miktar düşürülebilir veya satır boş bırakılabilir. Düzenlemede fişin mevcut değerleri
+ * parçalı sevk için miktar düşürülebilir ya da gitmeyen satır fişten çıkarılabilir (sevk bekliyor kalır); satırlar
+ * yukarı/aşağı taşınabilir, fiş ve PDF bu sırayla basılır. Düzenlemede fişin mevcut değerleri
  * gelir; fiş no korunur, tarih/depo/miktar değişirse stok ve kira sunucuda yeniden hesaplanır.
  */
 export default function CreateShipmentModal({
@@ -88,8 +89,78 @@ export default function CreateShipmentModal({
       ])
     )
   );
+  /**
+   * Fişe giren satırlar, fişteki/PDF'teki sırasıyla. Yeni fişte kalanı olan tüm satırlar; düzenlemede
+   * fişin kendi kalemleri (fişteki sırayla). Listede olmayanlar "eklenmeyenler" bölümünde durur.
+   */
+  const [order, setOrder] = useState<number[]>(() => {
+    const shippableIds = new Set(shippableLines.map(({ line }) => line.DetailId));
+    if (shipment) {
+      const ids = (shipment.items ?? []).map((it) => it.DetailId).filter((id) => shippableIds.has(id));
+      return Array.from(new Set(ids));
+    }
+    return shippableLines.filter(({ allowance }) => allowance.max > 0).map(({ line }) => line.DetailId);
+  });
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const qtyInputRefs = useRef(new Map<number, HTMLInputElement>());
+
+  const lineById = useMemo(() => new Map(shippableLines.map((l) => [l.line.DetailId, l])), [shippableLines]);
+  const includedLines = useMemo(
+    () => order.map((id) => lineById.get(id)).filter((l): l is (typeof shippableLines)[number] => l != null),
+    [order, lineById]
+  );
+  const excludedLines = useMemo(
+    () => shippableLines.filter(({ line, allowance }) => !order.includes(line.DetailId) && allowance.max > 0),
+    [shippableLines, order]
+  );
+
+  /** Taşıma/silme sonrası odağı ilgili satırın miktar kutusuna geri ver (klavyeyle seri düzenleme) */
+  const focusQty = (detailId: number | undefined) => {
+    if (detailId == null) return;
+    requestAnimationFrame(() => qtyInputRefs.current.get(detailId)?.focus());
+  };
+
+  const moveLine = (detailId: number, delta: -1 | 1, keepFocus = false) => {
+    setOrder((prev) => {
+      const from = prev.indexOf(detailId);
+      const to = from + delta;
+      if (from < 0 || to < 0 || to >= prev.length) return prev;
+      const next = [...prev];
+      [next[from], next[to]] = [next[to], next[from]];
+      return next;
+    });
+    if (keepFocus) focusQty(detailId);
+  };
+
+  const removeLine = (detailId: number, keepFocus = false) => {
+    const idx = order.indexOf(detailId);
+    const neighbour = order[idx + 1] ?? order[idx - 1];
+    setOrder((prev) => prev.filter((id) => id !== detailId));
+    if (error) setError(null);
+    if (keepFocus) focusQty(neighbour);
+  };
+
+  const addLine = (detailId: number) => {
+    const entry = lineById.get(detailId);
+    if (!entry) return;
+    setOrder((prev) => (prev.includes(detailId) ? prev : [...prev, detailId]));
+    setQuantities((prev) => (Number(prev[detailId]) > 0 ? prev : { ...prev, [detailId]: String(entry.allowance.max) }));
+    if (error) setError(null);
+    focusQty(detailId);
+  };
+
+  const addAllExcluded = () => {
+    setOrder((prev) => [...prev, ...excludedLines.map(({ line }) => line.DetailId).filter((id) => !prev.includes(id))]);
+    setQuantities((prev) => {
+      const next = { ...prev };
+      for (const { line, allowance } of excludedLines) {
+        if (!(Number(next[line.DetailId]) > 0)) next[line.DetailId] = String(allowance.max);
+      }
+      return next;
+    });
+    if (error) setError(null);
+  };
 
   useEffect(() => {
     warehouseService
@@ -112,7 +183,7 @@ export default function CreateShipmentModal({
     [shippableLines]
   );
 
-  const draftLines: ShipmentDraftLine[] = shippableLines.map(({ line, allowance }) => ({
+  const draftLines: ShipmentDraftLine[] = includedLines.map(({ line, allowance }) => ({
     DetailId: line.DetailId,
     ItemName: line.ItemName,
     remaining: allowance.max,
@@ -136,6 +207,17 @@ export default function CreateShipmentModal({
     }
     if (deliveredKey && shipmentDate > deliveredKey) {
       setError(`Sevk tarihi teslim tarihinden (${formatDate(shipment!.DeliveredAt!)}) sonra olamaz.`);
+      return;
+    }
+    if (draftLines.length === 0) {
+      setError('Fişte hiç kalem yok. Aşağıdaki “Bu sevkiyata eklenmeyenler” listesinden kalem ekleyin.');
+      return;
+    }
+    // Fişte duran ama miktarı boş/0 olan satır sessizce düşmesin: ya miktar girilsin ya satır silinsin
+    const emptyLine = draftLines.find((l) => !(Number(l.quantityInput.trim()) > 0));
+    if (emptyLine && !lockStock) {
+      setError(`${emptyLine.ItemName}: miktar girin ya da satırı fişten çıkarın (çöp kutusu).`);
+      focusQty(emptyLine.DetailId);
       return;
     }
     const validation = validateShipmentDraft(draftLines);
@@ -181,9 +263,17 @@ export default function CreateShipmentModal({
     }
   };
 
-  const fillAll = () =>
-    setQuantities(Object.fromEntries(shippableLines.map(({ line, allowance }) => [line.DetailId, String(allowance.max)])));
-  const clearAll = () => setQuantities(Object.fromEntries(shippableLines.map(({ line }) => [line.DetailId, ''])));
+  const fillAll = () => {
+    setQuantities((prev) => ({
+      ...prev,
+      ...Object.fromEntries(includedLines.map(({ line, allowance }) => [line.DetailId, String(allowance.max)])),
+    }));
+    if (error) setError(null);
+  };
+  const removeAll = () => {
+    setOrder([]);
+    if (error) setError(null);
+  };
 
   const stockInputsDisabled = isSubmitting || lockStock;
 
@@ -329,14 +419,29 @@ export default function CreateShipmentModal({
 
               <div>
                 <div className="flex items-center justify-between mb-1">
-                  <span className="text-xs font-medium">Kalemler</span>
-                  {!lockStock && (
-                    <div className="flex gap-2 text-xs">
-                      <button type="button" className="text-accent hover:underline" onClick={fillAll} disabled={isSubmitting}>
-                        Tümünü doldur
+                  <span className="text-xs font-medium">
+                    {shipment ? 'Fişteki kalemler' : 'Bu sevkiyatta gidecek kalemler'}{' '}
+                    <span className="text-text-secondary font-normal">({includedLines.length})</span>
+                  </span>
+                  {!lockStock && includedLines.length > 0 && (
+                    <div className="flex gap-3 text-xs">
+                      <button
+                        type="button"
+                        className="text-accent hover:underline"
+                        onClick={fillAll}
+                        disabled={isSubmitting}
+                        title="Fişteki her satıra kalan miktarın tamamını yaz"
+                      >
+                        Miktarları kalanla doldur
                       </button>
-                      <button type="button" className="text-text-secondary hover:underline" onClick={clearAll} disabled={isSubmitting}>
-                        Temizle
+                      <button
+                        type="button"
+                        className="text-text-secondary hover:text-red-400 hover:underline"
+                        onClick={removeAll}
+                        disabled={isSubmitting}
+                        title="Bütün satırları fişten çıkar (aşağıdan tek tek eklenebilir)"
+                      >
+                        Tümünü çıkar
                       </button>
                     </div>
                   )}
@@ -345,52 +450,164 @@ export default function CreateShipmentModal({
                   <DataTable tableId="CreateShipmentModal" className="w-full text-xs">
                     <thead className="bg-background-elevated text-text-secondary">
                       <tr>
+                        <th className="text-center px-1 py-1.5 w-7">#</th>
                         <th className="text-left px-2 py-1.5">Malzeme</th>
                         <th className="text-left px-2 py-1.5">Rezerve depo</th>
                         <th className="text-right px-2 py-1.5">Sözleşme</th>
                         <th className="text-right px-2 py-1.5">{shipment ? 'Diğer fişler' : 'Sevk edilen'}</th>
                         <th className="text-right px-2 py-1.5">{shipment ? 'En fazla' : 'Kalan'}</th>
                         <th className="text-right px-2 py-1.5 w-28">{shipment ? 'Bu fiş' : 'Bu sevk'}</th>
+                        <th className="text-center px-1 py-1.5 w-[88px]" title="Sırala / fişten çıkar">
+                          Sıra · Sil
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
-                      {shippableLines.map(({ line, allowance }) => (
-                        <tr key={line.DetailId} className="border-t border-background-border">
-                          <td className="px-2 py-1.5">
-                            {line.ItemCode ? <span className="text-text-secondary mr-1">{line.ItemCode}</span> : null}
-                            {line.ItemName}
-                          </td>
-                          <td className="px-2 py-1.5 text-text-secondary">{line.WarehouseName || '—'}</td>
-                          <td className="px-2 py-1.5 text-right">{allowance.contracted}</td>
-                          <td className="px-2 py-1.5 text-right">{allowance.otherShipped}</td>
-                          <td className="px-2 py-1.5 text-right font-medium">{allowance.max}</td>
-                          <td className="px-2 py-1">
-                            <input
-                              type="number"
-                              min={0}
-                              max={allowance.max}
-                              step={1}
-                              className="input w-full text-right py-1"
-                              value={quantities[line.DetailId] ?? ''}
-                              onChange={(e) => {
-                                setQuantities((prev) => ({ ...prev, [line.DetailId]: e.target.value }));
-                                if (error) setError(null);
-                              }}
-                              disabled={stockInputsDisabled}
-                              aria-label={`${line.ItemName} sevk miktarı`}
-                            />
+                      {includedLines.length === 0 ? (
+                        <tr className="border-t border-background-border">
+                          <td colSpan={8} className="px-2 py-4 text-center text-text-secondary">
+                            Fişte kalem yok. Aşağıdaki listeden “Ekle” ile kalem ekleyin.
                           </td>
                         </tr>
-                      ))}
+                      ) : (
+                        includedLines.map(({ line, allowance }, idx) => {
+                          const isFirst = idx === 0;
+                          const isLast = idx === includedLines.length - 1;
+                          const qtyEmpty = !(Number(quantities[line.DetailId]) > 0);
+                          return (
+                            <tr key={line.DetailId} className="border-t border-background-border group">
+                              <td className="px-1 py-1.5 text-center text-text-secondary">{idx + 1}</td>
+                              <td className="px-2 py-1.5">
+                                {line.ItemCode ? <span className="text-text-secondary mr-1">{line.ItemCode}</span> : null}
+                                {line.ItemName}
+                              </td>
+                              <td className="px-2 py-1.5 text-text-secondary">{line.WarehouseName || '—'}</td>
+                              <td className="px-2 py-1.5 text-right">{allowance.contracted}</td>
+                              <td className="px-2 py-1.5 text-right">{allowance.otherShipped}</td>
+                              <td className="px-2 py-1.5 text-right font-medium">{allowance.max}</td>
+                              <td className="px-2 py-1">
+                                <input
+                                  ref={(el) => {
+                                    if (el) qtyInputRefs.current.set(line.DetailId, el);
+                                    else qtyInputRefs.current.delete(line.DetailId);
+                                  }}
+                                  type="number"
+                                  min={0}
+                                  max={allowance.max}
+                                  step={1}
+                                  className={`input w-full text-right py-1 ${qtyEmpty && !lockStock ? 'border-amber-500/70' : ''}`}
+                                  value={quantities[line.DetailId] ?? ''}
+                                  onChange={(e) => {
+                                    setQuantities((prev) => ({ ...prev, [line.DetailId]: e.target.value }));
+                                    if (error) setError(null);
+                                  }}
+                                  onKeyDown={(e) => {
+                                    if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+                                      e.preventDefault();
+                                      moveLine(line.DetailId, e.key === 'ArrowUp' ? -1 : 1, true);
+                                    } else if (e.ctrlKey && e.key === 'Delete' && !stockInputsDisabled) {
+                                      e.preventDefault();
+                                      removeLine(line.DetailId, true);
+                                    }
+                                  }}
+                                  disabled={stockInputsDisabled}
+                                  placeholder={lockStock ? undefined : 'Miktar'}
+                                  aria-label={`${line.ItemName} sevk miktarı`}
+                                />
+                              </td>
+                              <td className="px-1 py-1 whitespace-nowrap text-center">
+                                <button
+                                  type="button"
+                                  className="p-1 rounded text-text-secondary hover:bg-background-secondary hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent"
+                                  onClick={() => moveLine(line.DetailId, -1)}
+                                  disabled={isFirst || isSubmitting}
+                                  title="Yukarı taşı (Alt+↑)"
+                                  aria-label={`${line.ItemName} yukarı taşı`}
+                                >
+                                  <ArrowUpIcon size={14} />
+                                </button>
+                                <button
+                                  type="button"
+                                  className="p-1 rounded text-text-secondary hover:bg-background-secondary hover:text-text-primary disabled:opacity-30 disabled:hover:bg-transparent"
+                                  onClick={() => moveLine(line.DetailId, 1)}
+                                  disabled={isLast || isSubmitting}
+                                  title="Aşağı taşı (Alt+↓)"
+                                  aria-label={`${line.ItemName} aşağı taşı`}
+                                >
+                                  <ArrowDownIcon size={14} />
+                                </button>
+                                {!lockStock && (
+                                  <button
+                                    type="button"
+                                    className="p-1 rounded text-red-400/80 hover:bg-red-500/15 hover:text-red-400 disabled:opacity-30"
+                                    onClick={() => removeLine(line.DetailId)}
+                                    disabled={isSubmitting}
+                                    title="Bu sevkiyattan çıkar (Ctrl+Delete) — malzeme sevk bekliyor olarak kalır"
+                                    aria-label={`${line.ItemName} fişten çıkar`}
+                                  >
+                                    <TrashIcon size={14} />
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
                     </tbody>
                   </DataTable>
                 </div>
                 <p className="text-[11px] text-text-secondary mt-1">
-                  {shipment
-                    ? 'Fişten çıkarmak istediğiniz kalemi boş bırakın. İade/kapama yapılmış miktarın altına düşülemez.'
-                    : 'Parçalı sevk için miktarı düşürün veya boş bırakın.'}{' '}
+                  Bu sevkiyatta gitmeyen kalemi <TrashIcon size={11} className="inline -mt-0.5" /> ile çıkarın; sevk bekliyor olarak kalır,
+                  sonraki fişte gönderilir. Sırayı oklarla (veya miktar kutusundayken Alt+↑/↓) değiştirin; fiş ve PDF bu sırayla
+                  basılır.{' '}
+                  {shipment ? 'İade/kapama yapılmış miktarın altına düşülemez. ' : ''}
                   Her sevk partisi kendi tarihinden itibaren en az 30 gün faturalanır.
                 </p>
+
+                {!lockStock && excludedLines.length > 0 && (
+                  <div className="mt-3 rounded border border-dashed border-background-border">
+                    <div className="flex items-center justify-between px-2 py-1.5 border-b border-dashed border-background-border">
+                      <span className="text-xs">
+                        <span className="font-medium">Bu sevkiyata eklenmeyenler</span>{' '}
+                        <span className="text-text-secondary">— sevk bekliyor olarak kalır</span>
+                      </span>
+                      {excludedLines.length > 1 && (
+                        <button
+                          type="button"
+                          className="text-xs text-accent hover:underline"
+                          onClick={addAllExcluded}
+                          disabled={isSubmitting}
+                        >
+                          Tümünü ekle
+                        </button>
+                      )}
+                    </div>
+                    <ul>
+                      {excludedLines.map(({ line, allowance }) => (
+                        <li
+                          key={line.DetailId}
+                          className="flex items-center justify-between gap-3 px-2 py-1 text-xs border-b border-background-border/40 last:border-b-0 text-text-secondary"
+                        >
+                          <span className="min-w-0 truncate">
+                            {line.ItemCode ? <span className="mr-1">{line.ItemCode}</span> : null}
+                            <span className="text-text-primary">{line.ItemName}</span>
+                            <span className="ml-2">kalan {allowance.max}</span>
+                          </span>
+                          <button
+                            type="button"
+                            className="btn-secondary py-0.5 px-2 text-xs inline-flex items-center gap-1 shrink-0"
+                            onClick={() => addLine(line.DetailId)}
+                            disabled={isSubmitting}
+                            title="Fişin sonuna ekle (kalan miktarla)"
+                          >
+                            <PlusIcon size={12} />
+                            Ekle
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -410,7 +627,10 @@ export default function CreateShipmentModal({
 
         <div className="flex items-center justify-between gap-3 p-4 border-t border-background-border">
           <span className="text-xs text-text-secondary">
-            {shippableLines.length > 0 ? `Bu ${shipment ? 'fişte' : 'sevkiyatta'} toplam ${totalToShip} adet` : ''}
+            {shippableLines.length > 0
+              ? `Bu ${shipment ? 'fişte' : 'sevkiyatta'} ${includedLines.length} kalem, toplam ${totalToShip} adet` +
+                (excludedLines.length > 0 ? ` · ${excludedLines.length} kalem sonraki sevke kalıyor` : '')
+              : ''}
           </span>
           <div className="flex gap-3">
             <button type="button" onClick={onClose} className="btn-secondary" disabled={isSubmitting}>
@@ -420,7 +640,7 @@ export default function CreateShipmentModal({
               type="submit"
               form="create-shipment-form"
               className="btn-primary"
-              disabled={isSubmitting || shippableLines.length === 0}
+              disabled={isSubmitting || shippableLines.length === 0 || includedLines.length === 0}
             >
               {isSubmitting ? 'Kaydediliyor...' : shipment ? 'Değişiklikleri kaydet' : 'Sevkiyatı kaydet'}
             </button>
