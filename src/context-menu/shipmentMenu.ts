@@ -1,5 +1,6 @@
 import type { Shipment } from '../models';
 import { toast } from '../hooks/useToast';
+import { getPendingDeliveryDays } from '../utils/shipment';
 import type { OpenContextMenuPayload, ShipmentRowTarget } from './types';
 
 /** Sevkiyat fişi satırı için sağ tık hedefi */
@@ -17,6 +18,7 @@ export function shipmentContextTarget(shipment: Shipment): ShipmentRowTarget {
       ExternalWaybillNo: shipment.ExternalWaybillNo,
       AttachmentCount: shipment.AttachmentCount,
       HasSignedWaybill: shipment.HasSignedWaybill,
+      PendingDays: getPendingDeliveryDays(shipment),
     },
   };
 }

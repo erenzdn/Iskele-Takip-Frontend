@@ -5,7 +5,7 @@ import { shipmentService } from '../../services/shipmentService';
 import { useAuthStore } from '../../store/authStore';
 import { getApiErrorMessage } from '../../utils/apiError';
 import { toast } from '../../hooks/useToast';
-import { formatDate, formatDateTime } from '../../utils/formatters';
+import { formatDate } from '../../utils/formatters';
 import {
   getLineShipmentProgress,
   getRentalStartIso,
@@ -17,7 +17,7 @@ import { shipmentContextTarget, shipmentCopyHandlers } from '../../context-menu/
 import { useShipmentPdfPreview } from '../../hooks/useShipmentPdfPreview';
 import CreateShipmentModal from '../modals/CreateShipmentModal';
 import CancelShipmentModal from '../modals/CancelShipmentModal';
-import AttachmentsPanel from '../attachments/AttachmentsPanel';
+import ShipmentDetailsPanel from '../shipments/ShipmentDetailsPanel';
 import ConfirmDeliveryModal from '../modals/ConfirmDeliveryModal';
 import ConfirmModal from '../modals/ConfirmModal';
 import DeliveryStatusBadge from '../shipments/DeliveryStatusBadge';
@@ -384,86 +384,13 @@ export default function ContractShipmentsPanel({
                       {expanded && (
                         <tr className="bg-background-panel/60">
                           <td colSpan={8} className="px-3 py-2">
-                            <ul className="space-y-0.5">
-                              {(s.items ?? []).map((it) => (
-                                <li key={it.ShipmentItemId} className="flex justify-between gap-3">
-                                  <span>
-                                    {it.ItemCode ? <span className="text-text-secondary mr-1">{it.ItemCode}</span> : null}
-                                    {it.ItemName}
-                                  </span>
-                                  <span className="font-medium">{it.Quantity}</span>
-                                </li>
-                              ))}
-                            </ul>
-                            <div className="mt-2 text-[11px] text-text-secondary space-x-3">
-                              {s.ReceiverName && <span>Teslim alan: {s.ReceiverName}</span>}
-                              {s.ExternalWaybillNo && <span>İrsaliye: {s.ExternalWaybillNo}</span>}
-                              {s.CreatedByName && <span>Düzenleyen: {s.CreatedByName}</span>}
-                              {s.CreatedAt && <span>{formatDateTime(s.CreatedAt)}</span>}
-                              {s.UpdatedAt && (
-                                <span>
-                                  Son düzenleme: {formatDateTime(s.UpdatedAt)}
-                                  {s.UpdatedByName ? ` (${s.UpdatedByName})` : ''}
-                                </span>
-                              )}
-                              {cancelled && (
-                                <span className="text-red-400">
-                                  İptal: {s.CancelledAt ? formatDateTime(s.CancelledAt) : ''} — {s.CancellationReason}
-                                </span>
-                              )}
-                            </div>
-                            {s.Notes && <p className="mt-1 text-[11px]">Not: {s.Notes}</p>}
-                            {!cancelled && (
-                              <div className="mt-3 rounded border border-background-border bg-background-panel px-2.5 py-2 text-[11px] flex flex-wrap items-center gap-x-3 gap-y-1">
-                                {s.DeliveredAt ? (
-                                  <>
-                                    <span className="font-semibold text-green-400">Teslim edildi</span>
-                                    <span>{formatDateTime(s.DeliveredAt)}</span>
-                                    <span>
-                                      Teslim alan: {s.DeliveredReceiverName}
-                                      {s.DeliveredReceiverTitle ? ` (${s.DeliveredReceiverTitle})` : ''}
-                                    </span>
-                                    {s.DeliveryConfirmedByName && (
-                                      <span className="text-text-secondary">Onaylayan: {s.DeliveryConfirmedByName}</span>
-                                    )}
-                                    {s.DeliveryNotes && <span className="basis-full">Teslim notu: {s.DeliveryNotes}</span>}
-                                  </>
-                                ) : (
-                                  <span className="text-sky-300">
-                                    Teslim onayı bekliyor. İmzalı irsaliye geldiğinde teslimi onaylayın.
-                                  </span>
-                                )}
-                                {canConfirmDelivery && (
-                                  <span className="ml-auto flex gap-1.5">
-                                    <button
-                                      type="button"
-                                      className={`${s.DeliveredAt ? 'btn-secondary' : 'btn-primary'} py-0.5 px-2 text-xs`}
-                                      onClick={() => setDeliveryTarget(s)}
-                                    >
-                                      {s.DeliveredAt ? 'Düzelt' : 'Teslimi onayla'}
-                                    </button>
-                                    {s.DeliveredAt && (
-                                      <button
-                                        type="button"
-                                        className="btn-secondary py-0.5 px-2 text-xs text-red-400"
-                                        onClick={() => setUndoTarget(s)}
-                                      >
-                                        Onayı geri al
-                                      </button>
-                                    )}
-                                  </span>
-                                )}
-                              </div>
-                            )}
-                            <div className="mt-3">
-                              <AttachmentsPanel
-                                entityType="SHIPMENT"
-                                entityId={s.ShipmentId}
-                                categories={['SIGNED_WAYBILL', 'DELIVERY_PHOTO', 'OTHER']}
-                                title="Teslim belgeleri"
-                                onItemsChange={(items) => syncAttachments(s.ShipmentId, items)}
-                              />
-                            </div>
+                            <ShipmentDetailsPanel
+                              shipment={s}
+                              canConfirmDelivery={canConfirmDelivery}
+                              onConfirmDelivery={() => setDeliveryTarget(s)}
+                              onUndoDelivery={() => setUndoTarget(s)}
+                              onAttachmentsChange={(items) => syncAttachments(s.ShipmentId, items)}
+                            />
                           </td>
                         </tr>
                       )}

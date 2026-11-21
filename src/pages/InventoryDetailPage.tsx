@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import InventoryDetailModal from '../components/modals/InventoryDetailModal';
 import PageLoader from '../components/PageLoader';
 import { useTab } from '../components/tabs/TabContext';
 import { Inventory, MaterialCategory } from '../models';
 import { inventoryService } from '../services/inventoryService';
-import { invalidateData } from '../store/dataInvalidationStore';
 import { useTabStore } from '../store/tabStore';
 
 export default function InventoryDetailPage() {
   const params = useParams();
   const location = useLocation();
-  const navigate = useNavigate();
   const tab = useTab();
   const requestClose = useTabStore((state) => state.requestClose);
   const rawId = params.id ?? params.itemId;
@@ -82,10 +80,6 @@ export default function InventoryDetailPage() {
       startInEditMode={isNew || startInEditMode}
       onCategoriesChanged={() => {
         void inventoryService.getAllCategoriesAsync().then(setCategories).catch(() => undefined);
-      }}
-      onCreated={(itemId) => {
-        invalidateData('inventory');
-        navigate(`/inventory/${itemId}`, { replace: true });
       }}
       onClose={() => requestClose(tab.tabId)}
     />

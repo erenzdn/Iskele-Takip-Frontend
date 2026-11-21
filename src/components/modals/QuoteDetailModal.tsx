@@ -97,7 +97,6 @@ interface QuoteDetailModalProps {
    */
   isClonedDraft?: boolean;
   presentation?: 'modal' | 'page';
-  onCreated?: (quoteId: number) => void;
 }
 
 function unitPriceForQuoteInventory(
@@ -131,7 +130,6 @@ export default function QuoteDetailModal({
   startInEditMode = false,
   isClonedDraft = false,
   presentation = 'modal',
-  onCreated,
 }: QuoteDetailModalProps) {
   const navigate = useNavigate();
   const isPage = presentation === 'page';
@@ -1637,11 +1635,7 @@ export default function QuoteDetailModal({
             resetNewSiteMode,
           });
         }
-        if (isPage && onCreated) {
-          invalidateData('quotes');
-          onCreated(quoteId);
-          return quoteId;
-        }
+        invalidateData('quotes');
       } else {
         const updateResult = await quoteService.updateAsync(quoteId, body as any);
         if (updateResult.CreatedSiteId && selectedCustomerId) {
@@ -1653,7 +1647,6 @@ export default function QuoteDetailModal({
             resetNewSiteMode,
           });
         }
-        if (isPage) await syncSavedQuote(quoteId);
       }
       setStatus(QuoteStatus.Draft);
       setIsDirty(false);
@@ -1669,6 +1662,13 @@ export default function QuoteDetailModal({
     } finally {
       setIsBusy(false);
     }
+  };
+
+  /** Kayıt sonrası: değişiklik onayı sormadan ekranı kapat; sayfa modunda açan sekmeye dönülür. */
+  const closeAfterSave = () => {
+    setIsDirty(false);
+    if (isPage) acknowledgeTabSaved();
+    onClose();
   };
 
   const requestClose = () => {
@@ -1695,11 +1695,7 @@ export default function QuoteDetailModal({
       return;
     }
     const savedId = await persistDraft();
-    if (savedId && !isPage) onClose();
-    if (savedId && isPage) {
-      acknowledgeTabSaved();
-      setIsDirty(false);
-    }
+    if (savedId) closeAfterSave();
   };
 
   const openProductPicker = async () => {
@@ -1732,11 +1728,7 @@ export default function QuoteDetailModal({
   const handleSave = async (forceStatus?: QuoteStatus) => {
     if (!forceStatus && !isNew && isQuoteDraftStatus(status)) {
       const savedId = await persistDraft();
-      if (savedId && !isPage) onClose();
-      if (savedId && isPage) {
-        acknowledgeTabSaved();
-        setIsDirty(false);
-      }
+      if (savedId) closeAfterSave();
       return;
     }
 
@@ -1853,11 +1845,7 @@ export default function QuoteDetailModal({
         toast.success(`Teklif başarıyla oluşturuldu! (ID: ${result.QuoteId})`);
         invalidateData('quotes');
         await onDataChanged?.();
-        if (isPage && onCreated) {
-          onCreated(result.QuoteId);
-          return;
-        }
-        onClose();
+        closeAfterSave();
         return;
         }
 
@@ -1925,10 +1913,9 @@ export default function QuoteDetailModal({
             resetNewSiteMode,
           });
         }
-        if (isPage) await syncSavedQuote(existingId);
         toast.success('Teklif başarıyla güncellendi!');
         await onDataChanged?.();
-        onClose();
+        closeAfterSave();
         return;
     } catch (error) {
       console.error('Save quote error:', error);

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useLocation, useParams, useSearchParams } from 'react-router-dom';
 import ContractDetailModal from '../components/modals/ContractDetailModal';
 import PageLoader from '../components/PageLoader';
 import { useTab } from '../components/tabs/TabContext';
@@ -12,7 +12,6 @@ import type { ContractTabState } from '../utils/entityNavigation';
 export default function ContractDetailPage() {
   const { id } = useParams();
   const location = useLocation();
-  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const tab = useTab();
   const requestClose = useTabStore((state) => state.requestClose);
@@ -79,10 +78,6 @@ export default function ContractDetailPage() {
       quickAction={tabState?.quickAction}
       defaultTypeForNew={defaultType}
       lockNewContractType
-      onCreated={(contractId) => {
-        invalidateData('contracts');
-        navigate(`/contracts/${contractId}`, { replace: true });
-      }}
       onDataChanged={() => {
         invalidateData('contracts');
       }}

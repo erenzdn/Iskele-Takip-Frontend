@@ -79,10 +79,6 @@ export default function QuoteDetailPage() {
       lockNewQuoteType
       startInEditMode={isNew || Boolean(tabState?.startInEditMode)}
       isClonedDraft={Boolean(tabState?.isClonedDraft)}
-      onCreated={(quoteId) => {
-        invalidateData('quotes');
-        navigate(`/quotes/${quoteId}`, { replace: true, state: { startInEditMode: true } });
-      }}
       onDataChanged={() => {
         invalidateData('quotes');
       }}

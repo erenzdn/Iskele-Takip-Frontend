@@ -1,6 +1,13 @@
 import type { ReactNode } from 'react';
 
-export type ContextMenuKey = 'scaffoldRow' | 'customerRow' | 'contractRow' | 'quoteRow' | 'shipmentRow';
+export type ContextMenuKey =
+  | 'scaffoldRow'
+  | 'customerRow'
+  | 'contractRow'
+  | 'quoteRow'
+  | 'shipmentRow'
+  /** Sevkiyatlar sayfası "Sevk bekleyenler" satırı (sözleşme hedefi, sevk odaklı kısa menü) */
+  | 'awaitingShipmentRow';
 export type CustomerModalInitialTab = 'info' | 'sites' | 'history';
 
 export type ContextMenuIntent = 'default' | 'danger';
@@ -39,6 +46,8 @@ export type ContextMenuActionHandlerKey =
   | 'contract.archive'
   | 'contract.unarchive'
   | 'contract.categories'
+  /** Sevkiyatlar sayfası: sözleşmenin kesilmiş fişlerini listele */
+  | 'contract.showShipments'
   | 'quote.open'
   | 'quote.preview'
   | 'quote.copyCode'
@@ -51,6 +60,8 @@ export type ContextMenuActionHandlerKey =
   | 'quote.categories'
   | 'shipment.details'
   | 'shipment.openContract'
+  /** Sevkiyatlar sayfası: listeyi bu fişin sözleşmesine süz */
+  | 'shipment.filterContract'
   | 'shipment.preview'
   | 'shipment.confirmDelivery'
   | 'shipment.editDelivery'
@@ -140,6 +151,8 @@ export interface ShipmentRowTarget {
     ExternalWaybillNo?: string | null;
     AttachmentCount?: number;
     HasSignedWaybill?: boolean;
+    /** Teslim bekleyen fişin sevkten bu yana geçen gün sayısı */
+    PendingDays?: number | null;
   };
 }
 

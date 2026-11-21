@@ -26,6 +26,7 @@ beforeEach(() => {
         refreshKey: 0,
         location: loc('/'),
         lastAccessTime: 0,
+        openerId: null,
       },
     ],
     activeTabId: DASHBOARD_TAB_ID,
@@ -133,6 +134,28 @@ describe('navigateInTab (sekme içi gezinme)', () => {
 });
 
 describe('kapatma', () => {
+  it('kapanan sekme kendisini açan sekmeye döner', () => {
+    const store = useTabStore.getState();
+    store.openLocation(loc('/quotes/rental'));
+    store.openLocation(loc('/customers'));
+    // Listeden yeni teklif aç, kaydedilince sekme kapanır
+    store.setActiveTab('/quotes/rental');
+    useTabStore.getState().navigateInTab('/quotes/rental', loc('/quotes/new?type=rental'), 'push');
+    useTabStore.getState().setActiveTab('/quotes/new?type=rental');
+    useTabStore.getState().requestClose('/quotes/new?type=rental');
+    expect(active()).toBe('/quotes/rental');
+  });
+
+  it('açan sekme kapanmışsa komşu sekmeye düşer', () => {
+    const store = useTabStore.getState();
+    store.openLocation(loc('/customers'));
+    store.navigateInTab('/customers', loc('/customers/5'), 'push');
+    useTabStore.getState().requestClose('/customers');
+    useTabStore.getState().setActiveTab('/customers/5');
+    useTabStore.getState().requestClose('/customers/5');
+    expect(active()).toBe(DASHBOARD_TAB_ID);
+  });
+
   it('toplu kapatma sabitlenmiş sekmeleri korur', () => {
     const store = useTabStore.getState();
     store.openLocation(loc('/customers'));

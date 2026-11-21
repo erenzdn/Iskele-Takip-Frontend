@@ -34,7 +34,6 @@ interface InventoryDetailModalProps {
   /** Kategori listesi güncellendiğinde üst sayfanın da yenilenmesi için */
   onCategoriesChanged?: () => void;
   onClose: () => void;
-  onCreated?: (itemId: number) => void;
   presentation?: 'modal' | 'page';
 }
 
@@ -93,7 +92,6 @@ export default function InventoryDetailModal({
   stackAboveParent = false,
   onCategoriesChanged,
   onClose,
-  onCreated,
   presentation = 'modal',
 }: InventoryDetailModalProps) {
   const isPage = presentation === 'page';
@@ -578,10 +576,6 @@ export default function InventoryDetailModal({
           });
         }
         invalidateData('inventory');
-        if (isPage && onCreated) {
-          onCreated(result.ItemId);
-          return;
-        }
       } else if (effectiveItem) {
         await inventoryService.updateAsync(effectiveItem.ItemId, {
           ItemCode: itemCode.trim() || undefined,
@@ -601,12 +595,9 @@ export default function InventoryDetailModal({
           UnitId: selectedUnitId || undefined,
         });
         invalidateData('inventory');
-        if (isPage) {
-          acknowledgeTabSaved();
-          setIsReadOnly(true);
-          return;
-        }
       }
+      // Kayıt sonrası ekran kapanır; sayfa modunda açan sekmeye dönülür.
+      if (isPage) acknowledgeTabSaved();
       onClose();
     } catch (error) {
       console.error('Save inventory error:', error);

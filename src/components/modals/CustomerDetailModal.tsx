@@ -350,17 +350,13 @@ export default function CustomerDetailModal({
         const created = await customerService.createAsync(payload);
         invalidateData('customers');
         onSaved?.({ customerId: created.CustomerId, isNew: true });
-        if (isPage) return;
       } else if (customer) {
         await customerService.updateAsync(customer.CustomerId, payload);
         invalidateData('customers');
         onSaved?.({ customerId: customer.CustomerId, isNew: false });
-        if (isPage) {
-          acknowledgeTabSaved();
-          setIsReadOnly(true);
-          return;
-        }
       }
+      // Kayıt sonrası ekran kapanır; sayfa modunda açan sekmeye dönülür.
+      if (isPage) acknowledgeTabSaved();
       onClose();
     } catch (error: any) {
       console.error('Save customer error:', error);

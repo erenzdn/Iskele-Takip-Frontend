@@ -18,6 +18,11 @@ export interface Tab {
   refreshKey: number;
   location: TabLocation;
   lastAccessTime: number;
+  /**
+   * Bu sekmeyi açan sekme. Sekme kapanınca (ör. kaydet sonrası) odak buraya döner;
+   * böylece kullanıcı işleme başladığı ekrana (liste, teklif vb.) geri gelir.
+   */
+  openerId: string | null;
 }
 
 /**
@@ -70,6 +75,7 @@ const dashboardTab = (): Tab => ({
   refreshKey: 0,
   location: { pathname: '/', search: '', hash: '', state: null },
   lastAccessTime: Date.now(),
+  openerId: null,
 });
 
 function defaultTabs(): Tab[] {
@@ -151,7 +157,7 @@ function isBareLocation(location: TabLocation): boolean {
   return !location.search && !location.hash && location.state == null;
 }
 
-function createTab(id: string, location: TabLocation): Tab {
+function createTab(id: string, location: TabLocation, openerId: string | null = null): Tab {
   return {
     id,
     title: titleForPath(location.pathname),
@@ -161,6 +167,7 @@ function createTab(id: string, location: TabLocation): Tab {
     refreshKey: 0,
     location,
     lastAccessTime: Date.now(),
+    openerId: openerId && openerId !== id ? openerId : null,
   };
 }
 
@@ -211,7 +218,15 @@ function normalizeTab(raw: Partial<Tab> | null | undefined): Tab | null {
     refreshKey: 0,
     location,
     lastAccessTime: typeof raw.lastAccessTime === 'number' ? raw.lastAccessTime : Date.now(),
+    openerId: typeof raw.openerId === 'string' && raw.openerId !== id ? raw.openerId : null,
   };
+}
+
+/** Kimliği değişen (dönüştürülen) sekmeye bağlı açan referanslarını günceller. */
+function remapOpener(tabs: Tab[], fromId: string, toId: string): Tab[] {
+  return tabs.map((tab) =>
+    tab.openerId === fromId ? { ...tab, openerId: tab.id === toId ? null : toId } : tab
+  );
 }
 
 function uniqueById(tabs: Tab[]): Tab[] {
@@ -269,10 +284,14 @@ export const useTabStore = create<TabState>((set, get) => {
     const newTabs = state.tabs.filter((tab) => !closing.has(tab.id));
     let newActive = state.activeTabId;
     if (newActive && closing.has(newActive)) {
+      const closingActive = state.tabs.find((tab) => tab.id === newActive);
+      const opener = closingActive?.openerId
+        ? newTabs.find((tab) => tab.id === closingActive.openerId)
+        : undefined;
       const oldIndex = state.tabs.findIndex((tab) => tab.id === newActive);
       const fallback =
         newTabs[Math.min(oldIndex, newTabs.length - 1)] ?? newTabs[newTabs.length - 1] ?? newTabs[0];
-      newActive = fallback?.id ?? DASHBOARD_TAB_ID;
+      newActive = opener?.id ?? fallback?.id ?? DASHBOARD_TAB_ID;
     }
     const tabs = newTabs.map((tab) => (tab.id === newActive ? touch(tab) : tab));
     set({ tabs, activeTabId: newActive, closedStack, pendingCloseIds: null });
@@ -335,16 +354,20 @@ export const useTabStore = create<TabState>((set, get) => {
       if (mode === 'replace') {
         if (existing) {
           // Kaynak sekme kaldırılır, hedef sekme yerini alır
-          const tabs = state.tabs
-            .filter((tab) => tab.id !== sourceTabId || sourceTabId === DASHBOARD_TAB_ID)
-            .map((tab) => (tab.id === targetId ? touch(withIncomingLocation(tab, location)) : tab));
+          const tabs = remapOpener(
+            state.tabs
+              .filter((tab) => tab.id !== sourceTabId || sourceTabId === DASHBOARD_TAB_ID)
+              .map((tab) => (tab.id === targetId ? touch(withIncomingLocation(tab, location)) : tab)),
+            sourceTabId === DASHBOARD_TAB_ID ? targetId : sourceTabId,
+            targetId
+          );
           set({ tabs, activeTabId: sourceIsActive ? targetId : state.activeTabId });
           return;
         }
         if (sourceTabId === DASHBOARD_TAB_ID) {
           // Dashboard dönüştürülmez; hedef yeni sekmede açılır
           set({
-            tabs: insertAfter(state.tabs, sourceTabId, createTab(targetId, location)),
+            tabs: insertAfter(state.tabs, sourceTabId, createTab(targetId, location, sourceTabId)),
             activeTabId: sourceIsActive ? targetId : state.activeTabId,
           });
           return;
@@ -360,7 +383,11 @@ export const useTabStore = create<TabState>((set, get) => {
           lastAccessTime: Date.now(),
         };
         set({
-          tabs: state.tabs.map((tab) => (tab.id === sourceTabId ? converted : tab)),
+          tabs: remapOpener(
+            state.tabs.map((tab) => (tab.id === sourceTabId ? converted : tab)),
+            sourceTabId,
+            targetId
+          ),
           activeTabId: sourceIsActive ? targetId : state.activeTabId,
         });
         return;
@@ -370,16 +397,17 @@ export const useTabStore = create<TabState>((set, get) => {
       if (existing) {
         const updated = withIncomingLocation(existing, location);
         if (!sourceIsActive && updated === existing) return;
+        // Öne getirilen sekme kapanınca onu çağıran sekmeye dönülsün
+        const reopened =
+          sourceIsActive && sourceTabId !== targetId ? { ...touch(updated), openerId: sourceTabId } : updated;
         set({
-          tabs: state.tabs.map((tab) =>
-            tab.id === targetId ? (sourceIsActive ? touch(updated) : updated) : tab
-          ),
+          tabs: state.tabs.map((tab) => (tab.id === targetId ? reopened : tab)),
           activeTabId: sourceIsActive ? targetId : state.activeTabId,
         });
         return;
       }
       set({
-        tabs: insertAfter(state.tabs, sourceTabId, createTab(targetId, location)),
+        tabs: insertAfter(state.tabs, sourceTabId, createTab(targetId, location, sourceTabId)),
         activeTabId: sourceIsActive ? targetId : state.activeTabId,
       });
     },

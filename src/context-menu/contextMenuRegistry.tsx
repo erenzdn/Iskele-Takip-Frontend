@@ -9,6 +9,7 @@ import {
   CalendarPlusIcon,
   ClockCounterClockwiseIcon,
   FilesIcon,
+  ListBulletsIcon,
   ReceiptIcon,
   TruckIcon,
   BuildingsIcon,
@@ -520,7 +521,52 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       },
     },
   ],
+  awaitingShipmentRow: [
+    {
+      id: 'awaiting-ship',
+      label: 'Sevk Et (Fiş Kes)',
+      icon: <TruckIcon size={iconSize} />,
+      handlerKey: 'contract.ship',
+      requiredPermissions: ['shipments_create'],
+      enabledWhen: (target) => pendingShipmentQty(target) > 0,
+      hint: (target) => {
+        const pending = pendingShipmentQty(target);
+        return pending > 0 ? `${pending} adet bekliyor` : 'Tamamı sevk edildi';
+      },
+    },
+    {
+      id: 'awaiting-show-shipments',
+      label: 'Kesilen Fişleri Göster',
+      icon: <ListBulletsIcon size={iconSize} />,
+      handlerKey: 'contract.showShipments',
+      enabledWhen: (target) => shippedQty(target) > 0,
+      hint: (target) => (shippedQty(target) > 0 ? `${shippedQty(target)} adet sevk edildi` : 'Henüz fiş yok'),
+    },
+    {
+      id: 'awaiting-open-contract',
+      label: 'Sözleşmeyi Aç',
+      icon: <ClipboardTextIcon size={iconSize} />,
+      handlerKey: 'contract.open',
+      separatorBefore: true,
+    },
+    {
+      id: 'awaiting-goto-shipments',
+      label: 'Sözleşmenin Sevkiyat Sekmesi',
+      icon: <ArrowSquareOutIcon size={iconSize} />,
+      handlerKey: 'contract.goto.shipments',
+      requiredPermissions: ['contracts_view'],
+    },
+    {
+      id: 'awaiting-copy-code',
+      label: 'Sözleşme Kodunu Kopyala',
+      icon: <CopySimpleIcon size={iconSize} />,
+      handlerKey: 'contract.copyCode',
+      separatorBefore: true,
+      enabledWhen: (target) => Boolean(isContractTarget(target) && target.rawData.ContractCode),
+    },
+  ],
   shipmentRow: [
+    // ── Görüntüle ──
     {
       id: 'shipment-details',
       label: 'Ayrıntılar ve Belgeler',
@@ -534,25 +580,24 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       },
     },
     {
-      id: 'shipment-open-contract',
-      label: 'Sözleşmeyi Aç',
-      icon: <ClipboardTextIcon size={iconSize} />,
-      handlerKey: 'shipment.openContract',
-    },
-    {
       id: 'shipment-preview',
       label: 'Sevk Fişi PDF',
       icon: <FilePdfIcon size={iconSize} />,
       handlerKey: 'shipment.preview',
     },
     {
-      id: 'shipment-edit',
-      label: 'Fişi Düzenle',
-      icon: <PencilSimpleIcon size={iconSize} />,
-      handlerKey: 'shipment.edit',
-      requiredPermissions: ['shipments_update'],
-      visibleWhen: (target) => isShipmentTarget(target) && !target.rawData.IsCancelled,
+      id: 'shipment-open-contract',
+      label: 'Sözleşmeyi Aç',
+      icon: <ClipboardTextIcon size={iconSize} />,
+      handlerKey: 'shipment.openContract',
     },
+    {
+      id: 'shipment-filter-contract',
+      label: 'Bu Sözleşmenin Tüm Fişleri',
+      icon: <ListBulletsIcon size={iconSize} />,
+      handlerKey: 'shipment.filterContract',
+    },
+    // ── Teslim ──
     {
       id: 'shipment-confirm-delivery',
       label: 'Teslimi Onayla',
@@ -562,16 +607,22 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
       separatorBefore: true,
       visibleWhen: (target) =>
         isShipmentTarget(target) && !target.rawData.IsCancelled && !target.rawData.IsDelivered,
+      hint: (target) => {
+        const days = isShipmentTarget(target) ? target.rawData.PendingDays ?? 0 : 0;
+        return days > 0 ? `${days} gündür bekliyor` : undefined;
+      },
     },
     {
       id: 'shipment-edit-delivery',
-      label: 'Teslim Bilgisini Düzelt',
+      label: 'Teslim Bilgisi ve Belgeler',
       icon: <NotePencilIcon size={iconSize} />,
       handlerKey: 'shipment.editDelivery',
       requiredPermissions: ['shipments_confirm_delivery'],
       separatorBefore: true,
       visibleWhen: (target) =>
         isShipmentTarget(target) && !target.rawData.IsCancelled && target.rawData.IsDelivered,
+      hint: (target) =>
+        isShipmentTarget(target) && !target.rawData.HasSignedWaybill ? 'İrsaliye eksik' : undefined,
     },
     {
       id: 'shipment-undo-delivery',
@@ -588,11 +639,20 @@ const registry: Record<ContextMenuKey, ContextMenuActionConfig[]> = {
         confirmLabel: 'Geri Al',
       },
     },
+    // ── Fiş ──
+    {
+      id: 'shipment-edit',
+      label: 'Fişi Düzenle',
+      icon: <PencilSimpleIcon size={iconSize} />,
+      handlerKey: 'shipment.edit',
+      requiredPermissions: ['shipments_update'],
+      separatorBefore: true,
+      visibleWhen: (target) => isShipmentTarget(target) && !target.rawData.IsCancelled,
+    },
     {
       id: 'shipment-copy',
       label: 'Kopyala',
       icon: <CopySimpleIcon size={iconSize} />,
-      separatorBefore: true,
       children: [
         {
           id: 'shipment-copy-no',

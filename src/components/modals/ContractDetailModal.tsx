@@ -125,7 +125,6 @@ interface ContractDetailModalProps {
   /** Kaynak teklife git — parent doğrudan teklif modalını açar */
   onOpenSourceQuote?: (quoteId: number) => void | Promise<void>;
   presentation?: 'modal' | 'page';
-  onCreated?: (contractId: number) => void;
 }
 
 function unitPriceForContractInventory(
@@ -160,7 +159,6 @@ export default function ContractDetailModal({
   stackAboveParent = false,
   onOpenSourceQuote,
   presentation = 'modal',
-  onCreated,
 }: ContractDetailModalProps) {
   const navigate = useNavigate();
   const isPage = presentation === 'page';
@@ -1808,11 +1806,8 @@ export default function ContractDetailModal({
         }
         toast.success(`Sözleşme başarıyla oluşturuldu! (ID: ${result.ContractId})`);
         invalidateData('contracts');
-        if (isPage && onCreated) {
-          onCreated(result.ContractId);
-          return;
-        }
-        onClose();
+        await onDataChanged?.();
+        closeAfterSave();
         return;
       } else if (contract) {
         const updateBody: Record<string, unknown> = {};
@@ -1899,7 +1894,7 @@ export default function ContractDetailModal({
 
         if (Object.keys(updateBody).length === 0) {
           toast.info('Değişiklik yok.');
-          setIsReadOnly(true);
+          closeAfterSave();
           return;
         }
 
@@ -1920,8 +1915,8 @@ export default function ContractDetailModal({
             ? 'Sözleşme güncellendi. Kiralama tarihleri değiştiği için planlanan tutar sunucuda yeniden hesaplandı; özet güncellendi.'
             : 'Sözleşme başarıyla güncellendi!'
         );
-        await refreshContract();
-        setIsReadOnly(true);
+        await onDataChanged?.();
+        closeAfterSave();
         return;
       }
     } catch (error) {
@@ -2512,6 +2507,12 @@ export default function ContractDetailModal({
       return;
     }
     navigate(`/quotes/${sourceQuoteId}`);
+  };
+
+  /** Kayıt sonrası: değişiklik onayı sormadan ekranı kapat; sayfa modunda açan sekmeye dönülür. */
+  const closeAfterSave = () => {
+    if (isPage) acknowledgeTabSaved();
+    onClose();
   };
 
   const requestClose = () => {

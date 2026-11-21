@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import CustomerDetailModal from '../components/modals/CustomerDetailModal';
 import PageLoader from '../components/PageLoader';
 import { useTab } from '../components/tabs/TabContext';
@@ -12,7 +12,6 @@ import type { CustomerTabState } from '../utils/entityNavigation';
 export default function CustomerDetailPage() {
   const { id } = useParams();
   const location = useLocation();
-  const navigate = useNavigate();
   const tab = useTab();
   const requestClose = useTabStore((state) => state.requestClose);
   const isNew = !id || id === 'new' || location.pathname.endsWith('/new');
@@ -76,9 +75,8 @@ export default function CustomerDetailPage() {
       startInEditMode={isNew || Boolean(tabState?.startInEditMode)}
       initialTab={tabState?.initialTab ?? 'info'}
       onClose={() => requestClose(tab.tabId)}
-      onSaved={({ customerId, isNew: created }) => {
+      onSaved={() => {
         invalidateData('customers');
-        if (created) navigate(`/customers/${customerId}`, { replace: true });
       }}
     />
   );
