@@ -1578,6 +1578,8 @@ export default function AddendumDetailModal({
           contractLines={contractLines}
           items={items}
           warehouses={warehouses}
+          currency={currency}
+          contractDiscountPercent={contractDiscountPercent}
           editingDetail={editingDetail}
           initialChangeType={editingDetail ? undefined : 'PRICE_CHANGE'}
           zIndexClass="z-[75]"

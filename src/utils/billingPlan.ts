@@ -218,7 +218,7 @@ export function presentInvoiceLine(
   let periodText = '—';
   if (line.periodStart && line.periodEnd) {
     periodText = `${shortDate(line.periodStart)} - ${shortDate(line.periodEnd)}`;
-  } else if (line.kind === 'MANUAL') {
+  } else if (line.kind === 'MANUAL' || (line.kind === 'CATCH_UP' && line.isManual)) {
     periodText = 'Tek seferlik';
   } else if (line.kind === 'SETTLEMENT_CHARGE') {
     periodText = 'Malzeme bedeli';
@@ -232,10 +232,11 @@ export function presentInvoiceLine(
     badges.push(`Parti ${shortDate(line.cohortStart)}`);
   }
   if (line.kind === 'CATCH_UP') {
+    const prefix = line.isManual ? '' : 'İlk ay · ';
     badges.push(
       line.missedInvoiceNumber
-        ? `İlk ay · ${line.missedInvoiceNumber} kesildikten sonra eklendi`
-        : 'İlk ay · önceki fatura kesildikten sonra eklendi'
+        ? `${prefix}${line.missedInvoiceNumber} kesildikten sonra eklendi`
+        : `${prefix}önceki fatura kesildikten sonra eklendi`
     );
   }
   if (line.exitDate) {

@@ -8,10 +8,13 @@ import type {
   ChangeType,
   ContractLineItem,
   ContractQuoteType,
+  CurrencyCode,
   Inventory,
   Warehouse,
   WarehouseStock,
 } from '../../models';
+import { resolveAddendumAddedItemPricing } from '../../utils/addendumAddPricing';
+import { clampDiscountRange } from '../../utils/lineDiscount';
 import {
   addendumService,
   type CreateAddendumDetailRequest,
@@ -37,6 +40,9 @@ interface AddendumLineItemModalProps {
   contractLines: ContractLineItem[];
   items: Inventory[];
   warehouses: Warehouse[];
+  currency?: CurrencyCode;
+  /** Sözleşme genel iskontosu (%); yeni eklenen kalemde varsayılan iskonto */
+  contractDiscountPercent?: number;
   /** Düzenleme modu */
   editingDetail?: AddendumDetail | null;
   /** Yeni kalemde başlangıç tipi (örn. mevcut kalem değiştir → INCREASE) */
@@ -131,6 +137,8 @@ export default function AddendumLineItemModal({
   contractLines,
   items,
   warehouses,
+  currency = 'TRY',
+  contractDiscountPercent = 0,
   editingDetail = null,
   initialChangeType = 'INCREASE',
   onClose,
@@ -157,6 +165,18 @@ export default function AddendumLineItemModal({
   const [manualDescription, setManualDescription] = useState('');
   const [unitPriceStr, setUnitPriceStr] = useState('');
   const [monthlyOverrideStr, setMonthlyOverrideStr] = useState('');
+  /** Yeni kalem (ADD) iskontosu; varsayılan sözleşmedeki aynı ürün satırı, yoksa genel iskonto */
+  const [iskontoStr, setIskontoStr] = useState('');
+
+  const resolveAddPricing = (item: Inventory, warehouseId: number | '') =>
+    resolveAddendumAddedItemPricing({
+      item,
+      contractType,
+      currency,
+      contractLines,
+      preferredWarehouseId: warehouseId,
+      fallbackDiscountPercent: contractDiscountPercent,
+    });
 
   const sortedItems = useMemo(() => {
     const list = [...(items || [])];
@@ -232,6 +252,11 @@ export default function AddendumLineItemModal({
           ? String(editingDetail.NewMonthlyOverride)
           : ''
       );
+      setIskontoStr(
+        editingDetail.Iskonto != null && Number.isFinite(Number(editingDetail.Iskonto))
+          ? String(Number(editingDetail.Iskonto))
+          : ''
+      );
     } else {
       setChangeType(initialChangeType);
       setAddKind('inventory');
@@ -242,7 +267,10 @@ export default function AddendumLineItemModal({
       setManualDescription('');
       setUnitPriceStr('');
       setMonthlyOverrideStr('');
+      setIskontoStr(String(clampDiscountRange(contractDiscountPercent)));
     }
+    // contractDiscountPercent yalnızca açılışta varsayılan olarak okunur
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, editingDetail, initialChangeType]);
 
   useEffect(() => {
@@ -281,6 +309,12 @@ export default function AddendumLineItemModal({
 
   const buildPayload = (): CreateAddendumDetailRequest | null => {
     if (changeType === 'ADD') {
+      const iskonto = parseIskonto();
+      if (iskonto === 'invalid') {
+        toast.warning('İskonto %0 ile %100 arasında olmalıdır.');
+        return null;
+      }
+      const iskontoPart = iskonto != null ? { Iskonto: iskonto } : {};
       if (addKind === 'inventory') {
         const qty = parseIntQty(quantityStr);
         const err = firstValidationError([
@@ -292,12 +326,20 @@ export default function AddendumLineItemModal({
           toast.warning(err);
           return null;
         }
+        // Yeni kalemde iskontonun ait olduğu brüt fiyatı da gönder (ürün ekleme modalı ile aynı kaynak):
+        // sözleşmede aynı ürün varsa onun fiyatı, yoksa stok kartı fiyatı.
+        const resolvedUnitPrice =
+          !isEdit && selectedItem
+            ? resolveAddPricing(selectedItem, selectedWarehouseId).unitPrice
+            : 0;
         return {
           ChangeType: 'ADD',
           ItemId: Number(selectedItemId),
           WarehouseId: Number(selectedWarehouseId),
           QuantityChange: qty,
           IsManual: false,
+          ...(resolvedUnitPrice > 0 ? { NewUnitPrice: resolvedUnitPrice } : {}),
+          ...iskontoPart,
         };
       }
       const qty = parseIntQty(quantityStr);
@@ -317,6 +359,7 @@ export default function AddendumLineItemModal({
         Description: manualDescription.trim(),
         QuantityChange: qty,
         ...(price !== undefined ? { NewUnitPrice: price } : {}),
+        ...iskontoPart,
       };
     }
 
@@ -407,6 +450,17 @@ export default function AddendumLineItemModal({
     setSelectedItemId(item.ItemId);
     setSelectedWarehouseId('');
     setStockError(null);
+    if (!isEdit) {
+      setIskontoStr(String(resolveAddPricing(item, '').discountPercent));
+    }
+  };
+
+  const parseIskonto = (): number | null | 'invalid' => {
+    const raw = iskontoStr.trim().replace(',', '.');
+    if (raw === '') return null;
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0 || n > 100) return 'invalid';
+    return Number(clampDiscountRange(n).toFixed(10));
   };
 
   const changeTypes: ChangeType[] = ['ADD', 'INCREASE', 'DECREASE', 'PRICE_CHANGE'];
@@ -461,6 +515,27 @@ export default function AddendumLineItemModal({
     </div>
   );
 
+  const renderIskontoField = () => (
+    <div>
+      <label className="block text-xs font-medium text-text-primary mb-1.5">İskonto (%)</label>
+      <input
+        type="number"
+        min={0}
+        max={100}
+        step="any"
+        value={iskontoStr}
+        onChange={(e) => setIskontoStr(e.target.value)}
+        className="input w-full"
+        disabled={isBusy}
+        placeholder="0"
+      />
+      <p className="text-xs text-text-secondary mt-1.5">
+        Varsayılan: sözleşmedeki aynı ürün satırının iskontosu, yoksa sözleşme iskontosu
+        (%{clampDiscountRange(contractDiscountPercent)}).
+      </p>
+    </div>
+  );
+
   const renderWarehouseFields = () => (
     <>
       <div>
@@ -468,8 +543,12 @@ export default function AddendumLineItemModal({
         <select
           value={selectedWarehouseId}
           onChange={(e) => {
-            setSelectedWarehouseId(Number(e.target.value) || '');
+            const whId = Number(e.target.value) || '';
+            setSelectedWarehouseId(whId);
             setStockError(null);
+            if (!isEdit && selectedItem) {
+              setIskontoStr(String(resolveAddPricing(selectedItem, whId).discountPercent));
+            }
           }}
           className="input w-full"
           disabled={isBusy || !selectedItemId}
@@ -514,6 +593,8 @@ export default function AddendumLineItemModal({
           <p className="text-xs text-amber-400 mt-1.5">{stockInlineWarning}</p>
         )}
       </div>
+
+      {renderIskontoField()}
 
       {selectedItemId && !stocksLoading && itemWarehouseStocks.length > 0 && (
         <div className="rounded-lg border border-background-border bg-background-secondary/30 overflow-hidden">
@@ -749,6 +830,7 @@ export default function AddendumLineItemModal({
                         Manuel kalemlerde birim fiyat belirtilmezse sözleşme fiyatlandırma kuralları uygulanır.
                       </p>
                     </div>
+                    <div>{renderIskontoField()}</div>
                   </div>
                 )}
 
